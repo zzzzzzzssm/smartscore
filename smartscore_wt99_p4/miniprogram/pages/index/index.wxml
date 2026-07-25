@@ -1,0 +1,83 @@
+<view class="page">
+  <view class="home-hero">
+    <view class="hero-copy">
+      <view class="hero-kicker">Smart Score Companion</view>
+      <view class="hero-title">谱伴</view>
+      <view class="hero-subtitle">智能乐谱与演奏评分助手</view>
+      <view class="hero-tags">
+        <view>识谱</view>
+        <view>评分</view>
+        <view>设备同步</view>
+      </view>
+    </view>
+    <image class="hero-avatar" src="/assets/app-avatar.jpg" mode="aspectFill"></image>
+  </view>
+
+  <view class="section">
+    <view class="section-heading-row">
+      <view class="section-title">核心功能</view>
+      <button class="connect-mini" bindtap="goDevice">
+        <text class="connect-dot"></text>
+        连接设备
+      </button>
+    </view>
+    <view class="feature-grid">
+      <view class="feature-card" bindtap="goScores">
+        <view class="feature-icon score-icon">♬</view>
+        <view class="feature-title">上传乐谱</view>
+        <view class="feature-desc">导入图片、JSON 或 MIDI</view>
+      </view>
+      <view class="feature-card" bindtap="goPractice">
+        <view class="feature-icon practice-icon">▶</view>
+        <view class="feature-title">开始练习</view>
+        <view class="feature-desc">音准、节奏、完整度评分</view>
+      </view>
+      <view class="feature-card" bindtap="goAudioTools">
+        <view class="feature-icon audio-icon">♩</view>
+        <view class="feature-title">节拍器与校准音</view>
+        <view class="feature-desc">速度、拍号与标准音参考</view>
+      </view>
+      <view class="feature-card" bindtap="goMusic">
+        <view class="feature-icon music-icon">♫</view>
+        <view class="feature-title">音乐播放模式</view>
+        <view class="feature-desc">搜索并播放 SD 卡音乐</view>
+      </view>
+      <view class="feature-card" bindtap="goHistory">
+        <view class="feature-icon history-icon">↺</view>
+        <view class="feature-title">查看记录</view>
+        <view class="feature-desc">追踪每次练习表现</view>
+      </view>
+      <view class="feature-card" bindtap="goCreator">
+        <view class="feature-icon creator-icon">✦</view>
+        <view class="feature-title">创作者模式</view>
+        <view class="feature-desc">弹奏录入、暂停续写与 SD 保存</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-title">最近一次练习</view>
+    <view class="card last-card" wx:if="{{lastRecord}}">
+      <view class="row between">
+        <view>
+          <view class="record-title">{{lastRecord.scoreTitle}}</view>
+          <view class="muted">{{lastRecord.practicedAt}}</view>
+        </view>
+        <view class="tag">{{lastRecord.level}}</view>
+      </view>
+      <view class="last-score-row">
+        <view>
+          <view class="score-number">{{lastRecord.totalScore}}</view>
+          <view class="muted">总分</view>
+        </view>
+        <view class="mini-metrics">
+          <view>音准 {{lastRecord.pitchScore}}</view>
+          <view>节奏 {{lastRecord.rhythmScore}}</view>
+          <view>完整度 {{lastRecord.completeScore}}</view>
+        </view>
+      </view>
+      <button class="primary-btn" bindtap="goHistory">查看详情</button>
+    </view>
+    <view class="card empty" wx:else>暂无练习记录，先上传乐谱并开始第一次练习。</view>
+  </view>
+</view>

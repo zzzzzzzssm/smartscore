@@ -1,0 +1,124 @@
+SmartScore 摄像头/手势识别 S3 与 WT99 P4 通信融合说明
+日期：2026-07-25
+
+一、完成内容
+
+本次将 D:\qianrushi\smartscore_s3_vision 的手势识别结果，通过图片指定的 CAM 专用串口发送到 D:\qianrushi\smartscore_wt99_p4\smartscore_wt99_p4。
+
+P4 收到指令后复用现有语音指令的页面判断和业务入口，不复制练习、暂停、翻页或评分逻辑：
+1. 开始练习：只在已选择乐谱的准备页执行，沿用当前已选输入源、谱式和练习模式。
+2. 停止练习：只在正在演奏且尚未暂停时执行“暂停”，不会结束或切换为继续。
+3. 下一页/上一页：只在只读预览模式或演奏暂停状态执行；到达第一页/最后一页时不翻页。
+4. 查看评分：在演奏中或暂停时自动结束当前练习、等待评分完成并进入评分页；已经位于评分页时视为已完成。
+5. 指令不适用于当前页面或状态时，不执行页面动作，并向 S3 返回 IGNORED。
+6. 收到手势命令后显示与语音指令相同的反馈弹窗：成功为“已执行：指令名”，不适用为“当前页面无法执行/指令名”。
+
+二、硬件连接与串口参数
+
+本次新增 CAM 链路：
+1. P4 J6-25 / GPIO47 / UART3_TX -> S3 H7-15 / CAM_RX_MS / S3 GPIO2(RX)
+2. S3 H7-17 / CAM_TX_MS / S3 GPIO1(TX) -> P4 J6-27 / GPIO48 / UART3_RX
+3. P4 J6-17 GND <-> S3 H7-18 GND（必须共地）
+4. P4 J6-7 5V -> S3 H7-22 VIN（按照接线图供电；软件未改动电源控制）
+
+参数：P4 UART3、视觉 S3 UART1、115200 baud、8 数据位、无校验、1 停止位、无硬件流控。
+UART 信号为 3.3V 逻辑，5V 只能连接 VIN，不能接入 TX/RX。
+
+图片中的 MUSIC UART1（P4 GPIO0/1）和 VOICE UART2（P4 GPIO32/33）配置均保持不变，本次只新增 CAM UART3（P4 GPIO47/48）。
+
+三、手势与板间命令映射
+
+视觉 S3 内部动作编号保持原项目定义，不改变识别模型和手势判断：
+1. 动作 1，食指向右 -> V1,CMD,4 -> 上一页
+2. 动作 2，食指向左 -> V1,CMD,3 -> 下一页
+3. 动作 3，OK 手势 -> V1,CMD,1 -> 开始练习
+4. 动作 4，五指张开 -> V1,CMD,2 -> 停止练习（P4 暂停）
+5. 动作 5，竖大拇指 -> V1,CMD,6 -> 自动结束并查看评分
+
+四、板间文本协议
+
+每帧以换行符 \n 结束：
+视觉 S3 -> P4：V1,CMD,<command_id>
+P4 -> 视觉 S3：V1,ACK,<command_id>,OK
+P4 -> 视觉 S3：V1,ACK,<command_id>,IGNORED
+P4 -> 视觉 S3：V1,STATE,PLAYING
+P4 -> 视觉 S3：V1,STATE,PAUSED
+P4 -> 视觉 S3：V1,STATE,FINISHED
+
+P4 只接受本次视觉项目会发出的命令号 1、2、3、4、6。格式错误、超长帧和其它命令号会被丢弃，不进入界面业务。
+视觉 S3 在日志中记录 P4 是执行还是忽略了命令。P4 同时作为演奏状态的唯一来源：PLAYING 时 S3 新建或继续 SD 会话，PAUSED 时停止新照片但保持当前目录，FINISHED 时等待写队列清空并更新 SESSION.TXT。这样无论练习由触屏、语音还是手势发起，SD 都只记录 P4 真正演奏的时间段。
+
+五、P4 项目改动文件
+
+components/board_wt99/include/board_wt99_pins.h
+- 新增摄像头 S3 的 UART3、GPIO47/48、115200 及接线注释。
+
+components/s3_bus/CMakeLists.txt
+- 将原有摄像头节点框架文件纳入 s3_bus 组件构建源文件。
+
+components/s3_bus/include/s3_devices.h
+- 新增摄像头命令事件、初始化、ACK 和 P4 演奏状态发送接口；保留原有音乐、语音接口。
+
+components/s3_bus/src/s3_camera_node.c
+- 将原有空框架实现为独立 UART3 接收任务。
+- 实现 V1,CMD 解析、命令白名单、超长行丢弃和 V1,ACK 发送。
+- 增加 PLAYING/PAUSED/FINISHED 状态帧发送。
+
+components/screen_adapter/CMakeLists.txt
+components/screen_adapter/src/screen_adapter.c
+- 在真实开始、倒计时完成、暂停、继续和结束状态点同步摄像头 S3。
+- 音频输入倒计时期间发送 PAUSED，倒计时结束才发送 PLAYING，避免提前记录。
+
+main/main.c
+- 注册摄像头 S3 命令回调。
+- 将手势命令异步交给现有 screen_adapter 语音命令入口处理，从而直接复用页面适配和弹窗。
+- 根据实际处理结果向视觉 S3 返回 OK 或 IGNORED。
+
+摄像头S3与P4通信融合说明.txt
+- 本说明文档。
+
+六、视觉 S3 项目改动文件
+
+main/board_pins.hpp
+- 在用户原有摄像头 PWDN=GPIO14、RESET=GPIO41 改动之后，追加 P4 控制链路 UART1、GPIO1/2、115200 定义；未覆盖原有摄像头引脚修改。
+
+main/p4_control_link.hpp
+main/p4_control_link.cpp
+- 新增专用 P4 控制 UART 模块。
+- 发送命令帧，异步接收并校验 P4 的 OK/IGNORED ACK。
+- 接收并合并最新的 PLAYING/PAUSED/FINISHED 状态。
+
+main/app_main.cpp
+- 保留原动作编号和 UART0 数字调试输出。
+- 增加动作编号到 P4 语义命令号的映射，并在每次有效识别后发送。
+- P4 链路故障不会阻塞摄像头、AI 或 SD 功能启动。
+- ACK 仅用于记录 P4 页面是否执行；SD 会话改由 P4 演奏状态控制。
+
+main/gesture_engine.hpp
+main/gesture_engine.cpp
+- 增加 PAUSED 状态，用于在 P4 暂停期间保持同一 SD 会话但停止拍照。
+
+main/CMakeLists.txt
+- 纳入 p4_control_link.cpp 和 esp_driver_uart 依赖。
+
+main/camera_driver.cpp
+- 根据摄像头实际安装方向，在传感器初始化后启用垂直翻转；未启用水平镜像，因此左右识别方向保持不变。
+
+README.md
+- 补充 CAM 串口接线、参数和 ACK 行为。
+
+七、合并注意事项
+
+1. 开始本次修改前，P4 工作区已有未提交的语音 S3 融合、页面控制、音乐显示和音频时序等改动。本次保留这些改动，并在 board_wt99_pins.h、s3_bus/CMakeLists.txt、s3_devices.h、main/main.c 上做最小增量；合并时不要用整文件覆盖，建议逐块或三方合并。
+2. 开始本次修改前，视觉 S3 的 main/board_pins.hpp 已有 PWDN/RESET 修改，main/vision_config.hpp 已有 XCLK=5MHz 修改；这些用户改动均保留。main/vision_config.hpp 本次没有修改。
+3. P4 的反馈弹窗和页面动作仍由现有 screen_adapter 实现。本次没有修改评分算法、识别模型、手势阈值、练习核心、SD 存储或 UI 布局。
+4. 按用户要求，本次未执行编译、烧录或实机测试，只进行了静态代码和差异核对。
+
+八、建议实机验收顺序
+
+1. 先接 TX、RX、GND，确认两端分别出现 camera/P4 control UART 初始化日志。
+2. 在准备页做 OK 手势，确认进入当前所选练习并出现“已执行：开始练习”。
+3. 演奏中张开五指，确认只暂停；暂停后测试左右指翻页。
+4. 在只读预览中测试左右指翻页，并验证第一页/最后一页不会越界。
+5. 演奏中或暂停时竖大拇指，确认自动结束并进入评分页。
+6. 在不适用页面重复上述手势，确认只出现“当前页面无法执行”反馈，页面状态不改变，S3 日志收到 IGNORED。

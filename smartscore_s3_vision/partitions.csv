@@ -1,0 +1,6 @@
+# Name,             Type, SubType, Offset,   Size, Flags
+nvs,                data, nvs,     0x9000,    24K,
+phy_init,           data, phy,     0xf000,     4K,
+factory,            app,  factory, 0x10000,    8M,
+hand_det,           data, spiffs,          ,    1M,
+hand_gesture_cls,   data, spiffs,          ,    5M,

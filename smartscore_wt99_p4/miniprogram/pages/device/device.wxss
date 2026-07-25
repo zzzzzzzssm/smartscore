@@ -1,0 +1,295 @@
+.device-hero {
+  margin-bottom: 28rpx;
+}
+
+.hero-kicker {
+  margin-bottom: 10rpx;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 22rpx;
+  font-weight: 700;
+}
+
+.status-card {
+  margin-top: 24rpx;
+}
+
+.connection-steps {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  margin-top: 24rpx;
+  padding: 22rpx;
+  border: 1rpx solid #d7e7e6;
+  border-radius: 20rpx;
+  background: #ffffff;
+}
+
+.step-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8rpx;
+  min-width: 142rpx;
+  color: #667085;
+  font-size: 22rpx;
+  font-weight: 700;
+}
+
+.step-index {
+  width: 42rpx;
+  height: 42rpx;
+  border-radius: 50%;
+  color: #667085;
+  background: #edf3f3;
+  text-align: center;
+  line-height: 42rpx;
+}
+
+.step-item.active,
+.step-item.done {
+  color: #0f766e;
+}
+
+.step-item.active .step-index,
+.step-item.done .step-index {
+  color: #ffffff;
+  background: #0f766e;
+}
+
+.step-line {
+  flex: 1;
+  height: 2rpx;
+  background: #d7e7e6;
+}
+
+.device-name {
+  color: #172033;
+  font-size: 32rpx;
+  font-weight: 800;
+}
+
+.device-ip {
+  margin-top: 22rpx;
+  padding: 18rpx 20rpx;
+  border-radius: 16rpx;
+  color: #334155;
+  background: #f7fbfb;
+  font-size: 24rpx;
+}
+
+.status-pill {
+  min-width: 118rpx;
+  padding: 10rpx 16rpx;
+  border-radius: 999rpx;
+  text-align: center;
+  font-size: 23rpx;
+  font-weight: 700;
+}
+
+.status-pill.online {
+  color: #0f766e;
+  background: #e8f7f5;
+}
+
+.status-pill.offline {
+  color: #b42318;
+  background: #fff1f0;
+}
+
+.form-card {
+  display: flex;
+  flex-direction: column;
+  gap: 18rpx;
+}
+
+.address-form {
+  margin-top: 24rpx;
+}
+
+.input-label {
+  color: #334155;
+  font-size: 25rpx;
+  font-weight: 700;
+}
+
+.text-input {
+  height: 78rpx;
+  padding: 0 22rpx;
+  border: 1rpx solid #cfe0df;
+  border-radius: 16rpx;
+  background: #ffffff;
+  box-sizing: border-box;
+  color: #172033;
+  font-size: 26rpx;
+}
+
+.full-btn {
+  margin-top: 8rpx;
+}
+
+.action-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18rpx;
+}
+
+.action-grid button {
+  width: 330rpx;
+}
+
+.button-row {
+  display: flex;
+  gap: 14rpx;
+}
+
+.button-row button {
+  flex: 1;
+}
+
+.reserve-item + .reserve-item {
+  margin-top: 22rpx;
+  padding-top: 22rpx;
+  border-top: 1rpx solid #e5eeee;
+}
+
+.reserve-title {
+  margin-bottom: 8rpx;
+  color: #172033;
+  font-size: 28rpx;
+  font-weight: 700;
+}
+
+.bluetooth-card {
+  padding-bottom: 24rpx;
+}
+
+.bluetooth-status {
+  align-items: flex-start;
+  gap: 20rpx;
+}
+
+.bluetooth-actions {
+  margin-top: 24rpx;
+}
+
+.ble-device-list {
+  margin-top: 24rpx;
+  border: 1rpx solid #d7e7e6;
+  border-radius: 18rpx;
+  overflow: hidden;
+}
+
+.ble-device {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20rpx;
+  min-height: 96rpx;
+  padding: 18rpx 20rpx;
+  border-bottom: 1rpx solid #e5eeee;
+  background: #f9fcfc;
+  box-sizing: border-box;
+}
+
+.ble-device:last-child {
+  border-bottom: 0;
+}
+
+.ble-name {
+  color: #172033;
+  font-size: 27rpx;
+  font-weight: 700;
+}
+
+.ble-rssi {
+  flex-shrink: 0;
+  color: #0f766e;
+  font-size: 22rpx;
+  font-weight: 700;
+}
+
+.bluetooth-empty {
+  margin-top: 24rpx;
+  padding: 34rpx 20rpx;
+}
+
+.ble-provision {
+  display: flex;
+  flex-direction: column;
+  gap: 16rpx;
+}
+
+.disabled-card {
+  opacity: 0.78;
+}
+
+.wifi-scan-row button {
+  width: 100%;
+}
+
+.wifi-network-list {
+  border: 1rpx solid #d7e7e6;
+  border-radius: 16rpx;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.wifi-network {
+  padding: 18rpx 20rpx;
+  border-bottom: 1rpx solid #e5eeee;
+}
+
+.wifi-network:last-child {
+  border-bottom: 0;
+}
+
+.wifi-name {
+  color: #172033;
+  font-size: 26rpx;
+  font-weight: 700;
+}
+
+.wifi-meta {
+  margin-top: 6rpx;
+  color: #64748b;
+  font-size: 22rpx;
+}
+
+.ble-command-row {
+  display: flex;
+  gap: 14rpx;
+  margin-top: 22rpx;
+}
+
+.ble-command-row .mini-btn {
+  flex: 1;
+  min-height: 66rpx;
+  line-height: 66rpx;
+  font-size: 24rpx;
+}
+
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12rpx;
+  margin-top: 22rpx;
+}
+
+.health-grid > view {
+  min-width: 0;
+  padding: 18rpx 10rpx;
+  border-radius: 14rpx;
+  background: #f7fbfb;
+  color: #172033;
+  text-align: center;
+  font-size: 26rpx;
+  font-weight: 800;
+}
+
+.good-text {
+  color: #0f766e;
+}
+
+.bad-text {
+  color: #b42318;
+}

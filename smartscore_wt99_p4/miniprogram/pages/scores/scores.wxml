@@ -1,0 +1,118 @@
+<view class="page">
+  <view class="section-header">
+    <view>
+      <view class="section-title">选择乐谱</view>
+      <view class="hint">上传文件、读取设备 SD 卡，或使用手机本地乐谱。</view>
+    </view>
+  </view>
+
+  <view class="source-tabs">
+    <view class="source-tab {{activeSource == 'upload' ? 'active' : ''}}"
+          data-source="upload" bindtap="switchSource">
+      <view class="source-icon">＋</view>
+      <view>上传文件</view>
+    </view>
+    <view class="source-tab {{activeSource == 'sd' ? 'active' : ''}}"
+          data-source="sd" bindtap="switchSource">
+      <view class="source-icon">SD</view>
+      <view>设备 SD 卡</view>
+    </view>
+    <view class="source-tab {{activeSource == 'local' ? 'active' : ''}}"
+          data-source="local" bindtap="switchSource">
+      <view class="source-icon">▣</view>
+      <view>手机本地</view>
+    </view>
+  </view>
+
+  <view wx:if="{{activeSource == 'upload'}}" class="card upload-panel">
+    <view class="upload-mark">♬</view>
+    <view class="upload-title">从手机选择乐谱文件</view>
+    <view class="hint upload-hint">支持标准 JSON 乐谱和 MIDI 文件。导入后会持久保存到小程序本地，并设为当前乐谱。</view>
+    <button class="primary-btn upload-button" bindtap="chooseScoreFile">选择 JSON / MIDI 文件</button>
+    <view class="format-note">
+      JSON 至少需要 title、bpm 和 notes；MIDI 会在手机端转换为可评分音符。
+    </view>
+  </view>
+
+  <view wx:if="{{activeSource == 'sd'}}">
+    <view class="card sd-toolbar">
+      <view class="search-row">
+        <input class="search-input" value="{{sdSearch}}" placeholder="搜索标题或文件名"
+               bindinput="onSdSearchInput" confirm-type="search"
+               bindconfirm="searchSdScores"></input>
+        <button class="primary-btn search-btn" bindtap="searchSdScores"
+                loading="{{sdLoading}}">搜索</button>
+      </view>
+      <view class="hint">读取设备目录 /sdcard/scores，仅显示有效且不超过 256 KiB 的 JSON 乐谱。</view>
+    </view>
+
+    <view class="card empty-state" wx:if="{{!sdPresent}}">
+      尚未连接设备，或设备未检测到 SD 乐谱目录。
+    </view>
+    <view class="card empty-state" wx:elif="{{!sdLoading && sdPresent && !sdScores.length}}">
+      SD 卡中没有符合条件的乐谱。
+    </view>
+    <view class="score-list">
+      <view class="card score-item" wx:for="{{sdScores}}" wx:key="filename">
+        <view class="row between">
+          <view class="score-main">
+            <view class="score-title">{{item.title}}</view>
+            <view class="score-meta">{{item.filename}}</view>
+            <view class="score-meta">{{item.bpm}} BPM · {{item.time_signature}} · {{item.note_count}} 个音符</view>
+          </view>
+          <view class="tag">设备 SD</view>
+        </view>
+        <view class="score-actions">
+          <button class="primary-btn mini-btn" data-filename="{{item.filename}}"
+                  bindtap="selectSdScore">选择乐谱</button>
+          <button class="secondary-btn mini-btn" data-filename="{{item.filename}}"
+                  bindtap="saveSdScoreToLocal">保存到本地</button>
+          <button class="ghost-btn mini-btn" data-filename="{{item.filename}}"
+                  data-title="{{item.title}}" bindtap="renameSdScore">重命名</button>
+        </view>
+      </view>
+    </view>
+    <view class="pagination" wx:if="{{sdTotalPages > 0}}">
+      <button class="ghost-btn page-btn" bindtap="previousSdPage"
+              disabled="{{sdPage <= 1}}">上一页</button>
+      <view>第 {{sdPage}} / {{sdTotalPages}} 页 · 共 {{sdTotal}} 首</view>
+      <button class="ghost-btn page-btn" bindtap="nextSdPage"
+              disabled="{{sdPage >= sdTotalPages}}">下一页</button>
+    </view>
+  </view>
+
+  <view wx:if="{{activeSource == 'local'}}">
+    <view class="card local-summary">
+      <view>
+        <view class="upload-title">手机本地乐谱</view>
+        <view class="hint">已持久保存 {{localScores.length}} 首，删除后会同时移除本地 JSON 文件。</view>
+      </view>
+      <button class="secondary-btn small-action" data-source="upload"
+              bindtap="switchSource">继续上传</button>
+    </view>
+    <view class="card empty-state" wx:if="{{!localScores.length}}">
+      暂无本地乐谱。请先上传 JSON / MIDI，或从设备 SD 卡保存一份。
+    </view>
+    <view class="score-list">
+      <view class="card score-item {{currentScoreId == item.id ? 'current' : ''}}"
+            wx:for="{{localScores}}" wx:key="id">
+        <view class="row between">
+          <view class="score-main" bindtap="viewLocalScore" data-id="{{item.id}}">
+            <view class="score-title">{{item.title}}</view>
+            <view class="score-meta">{{item.bpm}} BPM · {{item.time_signature}} · {{item.noteCount}} 个音符</view>
+            <view class="score-meta">{{item.updatedAt}} · {{item.source}}</view>
+          </view>
+          <view class="tag" wx:if="{{currentScoreId == item.id}}">当前</view>
+        </view>
+        <view class="score-actions">
+          <button class="primary-btn mini-btn" bindtap="selectLocalScore"
+                  data-id="{{item.id}}">选择并同步</button>
+          <button class="ghost-btn mini-btn" bindtap="renameLocalScore"
+                  data-id="{{item.id}}">重命名</button>
+          <button class="danger-btn mini-btn" bindtap="deleteLocalScore"
+                  data-id="{{item.id}}">删除</button>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>

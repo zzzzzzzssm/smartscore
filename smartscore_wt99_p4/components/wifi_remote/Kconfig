@@ -1,0 +1,4 @@
+# esp_wifi_remote 1.6.0 selects its IDF-specific Kconfig file using the full
+# ESP-IDF patch version.  The package provides the 5.4 schema but no separate
+# 5.4.4 file, so load the pinned 5.4 schema from this project-owned shim.
+rsource "../../managed_components/espressif__esp_wifi_remote/Kconfig.idf_v5.4.in"

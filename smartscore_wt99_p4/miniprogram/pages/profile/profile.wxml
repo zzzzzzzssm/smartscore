@@ -1,0 +1,58 @@
+<view class="page">
+  <view class="profile-card card">
+    <view class="avatar">谱</view>
+    <view class="profile-copy">
+      <view class="nickname">{{user.nickname}}</view>
+      <view class="muted">钢琴 / 键盘练习者</view>
+      <view class="profile-tag">设备协同练习</view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-title">练习统计</view>
+    <view class="stats-grid">
+      <view class="metric">
+        <view class="metric-label">累计练习</view>
+        <view class="metric-value">{{stats.total}}</view>
+      </view>
+      <view class="metric">
+        <view class="metric-label">平均分</view>
+        <view class="metric-value">{{stats.average}}</view>
+      </view>
+      <view class="metric">
+        <view class="metric-label">最高分</view>
+        <view class="metric-value">{{stats.best}}</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-title">项目</view>
+    <view class="card menu-card">
+      <view class="menu-item" bindtap="showAbout">
+        <view class="menu-icon about-icon">i</view>
+        <view class="menu-copy">
+          <view class="menu-title">关于项目</view>
+          <view class="hint">智能乐谱、音高识别评分与设备协同</view>
+        </view>
+        <view class="chevron">›</view>
+      </view>
+      <view class="menu-item" bindtap="showGuide">
+        <view class="menu-icon guide-icon">?</view>
+        <view class="menu-copy">
+          <view class="menu-title">使用说明</view>
+          <view class="hint">上传乐谱、开始练习、查看记录</view>
+        </view>
+        <view class="chevron">›</view>
+      </view>
+      <view class="menu-item" bindtap="sendFeedback">
+        <view class="menu-icon contact-icon">✉</view>
+        <view class="menu-copy">
+          <view class="menu-title">联系与反馈</view>
+          <view class="hint">提交设备问题与改进建议</view>
+        </view>
+        <view class="chevron">›</view>
+      </view>
+    </view>
+  </view>
+</view>

@@ -1,0 +1,98 @@
+<view class="page music-page">
+  <view class="music-hero">
+    <view class="hero-row">
+      <view>
+        <view class="hero-kicker">SD MUSIC PLAYER</view>
+        <view class="hero-title">音乐播放模式</view>
+        <view class="hero-subtitle">搜索并播放 SD 卡中的 WAV 音频</view>
+      </view>
+      <view class="online-dot {{online ? 'on' : ''}}"></view>
+    </view>
+    <view class="hero-status">{{statusText}}</view>
+  </view>
+
+  <view class="offline-card" wx:if="{{online && controlOnly}}">
+    <view class="offline-title">扬声器已禁用</view>
+    <view class="hint">播放、暂停、停止与音量状态仍会和屏幕同步，但当前不会输出声音。</view>
+  </view>
+
+  <view class="offline-card" wx:if="{{!online}}">
+    <view class="offline-title">{{configured ? '设备暂时离线' : '离线预览模式'}}</view>
+    <view class="hint">
+      {{configured ? '正在等待设备恢复连接；当前可提前查看播放器界面。' : '当前可提前查看播放器界面，连接设备后读取 SD 卡。'}}
+    </view>
+    <button class="primary-btn" bindtap="openDevicePage">前往设备页</button>
+  </view>
+
+  <block>
+    <view class="section">
+      <view class="card volume-card">
+        <view class="row between">
+          <view>
+            <view class="card-title">音量</view>
+            <view class="hint">{{online ? '页面 0～100 · 扬声器映射到 0～80' : '音量控制将在连接设备后生效'}}</view>
+          </view>
+          <view class="volume-value">{{volume}}</view>
+        </view>
+        <slider min="0" max="100" step="1" value="{{volume}}" activeColor="#0f766e" backgroundColor="#dce9e8" bindchanging="onVolumeChanging" bindchange="onVolumeChange" />
+        <view class="control-row">
+          <button class="secondary-btn control-btn" bindtap="toggleMute">{{muted ? '取消静音' : '静音'}}</button>
+          <button class="secondary-btn control-btn" bindtap="pauseFile" disabled="{{!activeFile}}">{{filePaused ? '继续' : '暂停'}}</button>
+          <button class="stop-btn control-btn" bindtap="stopFile" disabled="{{!activeFile}}">停止</button>
+        </view>
+      </view>
+    </view>
+
+    <view class="section">
+      <view class="section-head">
+        <view>
+          <view class="section-title compact">SD 卡曲库</view>
+          <view class="hint">{{online ? '/sdcard/wav · 每页 10 首' : '连接设备后读取 /sdcard/wav'}}</view>
+        </view>
+        <view class="refresh-btn {{filesLoading ? 'disabled' : ''}}" bindtap="refreshFiles" hover-class="control-hover">{{filesLoading ? '刷新中' : '刷新'}}</view>
+      </view>
+
+      <view class="search-card">
+        <input class="search-input" value="{{searchInput}}" maxlength="64" placeholder="搜索歌曲或文件名" confirm-type="search" bindinput="onSearchInput" bindconfirm="searchFiles" />
+        <view class="search-btn" bindtap="searchFiles" hover-class="control-hover">搜索</view>
+        <view class="clear-btn" bindtap="clearSearch" hover-class="control-hover" wx:if="{{searchInput || activeSearch}}">清空</view>
+      </view>
+
+      <view class="sd-state {{sdPresent ? 'ready' : ''}}">{{sdText}}</view>
+      <view class="result-summary" wx:if="{{sdPresent}}">
+        <text wx:if="{{activeSearch}}">“{{activeSearch}}”找到 </text>{{total}} 首
+      </view>
+
+      <view class="card file-list">
+        <view wx:if="{{files.length}}">
+          <view class="file-item {{activeFile == item ? 'active' : ''}}" wx:for="{{files}}" wx:key="*this">
+            <view class="file-info" bindtap="playFile" data-name="{{item}}">
+              <view class="file-icon">♫</view>
+              <view class="file-copy">
+                <view class="file-name">{{item}}</view>
+                <view class="playing-label" wx:if="{{activeFile == item}}">{{filePaused ? '已暂停' : '正在播放'}}</view>
+              </view>
+            </view>
+            <view class="file-play" bindtap="playFile" data-name="{{item}}" hover-class="control-hover">{{activeFile == item && !filePaused ? '重播' : '播放'}}</view>
+          </view>
+        </view>
+        <view class="empty" wx:else>{{filesLoading ? '正在读取曲库…' : emptyText}}</view>
+
+        <view class="pagination" wx:if="{{totalPages > 0}}">
+          <view class="page-btn {{page <= 1 || filesLoading ? 'disabled' : ''}}" bindtap="previousPage" hover-class="control-hover">上一页</view>
+          <view class="page-number"><text>{{page}}</text> / {{totalPages}}</view>
+          <view class="page-btn {{page >= totalPages || filesLoading ? 'disabled' : ''}}" bindtap="nextPage" hover-class="control-hover">下一页</view>
+        </view>
+      </view>
+    </view>
+
+    <view class="now-playing {{activeFile ? 'visible' : ''}}">
+      <view class="now-icon">♫</view>
+      <view class="now-copy">
+        <view class="now-label">{{filePaused ? '已暂停' : '正在播放'}}</view>
+        <view class="now-title">{{activeFile}}</view>
+      </view>
+      <view class="now-stop" bindtap="stopFile" hover-class="control-hover">停止</view>
+    </view>
+  </block>
+</view>

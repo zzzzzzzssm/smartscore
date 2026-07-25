@@ -1,0 +1,12 @@
+build/
+build_*/
+managed_components/
+release/
+sdkconfig
+sdkconfig.old
+.vscode/
+.agents/
+*.log
+*.bin
+*.elf
+*.map

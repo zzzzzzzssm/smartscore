@@ -1,0 +1,8 @@
+# SmartScore WT99P4C5-S1, 16 MiB P4 flash.
+# Keep the factory app at 0x10000 to minimize migration risk from the original
+# single-app layout. SD audio remains on the external MicroSD card.
+# Name,     Type, SubType, Offset,   Size,     Flags
+nvs,        data, nvs,     0x9000,   0x6000,
+factory,    app,  factory, 0x10000,  0x800000,
+storage,    data, spiffs,  0x810000, 0x7E0000,
+coredump,   data, coredump,0xFF0000, 0x10000,

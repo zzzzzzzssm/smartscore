@@ -1,0 +1,23 @@
+/build/
+/managed_components/
+/sdkconfig
+/sdkconfig.old
+/.tmp/
+/.vscode/
+/components/Express/
+*.bin
+*.elf
+*.map
+
+# Local gesture training data and generated artifacts contain private photos
+# or large reproducible outputs and must never be committed.
+/training_data/
+/training_artifacts/
+/.venv-train/
+/.venv-train-v2/
+/training_artifacts_v2/
+/training_artifacts_mnv2_fast/
+/training_artifacts_tiny_fast/
+/training/__pycache__/
+/training/.mplcache/
+/training/**/*.pyc

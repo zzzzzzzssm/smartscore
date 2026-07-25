@@ -1,0 +1,1752 @@
+#include "device_api.h"
+
+#include <stdlib.h>
+#include <string.h>
+
+#include "cJSON.h"
+#include "esp_heap_caps.h"
+#include "esp_http_server.h"
+#include "esp_log.h"
+#include "input_source_manager.h"
+#include "network_provisioning.h"
+#include "score_data.h"
+#include "score_json_parser.h"
+#include "score_storage.h"
+#include "scoring_service.h"
+#include "screen_adapter.h"
+#include "speaker_service.h"
+#include "usb_midi.h"
+
+#define DEVICE_API_MAX_BODY_BYTES 512
+#define DEVICE_API_MAX_QUERY_BYTES 256
+#define DEVICE_API_MAX_SEARCH_BYTES 64
+#define DEVICE_API_AUDIO_PAGE_SIZE 10
+#define DEVICE_API_SCORE_PAGE_SIZE 20
+#define DEVICE_API_SCORE_MAX_BODY_BYTES (256 * 1024)
+#define DEVICE_API_SCORING_TIMEOUT_MS 10000
+
+static const char *TAG = "DEVICE_API";
+static httpd_handle_t s_server;
+
+static int hex_digit_value(char value)
+{
+    if (value >= '0' && value <= '9') {
+        return value - '0';
+    }
+    if (value >= 'a' && value <= 'f') {
+        return value - 'a' + 10;
+    }
+    if (value >= 'A' && value <= 'F') {
+        return value - 'A' + 10;
+    }
+    return -1;
+}
+
+static esp_err_t decode_query_value(const char *encoded,
+                                    char *decoded,
+                                    size_t decoded_capacity)
+{
+    if (encoded == NULL || decoded == NULL || decoded_capacity == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    size_t output = 0;
+    for (size_t input = 0; encoded[input] != '\0'; ++input) {
+        unsigned char value = (unsigned char)encoded[input];
+        if (value == '%') {
+            int high = hex_digit_value(encoded[input + 1]);
+            int low = encoded[input + 1] == '\0'
+                          ? -1
+                          : hex_digit_value(encoded[input + 2]);
+            if (high < 0 || low < 0) {
+                return ESP_ERR_INVALID_ARG;
+            }
+            value = (unsigned char)((high << 4) | low);
+            input += 2;
+        } else if (value == '+') {
+            value = ' ';
+        }
+        if (value == '\0' || output + 1 >= decoded_capacity) {
+            return ESP_ERR_INVALID_SIZE;
+        }
+        decoded[output++] = (char)value;
+    }
+    decoded[output] = '\0';
+    return ESP_OK;
+}
+
+static esp_err_t query_size_value(const char *query,
+                                  const char *key,
+                                  size_t default_value,
+                                  size_t maximum,
+                                  size_t *out_value)
+{
+    char value[16];
+    if (query == NULL || query[0] == '\0' ||
+        httpd_query_key_value(query, key, value, sizeof(value)) != ESP_OK) {
+        *out_value = default_value;
+        return ESP_OK;
+    }
+    char *end = NULL;
+    unsigned long parsed = strtoul(value, &end, 10);
+    if (value[0] == '\0' || end == NULL || *end != '\0' || parsed == 0 ||
+        parsed > maximum) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    *out_value = (size_t)parsed;
+    return ESP_OK;
+}
+
+static const char *speaker_state_name(speaker_state_t state)
+{
+    switch (state) {
+        case SPEAKER_STATE_UNINITIALIZED:
+            return "uninitialized";
+        case SPEAKER_STATE_STOPPED:
+            return "stopped";
+        case SPEAKER_STATE_TONE:
+            return "tone";
+        case SPEAKER_STATE_METRONOME:
+            return "metronome";
+        case SPEAKER_STATE_FILE:
+            return "file";
+        case SPEAKER_STATE_FILE_PAUSED:
+            return "file_paused";
+        case SPEAKER_STATE_ERROR:
+            return "error";
+        default:
+            return "unknown";
+    }
+}
+
+static void add_audio_status(cJSON *parent)
+{
+    speaker_status_t status;
+    memset(&status, 0, sizeof(status));
+    speaker_service_get_status(&status);
+
+    cJSON *audio = cJSON_AddObjectToObject(parent, "audio");
+    if (audio == NULL) {
+        return;
+    }
+    cJSON_AddBoolToObject(audio, "ready", speaker_service_is_ready());
+    cJSON_AddBoolToObject(audio, "hardware_output_enabled",
+                          status.hardware_output_enabled);
+    cJSON_AddBoolToObject(audio, "control_only",
+                          speaker_service_is_ready() &&
+                          !status.hardware_output_enabled);
+    cJSON_AddStringToObject(audio, "state", speaker_state_name(status.state));
+    cJSON_AddNumberToObject(audio, "frequency_hz", status.frequency_hz);
+    cJSON_AddNumberToObject(audio, "duration_ms", status.duration_ms);
+    cJSON_AddNumberToObject(audio, "elapsed_ms", status.elapsed_ms);
+    cJSON_AddBoolToObject(audio, "sd_present", status.sd_present);
+    cJSON_AddNumberToObject(audio, "sd_capacity_bytes",
+                            (double)status.sd_capacity_bytes);
+    cJSON_AddBoolToObject(audio, "codec_ready", status.hardware.codec_ready);
+    cJSON_AddBoolToObject(audio, "amp_enabled", status.hardware.amp_enabled);
+    cJSON_AddBoolToObject(audio, "muted", status.hardware.muted);
+    cJSON_AddNumberToObject(audio, "volume", status.hardware.volume_percent);
+    cJSON_AddNumberToObject(audio, "sample_rate_hz",
+                            status.hardware.sample_rate_hz);
+    cJSON_AddNumberToObject(audio, "write_errors", status.hardware.write_errors);
+    cJSON_AddNumberToObject(audio, "task_stack_min_words",
+                            status.task_stack_min_words);
+    cJSON *hardware = cJSON_AddObjectToObject(audio, "hardware");
+    if (hardware != NULL) {
+        cJSON_AddBoolToObject(hardware, "output_enabled",
+                              status.hardware_output_enabled);
+        cJSON_AddBoolToObject(hardware, "codec_ready",
+                              status.hardware.codec_ready);
+        cJSON_AddBoolToObject(hardware, "amp_enabled",
+                              status.hardware.amp_enabled);
+        cJSON_AddBoolToObject(hardware, "muted", status.hardware.muted);
+        cJSON_AddNumberToObject(hardware, "volume_percent",
+                                status.hardware.volume_percent);
+        cJSON_AddNumberToObject(hardware, "sample_rate_hz",
+                                status.hardware.sample_rate_hz);
+        cJSON_AddNumberToObject(hardware, "write_errors",
+                                status.hardware.write_errors);
+    }
+    cJSON *metronome = cJSON_AddObjectToObject(audio, "metronome");
+    if (metronome != NULL) {
+        cJSON_AddBoolToObject(
+            metronome, "running",
+            status.metronome.state == SPEAKER_METRONOME_RUNNING);
+        cJSON_AddBoolToObject(
+            metronome, "paused",
+            status.metronome.state == SPEAKER_METRONOME_PAUSED);
+        cJSON_AddNumberToObject(metronome, "bpm", status.metronome.bpm);
+        cJSON_AddNumberToObject(metronome, "beats_per_measure",
+                                status.metronome.beats_per_measure);
+        cJSON_AddNumberToObject(metronome, "beat_unit",
+                                status.metronome.beat_unit);
+        cJSON_AddNumberToObject(metronome, "beat_index",
+                                status.metronome.beat_index);
+        cJSON_AddNumberToObject(metronome, "queue_errors",
+                                status.metronome.queue_errors);
+    }
+    cJSON *file = cJSON_AddObjectToObject(audio, "file");
+    if (file != NULL) {
+        cJSON_AddStringToObject(file, "name", status.file_name);
+        cJSON_AddBoolToObject(file, "paused",
+                              status.state == SPEAKER_STATE_FILE_PAUSED);
+    }
+    esp_err_t last_error = status.last_error != ESP_OK
+                               ? status.last_error
+                               : status.hardware.last_error;
+    cJSON_AddStringToObject(audio, "last_error", esp_err_to_name(last_error));
+}
+
+static const char *preparation_phase_name(screen_preparation_phase_t phase)
+{
+    switch (phase) {
+    case SCREEN_PREPARATION_PREPARED: return "prepared";
+    case SCREEN_PREPARATION_STARTING: return "starting";
+    case SCREEN_PREPARATION_READING: return "reading";
+    case SCREEN_PREPARATION_FOLLOWING: return "following";
+    case SCREEN_PREPARATION_ERROR: return "error";
+    case SCREEN_PREPARATION_IDLE:
+    default: return "idle";
+    }
+}
+
+static void add_preparation_status(cJSON *parent)
+{
+    screen_preparation_status_t status = {0};
+    screen_adapter_get_preparation_status(&status);
+    cJSON *preparation =
+        cJSON_AddObjectToObject(parent, "preparation");
+    if (!preparation) return;
+    cJSON_AddBoolToObject(preparation, "valid", status.valid);
+    cJSON_AddBoolToObject(preparation, "screen_ready",
+                          status.screen_ready);
+    cJSON_AddNumberToObject(preparation, "revision", status.revision);
+    cJSON_AddStringToObject(preparation, "phase",
+                            preparation_phase_name(status.phase));
+    cJSON_AddStringToObject(
+        preparation, "notation_type",
+        status.notation == SCREEN_PREPARATION_NUMBERED
+            ? "numbered" : "staff");
+    cJSON_AddStringToObject(
+        preparation, "mode",
+        status.mode == SCREEN_PREPARATION_READ_ONLY
+            ? "read_only" : "follow");
+    cJSON_AddStringToObject(
+        preparation, "input_source",
+        status.input == SCREEN_PREPARATION_USB_MIDI
+            ? "usb_midi" : "audio_s3");
+    cJSON_AddStringToObject(preparation, "filename", status.filename);
+    cJSON_AddStringToObject(preparation, "title", status.title);
+    cJSON_AddStringToObject(preparation, "key", status.key);
+    cJSON_AddNumberToObject(preparation, "bpm", status.bpm);
+    cJSON_AddNumberToObject(preparation, "time_sig_num",
+                            status.time_sig_num);
+    cJSON_AddNumberToObject(preparation, "time_sig_den",
+                            status.time_sig_den);
+    cJSON_AddNumberToObject(preparation, "note_count",
+                            status.note_count);
+    cJSON_AddStringToObject(preparation, "last_error",
+                            esp_err_to_name(status.last_error));
+    cJSON_AddStringToObject(preparation, "message", status.message);
+}
+
+static esp_err_t send_json(httpd_req_t *request,
+                           const char *http_status,
+                           cJSON *root)
+{
+    if (root == NULL) {
+        return httpd_resp_send_err(request,
+                                   HTTPD_500_INTERNAL_SERVER_ERROR,
+                                   "out of memory");
+    }
+    char *json = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (json == NULL) {
+        return httpd_resp_send_err(request,
+                                   HTTPD_500_INTERNAL_SERVER_ERROR,
+                                   "out of memory");
+    }
+    httpd_resp_set_status(request, http_status);
+    httpd_resp_set_type(request, "application/json; charset=utf-8");
+    httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+    esp_err_t err = httpd_resp_sendstr(request, json);
+    cJSON_free(json);
+    return err;
+}
+
+static esp_err_t send_error_json(httpd_req_t *request,
+                                 const char *http_status,
+                                 const char *code,
+                                 const char *message)
+{
+    cJSON *root = cJSON_CreateObject();
+    if (root != NULL) {
+        cJSON_AddBoolToObject(root, "ok", false);
+        cJSON_AddStringToObject(root, "error", code);
+        cJSON_AddStringToObject(root, "message", message);
+    }
+    return send_json(request, http_status, root);
+}
+
+static esp_err_t send_command_result(httpd_req_t *request,
+                                     esp_err_t command_error,
+                                     const char *message)
+{
+    if (command_error != ESP_OK) {
+        const char *http_status = command_error == ESP_ERR_INVALID_ARG
+                                      ? "400 Bad Request"
+                                      : "409 Conflict";
+        return send_error_json(request,
+                               http_status,
+                               esp_err_to_name(command_error),
+                               message);
+    }
+    cJSON *root = cJSON_CreateObject();
+    if (root != NULL) {
+        cJSON_AddBoolToObject(root, "ok", true);
+        cJSON_AddBoolToObject(root, "queued", true);
+        cJSON_AddStringToObject(root, "message", message);
+    }
+    return send_json(request, "202 Accepted", root);
+}
+
+static esp_err_t receive_json(httpd_req_t *request, cJSON **out_root)
+{
+    if (request == NULL || out_root == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    *out_root = NULL;
+    if (request->content_len == 0 ||
+        request->content_len > DEVICE_API_MAX_BODY_BYTES) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    char body[DEVICE_API_MAX_BODY_BYTES + 1];
+    size_t received = 0;
+    while (received < request->content_len) {
+        int count = httpd_req_recv(request,
+                                   body + received,
+                                   request->content_len - received);
+        if (count == HTTPD_SOCK_ERR_TIMEOUT) {
+            continue;
+        }
+        if (count <= 0) {
+            return ESP_FAIL;
+        }
+        received += (size_t)count;
+    }
+    body[received] = '\0';
+    *out_root = cJSON_ParseWithLength(body, received);
+    return *out_root != NULL && cJSON_IsObject(*out_root)
+               ? ESP_OK
+               : ESP_ERR_INVALID_ARG;
+}
+
+static esp_err_t receive_large_body(httpd_req_t *request,
+                                    size_t maximum,
+                                    char **out_body,
+                                    size_t *out_length)
+{
+    if (request == NULL || out_body == NULL || out_length == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    *out_body = NULL;
+    *out_length = 0;
+    if (request->content_len == 0 || request->content_len > maximum) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    size_t allocation_size = request->content_len + 1U;
+    char *body = NULL;
+    if (heap_caps_get_total_size(MALLOC_CAP_SPIRAM) > 0) {
+        body = heap_caps_malloc(allocation_size,
+                                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    if (body == NULL) {
+        body = heap_caps_malloc(allocation_size,
+                                MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+    if (body == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+    size_t received = 0;
+    while (received < request->content_len) {
+        int count = httpd_req_recv(request, body + received,
+                                   request->content_len - received);
+        if (count == HTTPD_SOCK_ERR_TIMEOUT) {
+            continue;
+        }
+        if (count <= 0) {
+            heap_caps_free(body);
+            return ESP_FAIL;
+        }
+        received += (size_t)count;
+    }
+    body[received] = '\0';
+    *out_body = body;
+    *out_length = received;
+    return ESP_OK;
+}
+
+static esp_err_t receive_optional_json(httpd_req_t *request, cJSON **out_root)
+{
+    if (request == NULL || out_root == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (request->content_len == 0) {
+        *out_root = cJSON_CreateObject();
+        return *out_root != NULL ? ESP_OK : ESP_ERR_NO_MEM;
+    }
+    return receive_json(request, out_root);
+}
+
+static esp_err_t ping_handler(httpd_req_t *request)
+{
+    network_status_t network = network_provisioning_get_status();
+    bool connected = network.state == NETWORK_STATE_WIFI_CONNECTED;
+    cJSON *root = cJSON_CreateObject();
+    if (root != NULL) {
+        cJSON_AddBoolToObject(root, "ok", connected);
+        cJSON_AddStringToObject(root, "device", "SmartScore-WT99");
+        cJSON_AddStringToObject(root, "network",
+                                connected ? "connected" : "disconnected");
+        cJSON_AddStringToObject(root, "ip", network.ip);
+    }
+    return send_json(request, "200 OK", root);
+}
+
+static void add_input_status(cJSON *root,
+                             const input_source_status_t *status)
+{
+    cJSON_AddStringToObject(root, "selected_input",
+                            input_source_name(status->selected_input));
+    cJSON_AddStringToObject(root, "active_input",
+                            input_source_name(status->active_input));
+    cJSON_AddBoolToObject(root, "input_locked", status->input_locked);
+    cJSON_AddBoolToObject(root, "usb_midi_connected",
+                          status->usb_midi_connected);
+    cJSON_AddNumberToObject(root, "vid", status->usb_midi_vid);
+    cJSON_AddNumberToObject(root, "pid", status->usb_midi_pid);
+    cJSON_AddStringToObject(root, "product", status->usb_midi_product);
+    cJSON_AddBoolToObject(root, "audio_s3_connected",
+                          status->audio_s3_connected);
+    cJSON_AddBoolToObject(root, "audio_s3_implemented",
+                          status->audio_s3_implemented);
+}
+
+static esp_err_t status_handler(httpd_req_t *request)
+{
+    network_status_t network = network_provisioning_get_status();
+    bool connected = network.state == NETWORK_STATE_WIFI_CONNECTED;
+    cJSON *root = cJSON_CreateObject();
+    if (root != NULL) {
+        cJSON_AddBoolToObject(root, "ok", connected);
+        cJSON_AddStringToObject(root, "device", "SmartScore-WT99");
+        cJSON_AddBoolToObject(root, "p4_ready", true);
+        cJSON_AddBoolToObject(root, "c5_network_ready", connected);
+        cJSON_AddStringToObject(root, "state",
+                                network_provisioning_state_name(network.state));
+        cJSON_AddStringToObject(root, "ip", network.ip);
+        cJSON_AddNumberToObject(root, "retry_count", network.retry_count);
+        cJSON_AddNumberToObject(root, "internal_heap_free",
+                                heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+        cJSON_AddNumberToObject(root, "psram_free",
+                                heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        input_source_status_t input;
+        input_source_manager_get_status(&input);
+        add_input_status(root, &input);
+        cJSON_AddStringToObject(root, "active_source",
+                                input_source_name(input.active_input));
+        usb_midi_status_t midi;
+        memset(&midi, 0, sizeof(midi));
+        usb_midi_get_status(&midi);
+        cJSON_AddNumberToObject(root, "usb_midi_dropped_events",
+                                midi.dropped_events);
+        if (midi.error[0] != '\0') {
+            cJSON_AddStringToObject(root, "usb_midi_error", midi.error);
+        }
+        score_data_status_t score;
+        score_data_get_status(&score);
+        scoring_service_status_t practice;
+        scoring_service_get_status(&practice);
+        cJSON_AddNumberToObject(root, "target_count", score.note_count);
+        cJSON_AddNumberToObject(root, "played_count", practice.played_count);
+        cJSON_AddStringToObject(
+            root, "practice_state",
+            scoring_service_state_name(practice.state));
+        cJSON_AddStringToObject(root, "input_source",
+                                input_source_name(input.active_input));
+        cJSON_AddStringToObject(root, "scoring_profile", practice.profile);
+        if (practice.error[0] != '\0') {
+            cJSON_AddStringToObject(root, "practice_error", practice.error);
+            cJSON_AddStringToObject(root, "practice_message",
+                                    practice.message);
+        }
+        if (network.failure_reason[0] != '\0') {
+            cJSON_AddStringToObject(root, "reason", network.failure_reason);
+        }
+        add_audio_status(root);
+    }
+    return send_json(request, "200 OK", root);
+}
+
+static esp_err_t input_status_handler(httpd_req_t *request)
+{
+    input_source_status_t status;
+    input_source_manager_get_status(&status);
+    cJSON *root = cJSON_CreateObject();
+    if (root != NULL) {
+        cJSON_AddBoolToObject(root, "ok", true);
+        add_input_status(root, &status);
+    }
+    return send_json(request, "200 OK", root);
+}
+
+static esp_err_t input_select_handler(httpd_req_t *request)
+{
+    input_source_status_t current;
+    input_source_manager_get_status(&current);
+    if (current.input_locked) {
+        return send_error_json(request, "409 Conflict", "practice_running",
+                               "input source is locked during practice");
+    }
+
+    cJSON *root = NULL;
+    esp_err_t err = receive_json(request, &root);
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return send_error_json(request, "400 Bad Request",
+                               "invalid_input_request",
+                               "body must be a JSON object");
+    }
+    cJSON *source_json = cJSON_GetObjectItemCaseSensitive(root, "source");
+    input_source_t source = INPUT_SOURCE_NONE;
+    bool valid = cJSON_IsString(source_json) &&
+                 input_source_from_name(source_json->valuestring, &source) &&
+                 (source == INPUT_SOURCE_USB_MIDI ||
+                  source == INPUT_SOURCE_AUDIO_S3);
+    cJSON_Delete(root);
+    if (!valid) {
+        return send_error_json(
+            request, "400 Bad Request", "invalid_input_source",
+            "source must be usb_midi or audio_s3");
+    }
+
+    err = input_source_manager_select(source);
+    if (err == ESP_ERR_INVALID_STATE) {
+        return send_error_json(request, "409 Conflict", "practice_running",
+                               "input source is locked during practice");
+    }
+    if (err != ESP_OK) {
+        return send_error_json(request, "500 Internal Server Error",
+                               "input_selection_save_failed",
+                               "unable to save selected input to NVS");
+    }
+
+    input_source_status_t updated;
+    input_source_manager_get_status(&updated);
+    cJSON *response = cJSON_CreateObject();
+    if (response != NULL) {
+        cJSON_AddBoolToObject(response, "ok", true);
+        add_input_status(response, &updated);
+    }
+    return send_json(request, "200 OK", response);
+}
+
+static esp_err_t audio_status_handler(httpd_req_t *request)
+{
+    cJSON *root = cJSON_CreateObject();
+    if (root != NULL) {
+        cJSON_AddBoolToObject(root, "ok", speaker_service_is_ready());
+        add_audio_status(root);
+    }
+    return send_json(request, "200 OK", root);
+}
+
+static esp_err_t score_upload_handler(httpd_req_t *request)
+{
+    char *body = NULL;
+    size_t body_length = 0;
+    esp_err_t err = receive_large_body(request,
+                                        DEVICE_API_SCORE_MAX_BODY_BYTES,
+                                        &body, &body_length);
+    if (err != ESP_OK) {
+        const char *status = err == ESP_ERR_INVALID_SIZE
+                                 ? "413 Payload Too Large"
+                                 : "500 Internal Server Error";
+        const char *code = err == ESP_ERR_INVALID_SIZE
+                               ? "score_json_too_large"
+                               : "score_body_read_failed";
+        return send_error_json(request, status, code,
+                               "failed to read score JSON");
+    }
+
+    char parse_error[96] = {0};
+    size_t note_count = 0;
+    err = score_json_parse_and_store(body, body_length,
+                                     parse_error, sizeof(parse_error),
+                                     &note_count);
+    if (err != ESP_OK) {
+        heap_caps_free(body);
+        const char *status = err == ESP_ERR_INVALID_SIZE
+                                 ? "413 Payload Too Large"
+                                 : err == ESP_ERR_NO_MEM
+                                       ? "500 Internal Server Error"
+                                       : "400 Bad Request";
+        return send_error_json(request, status,
+                               parse_error[0] != '\0'
+                                   ? parse_error
+                                   : esp_err_to_name(err),
+                               "score JSON was not stored");
+    }
+
+    err = screen_adapter_prepare_score_json(
+        body, body_length, "REMOTE.JSON");
+    heap_caps_free(body);
+    if (err != ESP_OK) {
+        return send_error_json(
+            request,
+            err == ESP_ERR_INVALID_STATE
+                ? "409 Conflict" : "500 Internal Server Error",
+            "screen_preparation_failed",
+            err == ESP_ERR_INVALID_STATE
+                ? "screen is not ready or another mode is active"
+                : "score was parsed but the screen preparation page failed");
+    }
+
+    score_data_status_t score;
+    score_data_get_status(&score);
+    input_source_status_t input;
+    input_source_manager_get_status(&input);
+    cJSON *root = cJSON_CreateObject();
+    if (root != NULL) {
+        cJSON_AddBoolToObject(root, "ok", true);
+        cJSON_AddStringToObject(root, "message", "score stored");
+        cJSON_AddNumberToObject(root, "notes", note_count);
+        cJSON_AddNumberToObject(root, "note_count", note_count);
+        cJSON_AddStringToObject(root, "title", score.title);
+        cJSON_AddNumberToObject(root, "bpm", score.bpm);
+        cJSON_AddStringToObject(root, "input_source",
+                                input_source_name(input.selected_input));
+        cJSON_AddStringToObject(
+            root, "profile",
+            input.selected_input == INPUT_SOURCE_USB_MIDI
+                ? "midi_strict"
+                : "audio_s3_reserved");
+        add_preparation_status(root);
+    }
+    return send_json(request, "200 OK", root);
+}
+
+static bool contains_search_text(const char *text, const char *search)
+{
+    if (!search || search[0] == '\0') return true;
+    if (!text) return false;
+
+    size_t search_length = strlen(search);
+    for (const unsigned char *cursor = (const unsigned char *)text;
+         *cursor != '\0'; ++cursor) {
+        size_t index = 0;
+        while (index < search_length && cursor[index] != '\0') {
+            unsigned char left = cursor[index];
+            unsigned char right = (unsigned char)search[index];
+            if (left >= 'A' && left <= 'Z') left = (unsigned char)(left + 32);
+            if (right >= 'A' && right <= 'Z') right = (unsigned char)(right + 32);
+            if (left != right) break;
+            ++index;
+        }
+        if (index == search_length) return true;
+    }
+    return false;
+}
+
+static esp_err_t read_query(httpd_req_t *request, char *query,
+                            size_t query_capacity)
+{
+    size_t query_length = httpd_req_get_url_query_len(request);
+    if (query_length + 1 > query_capacity) return ESP_ERR_INVALID_SIZE;
+    if (query_length > 0 &&
+        httpd_req_get_url_query_str(request, query, query_capacity) != ESP_OK)
+        return ESP_ERR_INVALID_ARG;
+    return ESP_OK;
+}
+
+static esp_err_t query_text_value(const char *query, const char *key,
+                                  char *value, size_t value_capacity)
+{
+    value[0] = '\0';
+    if (!query || query[0] == '\0') return ESP_ERR_NOT_FOUND;
+
+    char encoded[DEVICE_API_MAX_QUERY_BYTES + 1] = {0};
+    if (httpd_query_key_value(query, key, encoded, sizeof(encoded)) != ESP_OK)
+        return ESP_ERR_NOT_FOUND;
+    return decode_query_value(encoded, value, value_capacity);
+}
+
+static esp_err_t sd_scores_handler(httpd_req_t *request)
+{
+    char query[DEVICE_API_MAX_QUERY_BYTES + 1] = {0};
+    if (read_query(request, query, sizeof(query)) != ESP_OK)
+        return send_error_json(request, "400 Bad Request", "invalid_query",
+                               "score query is too long or invalid");
+
+    size_t requested_page = 1;
+    size_t page_size = DEVICE_API_SCORE_PAGE_SIZE;
+    if (query_size_value(query, "page", 1, 1000000, &requested_page) != ESP_OK ||
+        query_size_value(query, "page_size", DEVICE_API_SCORE_PAGE_SIZE,
+                         DEVICE_API_SCORE_PAGE_SIZE, &page_size) != ESP_OK)
+        return send_error_json(request, "400 Bad Request", "invalid_page",
+                               "page must be positive and page_size at most 20");
+
+    char search[DEVICE_API_MAX_SEARCH_BYTES + 1] = {0};
+    esp_err_t search_err = query_text_value(query, "search", search,
+                                             sizeof(search));
+    if (search_err != ESP_OK && search_err != ESP_ERR_NOT_FOUND)
+        return send_error_json(request, "400 Bad Request", "invalid_search",
+                               "search must be at most 64 bytes of UTF-8 text");
+
+    score_info_t *entries = calloc(SCORE_LIST_MAX, sizeof(*entries));
+    if (!entries)
+        return send_error_json(request, "500 Internal Server Error",
+                               "no_memory", "unable to allocate score list");
+
+    int scanned = score_storage_scan_sd(entries, SCORE_LIST_MAX);
+    size_t total = 0;
+    if (scanned > 0) {
+        for (int index = 0; index < scanned; ++index) {
+            if (contains_search_text(entries[index].title, search) ||
+                contains_search_text(entries[index].filename, search))
+                ++total;
+        }
+    }
+
+    size_t total_pages = total == 0 ? 0 : (total + page_size - 1) / page_size;
+    size_t actual_page = total_pages > 0 && requested_page > total_pages
+                             ? total_pages
+                             : requested_page;
+    size_t first_match = (actual_page - 1) * page_size;
+    size_t matched = 0;
+    size_t emitted = 0;
+
+    cJSON *root = cJSON_CreateObject();
+    if (root != NULL) {
+        cJSON_AddBoolToObject(root, "ok", scanned >= 0);
+        cJSON_AddBoolToObject(root, "sd_present", scanned >= 0);
+        cJSON_AddStringToObject(root, "directory", "/sdcard/scores");
+        cJSON_AddStringToObject(root, "search", search);
+        cJSON_AddNumberToObject(root, "page", actual_page);
+        cJSON_AddNumberToObject(root, "page_size", page_size);
+        cJSON_AddNumberToObject(root, "total", total);
+        cJSON_AddNumberToObject(root, "total_pages", total_pages);
+        cJSON *scores = cJSON_AddArrayToObject(root, "scores");
+        if (scores != NULL && scanned > 0) {
+            for (int index = 0; index < scanned && emitted < page_size;
+                 ++index) {
+                score_info_t *score = &entries[index];
+                if (!contains_search_text(score->title, search) &&
+                    !contains_search_text(score->filename, search))
+                    continue;
+                if (matched++ < first_match) continue;
+
+                cJSON *item = cJSON_CreateObject();
+                if (!item) break;
+                cJSON_AddStringToObject(item, "filename", score->filename);
+                cJSON_AddStringToObject(item, "title", score->title);
+                cJSON_AddStringToObject(item, "key", score->key);
+                cJSON_AddStringToObject(item, "time_signature",
+                                        score->time_signature);
+                cJSON_AddNumberToObject(item, "bpm", score->bpm);
+                cJSON_AddNumberToObject(item, "note_count",
+                                        score->note_count);
+                cJSON_AddNumberToObject(item, "measure_count",
+                                        score->measure_count);
+                cJSON_AddNumberToObject(item, "file_size",
+                                        (double)score->file_size);
+                cJSON_AddItemToArray(scores, item);
+                ++emitted;
+            }
+        }
+        if (scanned < 0)
+            cJSON_AddStringToObject(root, "message",
+                                    "SD score directory is unavailable");
+    }
+    free(entries);
+    return send_json(request, "200 OK", root);
+}
+
+static esp_err_t sd_score_select_handler(httpd_req_t *request)
+{
+    cJSON *root = NULL;
+    esp_err_t err = receive_json(request, &root);
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return send_error_json(request, "400 Bad Request", "invalid_json",
+                               "select request must be a JSON object");
+    }
+    cJSON *filename = cJSON_GetObjectItemCaseSensitive(root, "filename");
+    if (!cJSON_IsString(filename) ||
+        !score_storage_is_valid_sd_filename(filename->valuestring)) {
+        cJSON_Delete(root);
+        return send_error_json(request, "400 Bad Request", "invalid_filename",
+                               "a safe SD score JSON filename is required");
+    }
+    char safe_filename[64];
+    strlcpy(safe_filename, filename->valuestring, sizeof(safe_filename));
+    bool truncated = strlen(filename->valuestring) >= sizeof(safe_filename);
+    cJSON_Delete(root);
+    if (truncated)
+        return send_error_json(request, "400 Bad Request", "invalid_filename",
+                               "score filename is too long");
+    err = screen_adapter_prepare_sd_score(safe_filename);
+    if (err != ESP_OK)
+        return send_error_json(
+            request,
+            err == ESP_ERR_INVALID_STATE ? "409 Conflict"
+                                         : "400 Bad Request",
+            err == ESP_ERR_INVALID_STATE
+                ? "screen_preparation_conflict" : "score_load_failed",
+            err == ESP_ERR_INVALID_STATE
+                ? "screen is not ready or another mode is active"
+                : "SD score is missing, too large, or invalid");
+
+    score_data_status_t score = {0};
+    score_data_get_status(&score);
+    cJSON *response = cJSON_CreateObject();
+    if (response != NULL) {
+        cJSON_AddBoolToObject(response, "ok", true);
+        cJSON_AddStringToObject(response, "filename", safe_filename);
+        cJSON_AddStringToObject(response, "title", score.title);
+        cJSON_AddNumberToObject(response, "bpm", score.bpm);
+        cJSON_AddNumberToObject(response, "note_count", score.note_count);
+        cJSON_AddStringToObject(response, "message", "SD score selected");
+        add_preparation_status(response);
+    }
+    return send_json(request, "200 OK", response);
+}
+
+static esp_err_t sd_score_rename_handler(httpd_req_t *request)
+{
+    input_source_status_t input = {0};
+    input_source_manager_get_status(&input);
+    if (input.input_locked)
+        return send_error_json(request, "409 Conflict", "practice_running",
+                               "score title cannot change during practice");
+
+    cJSON *root = NULL;
+    esp_err_t err = receive_json(request, &root);
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return send_error_json(request, "400 Bad Request", "invalid_json",
+                               "rename request must be a JSON object");
+    }
+
+    cJSON *filename =
+        cJSON_GetObjectItemCaseSensitive(root, "filename");
+    cJSON *title = cJSON_GetObjectItemCaseSensitive(root, "title");
+    if (!cJSON_IsString(filename) || !cJSON_IsString(title) ||
+        !score_storage_is_valid_sd_filename(filename->valuestring) ||
+        !title->valuestring[0]) {
+        cJSON_Delete(root);
+        return send_error_json(request, "400 Bad Request",
+                               "invalid_score_rename",
+                               "a safe filename and non-empty title are required");
+    }
+
+    char safe_filename[64];
+    char safe_title[64];
+    strlcpy(safe_filename, filename->valuestring, sizeof(safe_filename));
+    strlcpy(safe_title, title->valuestring, sizeof(safe_title));
+    bool truncated =
+        strlen(filename->valuestring) >= sizeof(safe_filename) ||
+        strlen(title->valuestring) >= sizeof(safe_title);
+    cJSON_Delete(root);
+    if (truncated)
+        return send_error_json(request, "400 Bad Request",
+                               "score_rename_too_long",
+                               "filename or title is too long");
+
+    err = score_storage_rename_sd_title(safe_filename, safe_title);
+    if (err != ESP_OK) {
+        const char *status = err == ESP_ERR_NOT_FOUND
+                                 ? "404 Not Found" : "400 Bad Request";
+        const char *code = err == ESP_ERR_NOT_FOUND
+                               ? "score_not_found" : "score_rename_failed";
+        return send_error_json(request, status, code,
+                               "SD score title could not be changed");
+    }
+
+    cJSON *response = cJSON_CreateObject();
+    if (response) {
+        cJSON_AddBoolToObject(response, "ok", true);
+        cJSON_AddStringToObject(response, "filename", safe_filename);
+        cJSON_AddStringToObject(response, "title", safe_title);
+        cJSON_AddStringToObject(response, "message",
+                                "SD score title renamed");
+    }
+    return send_json(request, "200 OK", response);
+}
+
+static esp_err_t preparation_status_handler(httpd_req_t *request)
+{
+    cJSON *response = cJSON_CreateObject();
+    if (response) {
+        cJSON_AddBoolToObject(response, "ok", true);
+        add_preparation_status(response);
+    }
+    return send_json(request, "200 OK", response);
+}
+
+static esp_err_t preparation_options_handler(httpd_req_t *request)
+{
+    cJSON *root = NULL;
+    esp_err_t err = receive_json(request, &root);
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return send_error_json(request, "400 Bad Request",
+                               "invalid_preparation_options",
+                               "options body must be a JSON object");
+    }
+
+    screen_preparation_status_t current = {0};
+    screen_adapter_get_preparation_status(&current);
+    if (!current.valid) {
+        cJSON_Delete(root);
+        return send_error_json(request, "409 Conflict",
+                               "score_not_prepared",
+                               "select a score before changing options");
+    }
+
+    screen_preparation_notation_t notation = current.notation;
+    screen_preparation_mode_t mode = current.mode;
+    screen_preparation_input_t input = current.input;
+    cJSON *notation_json =
+        cJSON_GetObjectItemCaseSensitive(root, "notation_type");
+    cJSON *mode_json = cJSON_GetObjectItemCaseSensitive(root, "mode");
+    cJSON *input_json =
+        cJSON_GetObjectItemCaseSensitive(root, "input_source");
+
+    bool valid = true;
+    if (notation_json) {
+        valid = cJSON_IsString(notation_json) &&
+                (strcmp(notation_json->valuestring, "numbered") == 0 ||
+                 strcmp(notation_json->valuestring, "staff") == 0);
+        if (valid)
+            notation = strcmp(notation_json->valuestring, "numbered") == 0
+                           ? SCREEN_PREPARATION_NUMBERED
+                           : SCREEN_PREPARATION_STAFF;
+    }
+    if (valid && mode_json) {
+        valid = cJSON_IsString(mode_json) &&
+                (strcmp(mode_json->valuestring, "read_only") == 0 ||
+                 strcmp(mode_json->valuestring, "follow") == 0);
+        if (valid)
+            mode = strcmp(mode_json->valuestring, "read_only") == 0
+                       ? SCREEN_PREPARATION_READ_ONLY
+                       : SCREEN_PREPARATION_FOLLOW;
+    }
+    if (valid && input_json) {
+        valid = cJSON_IsString(input_json) &&
+                (strcmp(input_json->valuestring, "usb_midi") == 0 ||
+                 strcmp(input_json->valuestring, "audio_s3") == 0);
+        if (valid)
+            input = strcmp(input_json->valuestring, "usb_midi") == 0
+                        ? SCREEN_PREPARATION_USB_MIDI
+                        : SCREEN_PREPARATION_AUDIO_S3;
+    }
+    cJSON_Delete(root);
+    if (!valid)
+        return send_error_json(
+            request, "400 Bad Request", "invalid_preparation_options",
+            "use numbered/staff, read_only/follow, and usb_midi/audio_s3");
+
+    err = screen_adapter_update_preparation(notation, mode, input);
+    if (err != ESP_OK)
+        return send_error_json(request, "409 Conflict",
+                               "preparation_update_failed",
+                               "preparation options cannot change now");
+    cJSON *response = cJSON_CreateObject();
+    if (response) {
+        cJSON_AddBoolToObject(response, "ok", true);
+        add_preparation_status(response);
+    }
+    return send_json(request, "200 OK", response);
+}
+
+static esp_err_t preparation_start_handler(httpd_req_t *request)
+{
+    (void)request;
+    esp_err_t err = screen_adapter_start_prepared_score();
+    if (err != ESP_OK)
+        return send_error_json(
+            request, "409 Conflict", "preparation_start_failed",
+            "score display or follow mode could not be started");
+    cJSON *response = cJSON_CreateObject();
+    if (response) {
+        cJSON_AddBoolToObject(response, "ok", true);
+        add_preparation_status(response);
+    }
+    return send_json(request, "200 OK", response);
+}
+
+static esp_err_t sd_score_file_handler(httpd_req_t *request)
+{
+    char query[DEVICE_API_MAX_QUERY_BYTES + 1] = {0};
+    if (read_query(request, query, sizeof(query)) != ESP_OK)
+        return send_error_json(request, "400 Bad Request", "invalid_query",
+                               "score file query is invalid");
+
+    char filename[64] = {0};
+    if (query_text_value(query, "name", filename, sizeof(filename)) != ESP_OK ||
+        !score_storage_is_valid_sd_filename(filename))
+        return send_error_json(request, "400 Bad Request", "invalid_filename",
+                               "a safe SD score JSON filename is required");
+
+    char *json = NULL;
+    size_t length = 0;
+    if (!score_storage_read_sd_json(filename, &json, &length))
+        return send_error_json(request, "404 Not Found", "score_not_found",
+                               "SD score was not found or is not readable");
+    httpd_resp_set_status(request, "200 OK");
+    httpd_resp_set_type(request, "application/json; charset=utf-8");
+    httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+    esp_err_t err = httpd_resp_send(request, json, length);
+    free(json);
+    return err;
+}
+
+static const char *creator_state_name(screen_creator_state_t state)
+{
+    switch (state) {
+    case SCREEN_CREATOR_RECORDING: return "recording";
+    case SCREEN_CREATOR_PAUSED: return "paused";
+    case SCREEN_CREATOR_SAVING: return "saving";
+    case SCREEN_CREATOR_ERROR: return "error";
+    case SCREEN_CREATOR_IDLE:
+    default: return "idle";
+    }
+}
+
+static void add_creator_status(cJSON *root)
+{
+    screen_creator_status_t status = {0};
+    screen_adapter_creator_get_status(&status);
+    cJSON_AddBoolToObject(root, "available", status.available);
+    cJSON_AddBoolToObject(root, "active", status.active);
+    cJSON_AddStringToObject(root, "state", creator_state_name(status.state));
+    cJSON_AddBoolToObject(root, "waiting_first_note",
+                          status.waiting_first_note);
+    cJSON_AddBoolToObject(root, "usb_midi_connected",
+                          status.usb_midi_connected);
+    cJSON_AddNumberToObject(root, "bpm", status.config.bpm);
+    cJSON_AddNumberToObject(root, "time_sig_num",
+                            status.config.time_sig_num);
+    cJSON_AddNumberToObject(root, "time_sig_den",
+                            status.config.time_sig_den);
+    cJSON_AddStringToObject(
+        root, "staff_mode",
+        status.config.staff_mode == SCREEN_CREATOR_STAFF_GRAND
+            ? "grand" : "single");
+    cJSON_AddNumberToObject(root, "note_count", status.note_count);
+    cJSON_AddNumberToObject(root, "measure_count", status.measure_count);
+    cJSON_AddStringToObject(root, "last_error",
+                            esp_err_to_name(status.last_error));
+    cJSON_AddStringToObject(root, "saved_title", status.saved_title);
+    cJSON_AddStringToObject(root, "saved_filename", status.saved_filename);
+    cJSON_AddStringToObject(root, "message", status.message);
+}
+
+static esp_err_t creator_status_handler(httpd_req_t *request)
+{
+    cJSON *root = cJSON_CreateObject();
+    if (root != NULL) {
+        cJSON_AddBoolToObject(root, "ok", true);
+        add_creator_status(root);
+    }
+    return send_json(request, "200 OK", root);
+}
+
+static esp_err_t creator_start_handler(httpd_req_t *request)
+{
+    cJSON *root = NULL;
+    esp_err_t err = receive_json(request, &root);
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return send_error_json(request, "400 Bad Request",
+                               "invalid_creator_config",
+                               "Creator config must be a JSON object");
+    }
+    cJSON *bpm = cJSON_GetObjectItemCaseSensitive(root, "bpm");
+    cJSON *time_num = cJSON_GetObjectItemCaseSensitive(root, "time_sig_num");
+    cJSON *time_den = cJSON_GetObjectItemCaseSensitive(root, "time_sig_den");
+    cJSON *staff = cJSON_GetObjectItemCaseSensitive(root, "staff_mode");
+    if (!cJSON_IsNumber(bpm) || !cJSON_IsNumber(time_num) ||
+        !cJSON_IsNumber(time_den) || !cJSON_IsString(staff)) {
+        cJSON_Delete(root);
+        return send_error_json(request, "400 Bad Request",
+                               "invalid_creator_config",
+                               "bpm, time signature, and staff mode are required");
+    }
+    screen_creator_config_t config = {
+        .bpm = bpm->valueint,
+        .time_sig_num = time_num->valueint,
+        .time_sig_den = time_den->valueint,
+        .staff_mode = strcmp(staff->valuestring, "grand") == 0
+                          ? SCREEN_CREATOR_STAFF_GRAND
+                          : strcmp(staff->valuestring, "single") == 0
+                                ? SCREEN_CREATOR_STAFF_SINGLE
+                                : 0,
+    };
+    cJSON_Delete(root);
+    if (config.staff_mode == 0)
+        return send_error_json(request, "400 Bad Request",
+                               "invalid_creator_config",
+                               "staff_mode must be single or grand");
+
+    err = screen_adapter_creator_start(&config);
+    if (err != ESP_OK)
+        return send_error_json(
+            request,
+            err == ESP_ERR_INVALID_ARG ? "400 Bad Request" : "409 Conflict",
+            err == ESP_ERR_INVALID_ARG ? "invalid_creator_config"
+                                       : "creator_start_conflict",
+            err == ESP_ERR_INVALID_ARG
+                ? "use a supported BPM, time signature, and staff mode"
+                : "Creator Mode or practice is already active");
+    cJSON *response = cJSON_CreateObject();
+    if (response != NULL) {
+        cJSON_AddBoolToObject(response, "ok", true);
+        add_creator_status(response);
+    }
+    return send_json(request, "200 OK", response);
+}
+
+static esp_err_t creator_action_handler(httpd_req_t *request)
+{
+    cJSON *root = NULL;
+    esp_err_t err = receive_json(request, &root);
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return send_error_json(request, "400 Bad Request",
+                               "invalid_creator_action",
+                               "Creator action must be a JSON object");
+    }
+    cJSON *action = cJSON_GetObjectItemCaseSensitive(root, "action");
+    if (!cJSON_IsString(action)) {
+        cJSON_Delete(root);
+        return send_error_json(request, "400 Bad Request",
+                               "invalid_creator_action",
+                               "action is required");
+    }
+    char action_copy[16];
+    strlcpy(action_copy, action->valuestring, sizeof(action_copy));
+    bool truncated = strlen(action->valuestring) >= sizeof(action_copy);
+    cJSON_Delete(root);
+    if (truncated)
+        return send_error_json(request, "400 Bad Request",
+                               "invalid_creator_action",
+                               "Creator action is too long");
+
+    if (strcmp(action_copy, "pause") == 0)
+        err = screen_adapter_creator_pause();
+    else if (strcmp(action_copy, "resume") == 0)
+        err = screen_adapter_creator_resume();
+    else if (strcmp(action_copy, "finish") == 0)
+        err = screen_adapter_creator_finish();
+    else if (strcmp(action_copy, "cancel") == 0)
+        err = screen_adapter_creator_cancel();
+    else
+        return send_error_json(request, "400 Bad Request",
+                               "invalid_creator_action",
+                               "action must be pause, resume, finish, or cancel");
+
+    if (err != ESP_OK)
+        return send_error_json(
+            request, "409 Conflict", "creator_action_conflict",
+            strcmp(action_copy, "finish") == 0
+                ? "pause first and record at least one note before saving"
+                : "Creator action is not allowed in the current state");
+    cJSON *response = cJSON_CreateObject();
+    if (response != NULL) {
+        cJSON_AddBoolToObject(response, "ok", true);
+        add_creator_status(response);
+    }
+    return send_json(request, "200 OK", response);
+}
+
+static esp_err_t practice_start_handler(httpd_req_t *request)
+{
+    cJSON *root = NULL;
+    esp_err_t err = receive_optional_json(request, &root);
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return send_error_json(request, "400 Bad Request",
+                               "invalid_start_request",
+                               "start body must be an optional JSON object");
+    }
+    cJSON *source_json = cJSON_GetObjectItemCaseSensitive(root,
+                                                          "input_source");
+    cJSON *profile_json = cJSON_GetObjectItemCaseSensitive(root, "profile");
+    if ((source_json != NULL && !cJSON_IsString(source_json)) ||
+        (profile_json != NULL && !cJSON_IsString(profile_json))) {
+        cJSON_Delete(root);
+        return send_error_json(request, "400 Bad Request",
+                               "invalid_start_profile",
+                               "input_source and profile must be strings");
+    }
+    const char *profile = cJSON_IsString(profile_json)
+                              ? profile_json->valuestring
+                              : "midi_strict";
+    char profile_copy[SCORING_PROFILE_NAME_MAX_LENGTH];
+    strlcpy(profile_copy, profile, sizeof(profile_copy));
+    bool profile_truncated = strlen(profile) >= sizeof(profile_copy);
+
+    input_source_status_t input;
+    input_source_manager_get_status(&input);
+    bool source_mismatch = false;
+    bool source_invalid = false;
+    if (cJSON_IsString(source_json)) {
+        input_source_t requested_source = INPUT_SOURCE_NONE;
+        source_invalid =
+            !input_source_from_name(source_json->valuestring,
+                                    &requested_source);
+        source_mismatch = !source_invalid &&
+                          requested_source != input.selected_input;
+    }
+    cJSON_Delete(root);
+    if (profile_truncated) {
+        return send_error_json(request, "400 Bad Request",
+                               "invalid_start_profile",
+                               "profile is too long");
+    }
+    if (source_invalid) {
+        return send_error_json(request, "400 Bad Request",
+                               "invalid_input_source",
+                               "input_source must be usb_midi or audio_s3");
+    }
+    if (input.input_locked) {
+        return send_error_json(request, "409 Conflict", "practice_running",
+                               "input source is locked during practice");
+    }
+    if (source_mismatch) {
+        return send_error_json(
+            request, "409 Conflict", "input_source_mismatch",
+            "start input_source does not match the manually selected input");
+    }
+    screen_creator_status_t creator = {0};
+    screen_adapter_creator_get_status(&creator);
+    if (creator.active) {
+        return send_error_json(request, "409 Conflict",
+                               "creator_mode_running",
+                               "finish or cancel Creator Mode before practice");
+    }
+
+    screen_preparation_status_t preparation = {0};
+    screen_adapter_get_preparation_status(&preparation);
+    if (preparation.valid &&
+        (preparation.phase == SCREEN_PREPARATION_PREPARED ||
+         preparation.phase == SCREEN_PREPARATION_ERROR)) {
+        err = screen_adapter_start_prepared_score();
+        if (err != ESP_OK)
+            return send_error_json(request, "409 Conflict",
+                                   "preparation_start_failed",
+                                   "prepared score could not be displayed");
+        cJSON *response = cJSON_CreateObject();
+        if (response) {
+            cJSON_AddBoolToObject(response, "ok", true);
+            cJSON_AddStringToObject(response, "message",
+                                    "prepared score started");
+            add_preparation_status(response);
+        }
+        return send_json(request, "200 OK", response);
+    }
+
+    score_data_status_t score;
+    score_data_get_status(&score);
+    if (!score.loaded) {
+        return send_error_json(request, "409 Conflict", "score_not_loaded",
+                               "upload a valid score before starting");
+    }
+    if (input.selected_input == INPUT_SOURCE_USB_MIDI &&
+        !input.usb_midi_connected) {
+        return send_error_json(request, "409 Conflict",
+                               "usb_midi_not_connected",
+                               "未检测到 USB MIDI 电子琴");
+    }
+    if (input.selected_input == INPUT_SOURCE_AUDIO_S3) {
+        if (!input.audio_s3_implemented) {
+            return send_error_json(request, "409 Conflict",
+                                   "audio_s3_not_implemented",
+                                   "S3 麦克风音频输入暂未实现");
+        }
+        if (!input.audio_s3_connected) {
+            return send_error_json(request, "409 Conflict",
+                                   "audio_s3_not_connected",
+                                   "未检测到 S3 音频节点");
+        }
+    }
+    if (strcmp(profile_copy, "midi_strict") != 0) {
+        return send_error_json(request, "409 Conflict",
+                               "unsupported_scoring_profile",
+                               "the selected scoring profile is unavailable");
+    }
+
+    const char *selected_source = input_source_name(input.selected_input);
+    err = scoring_service_start(selected_source, profile_copy);
+    if (err != ESP_OK) {
+        scoring_service_status_t practice;
+        scoring_service_get_status(&practice);
+        const char *code = err == ESP_ERR_NOT_SUPPORTED
+                               ? "unsupported_input_or_profile"
+                               : practice.error[0] != '\0'
+                                     ? practice.error
+                                     : "practice_start_conflict";
+        const char *message = practice.message[0] != '\0'
+                                  ? practice.message
+                                  : "practice cannot start in the current state";
+        return send_error_json(request, "409 Conflict", code, message);
+    }
+
+    cJSON *response = cJSON_CreateObject();
+    if (response != NULL) {
+        cJSON_AddBoolToObject(response, "ok", true);
+        cJSON_AddStringToObject(response, "state", "recording");
+        cJSON_AddStringToObject(response, "message", "recording started");
+        cJSON_AddStringToObject(response, "input_source", selected_source);
+        cJSON_AddStringToObject(response, "profile", profile_copy);
+    }
+    return send_json(request, "200 OK", response);
+}
+
+static esp_err_t send_score_result(const char *json,
+                                   size_t length,
+                                   void *context);
+
+static esp_err_t practice_stop_handler(httpd_req_t *request)
+{
+    esp_err_t err = scoring_service_stop();
+    if (err != ESP_OK) {
+        scoring_service_status_t status;
+        scoring_service_get_status(&status);
+        return send_error_json(
+            request, "409 Conflict",
+            status.error[0] != '\0' ? status.error : "practice_not_recording",
+            status.message[0] != '\0'
+                ? status.message
+                : "there is no active recording to stop");
+    }
+    err = scoring_service_wait_for_result(DEVICE_API_SCORING_TIMEOUT_MS);
+    if (err == ESP_ERR_TIMEOUT) {
+        return send_error_json(
+            request, "504 Gateway Timeout", "scoring_timeout",
+            "local scoring did not finish within 10 seconds; use /api/result to retrieve it later");
+    }
+    if (err != ESP_OK) {
+        scoring_service_status_t status;
+        scoring_service_get_status(&status);
+        return send_error_json(
+            request, "500 Internal Server Error",
+            status.error[0] != '\0' ? status.error : "scoring_failed",
+            status.message[0] != '\0'
+                ? status.message
+                : "local scoring failed");
+    }
+
+    httpd_resp_set_status(request, "200 OK");
+    httpd_resp_set_type(request, "application/json; charset=utf-8");
+    httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+    return scoring_service_with_result(send_score_result, request);
+}
+
+static esp_err_t send_score_result(const char *json,
+                                   size_t length,
+                                   void *context)
+{
+    return httpd_resp_send((httpd_req_t *)context, json, length);
+}
+
+static esp_err_t practice_result_handler(httpd_req_t *request)
+{
+    scoring_service_status_t status;
+    scoring_service_get_status(&status);
+    if (status.state == SCORING_SERVICE_SCORING) {
+        cJSON *root = cJSON_CreateObject();
+        if (root != NULL) {
+            cJSON_AddBoolToObject(root, "ok", true);
+            cJSON_AddBoolToObject(root, "ready", false);
+            cJSON_AddStringToObject(root, "state", "scoring");
+            cJSON_AddStringToObject(root, "message", "scoring in progress");
+        }
+        return send_json(request, "202 Accepted", root);
+    }
+    if (status.state == SCORING_SERVICE_ERROR) {
+        return send_error_json(
+            request, "409 Conflict",
+            status.error[0] != '\0' ? status.error : "scoring_failed",
+            status.message[0] != '\0' ? status.message : "scoring failed");
+    }
+    if (status.state != SCORING_SERVICE_READY) {
+        return send_error_json(request, "404 Not Found",
+                               "score_result_not_available",
+                               status.state == SCORING_SERVICE_RECORDING
+                                   ? "stop the recording before requesting a result"
+                                   : "no completed scoring result is available");
+    }
+
+    httpd_resp_set_status(request, "200 OK");
+    httpd_resp_set_type(request, "application/json; charset=utf-8");
+    httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+    esp_err_t err = scoring_service_with_result(send_score_result, request);
+    return err;
+}
+
+static esp_err_t volume_handler(httpd_req_t *request)
+{
+    cJSON *root = NULL;
+    esp_err_t err = receive_json(request, &root);
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return send_error_json(request, "400 Bad Request",
+                               "INVALID_JSON", "音量请求格式错误");
+    }
+    cJSON *value = cJSON_GetObjectItemCaseSensitive(root, "value");
+    if (!cJSON_IsNumber(value)) {
+        value = cJSON_GetObjectItemCaseSensitive(root, "percent");
+    }
+    if (!cJSON_IsNumber(value) || value->valuedouble < 0 ||
+        value->valuedouble > 80) {
+        cJSON_Delete(root);
+        return send_error_json(request, "400 Bad Request",
+                               "INVALID_VOLUME", "设备音量必须在 0 到 80 之间");
+    }
+    uint8_t percent = (uint8_t)value->valueint;
+    cJSON_Delete(root);
+    return send_command_result(request,
+                               speaker_service_set_volume(percent),
+                               "音量命令已加入队列");
+}
+
+static esp_err_t mute_handler(httpd_req_t *request)
+{
+    cJSON *root = NULL;
+    esp_err_t err = receive_json(request, &root);
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return send_error_json(request, "400 Bad Request",
+                               "INVALID_JSON", "静音请求格式错误");
+    }
+    cJSON *muted = cJSON_GetObjectItemCaseSensitive(root, "muted");
+    if (!cJSON_IsBool(muted)) {
+        cJSON_Delete(root);
+        return send_error_json(request, "400 Bad Request",
+                               "INVALID_MUTE", "muted 必须是布尔值");
+    }
+    bool value = cJSON_IsTrue(muted);
+    cJSON_Delete(root);
+    return send_command_result(request,
+                               speaker_service_set_mute(value),
+                               value ? "静音命令已加入队列"
+                                     : "取消静音命令已加入队列");
+}
+
+static esp_err_t tone_handler(httpd_req_t *request)
+{
+    cJSON *root = NULL;
+    esp_err_t err = receive_json(request, &root);
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return send_error_json(request, "400 Bad Request",
+                               "INVALID_JSON", "校准音请求格式错误");
+    }
+    cJSON *frequency = cJSON_GetObjectItemCaseSensitive(root, "frequency_hz");
+    cJSON *duration = cJSON_GetObjectItemCaseSensitive(root, "duration_ms");
+    cJSON *gain_item = cJSON_GetObjectItemCaseSensitive(root, "gain");
+    float gain = cJSON_IsNumber(gain_item) ? (float)gain_item->valuedouble : 0.12f;
+    if (!cJSON_IsNumber(frequency) || !cJSON_IsNumber(duration)) {
+        cJSON_Delete(root);
+        return send_error_json(request, "400 Bad Request",
+                               "INVALID_TONE", "缺少 frequency_hz 或 duration_ms");
+    }
+    float frequency_hz = (float)frequency->valuedouble;
+    uint32_t duration_ms = (uint32_t)duration->valuedouble;
+    cJSON_Delete(root);
+    return send_command_result(
+        request,
+        speaker_service_play_tone(frequency_hz, duration_ms, gain),
+        "校准音命令已加入队列");
+}
+
+static esp_err_t stop_handler(httpd_req_t *request)
+{
+    return send_command_result(request,
+                               speaker_service_stop(),
+                               "停止命令已加入队列");
+}
+
+static esp_err_t metronome_start_handler(httpd_req_t *request)
+{
+    cJSON *root = NULL;
+    esp_err_t err = receive_json(request, &root);
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return send_error_json(request, "400 Bad Request",
+                               "INVALID_JSON", "节拍器请求格式错误");
+    }
+    cJSON *bpm = cJSON_GetObjectItemCaseSensitive(root, "bpm");
+    cJSON *beats = cJSON_GetObjectItemCaseSensitive(root,
+                                                    "beats_per_measure");
+    cJSON *unit = cJSON_GetObjectItemCaseSensitive(root, "beat_unit");
+    if (!cJSON_IsNumber(bpm) || !cJSON_IsNumber(beats) ||
+        !cJSON_IsNumber(unit)) {
+        cJSON_Delete(root);
+        return send_error_json(request, "400 Bad Request",
+                               "INVALID_METRONOME",
+                               "缺少 bpm、beats_per_measure 或 beat_unit");
+    }
+    uint16_t bpm_value = (uint16_t)bpm->valueint;
+    uint8_t beats_value = (uint8_t)beats->valueint;
+    uint8_t unit_value = (uint8_t)unit->valueint;
+    cJSON_Delete(root);
+    return send_command_result(
+        request,
+        speaker_service_metronome_start(bpm_value, beats_value, unit_value),
+        "节拍器命令已加入队列");
+}
+
+static esp_err_t metronome_pause_handler(httpd_req_t *request)
+{
+    return send_command_result(request,
+                               speaker_service_metronome_pause(),
+                               "节拍器暂停命令已加入队列");
+}
+
+static esp_err_t metronome_stop_handler(httpd_req_t *request)
+{
+    return send_command_result(request,
+                               speaker_service_metronome_stop(),
+                               "节拍器停止命令已加入队列");
+}
+
+static esp_err_t files_handler(httpd_req_t *request)
+{
+    char query[DEVICE_API_MAX_QUERY_BYTES + 1] = {0};
+    size_t query_length = httpd_req_get_url_query_len(request);
+    if (query_length > DEVICE_API_MAX_QUERY_BYTES ||
+        (query_length > 0 &&
+         httpd_req_get_url_query_str(request, query, sizeof(query)) != ESP_OK)) {
+        return send_error_json(request, "400 Bad Request", "INVALID_QUERY",
+                               "文件查询参数过长或格式错误");
+    }
+
+    size_t requested_page = 1;
+    size_t page_size = DEVICE_API_AUDIO_PAGE_SIZE;
+    if (query_size_value(query, "page", 1, 1000000, &requested_page) != ESP_OK ||
+        query_size_value(query, "page_size", DEVICE_API_AUDIO_PAGE_SIZE,
+                         DEVICE_API_AUDIO_PAGE_SIZE, &page_size) != ESP_OK) {
+        return send_error_json(request, "400 Bad Request", "INVALID_PAGE",
+                               "page 必须大于 0，page_size 必须在 1 到 10 之间");
+    }
+
+    char search[DEVICE_API_MAX_SEARCH_BYTES + 1] = {0};
+    char encoded_search[DEVICE_API_MAX_QUERY_BYTES + 1] = {0};
+    if (query[0] != '\0' &&
+        httpd_query_key_value(query, "search", encoded_search,
+                              sizeof(encoded_search)) == ESP_OK &&
+        decode_query_value(encoded_search, search, sizeof(search)) != ESP_OK) {
+        return send_error_json(request, "400 Bad Request", "INVALID_SEARCH",
+                               "搜索词必须是最长 64 字节的 UTF-8 文本");
+    }
+
+    speaker_status_t status;
+    memset(&status, 0, sizeof(status));
+    speaker_service_get_status(&status);
+
+    const size_t capacity = DEVICE_API_AUDIO_PAGE_SIZE;
+    char (*names)[SPEAKER_FILE_NAME_MAX] =
+        calloc(capacity, sizeof(*names));
+    if (names == NULL) {
+        return send_error_json(request, "500 Internal Server Error",
+                               "NO_MEMORY", "无法分配文件列表内存");
+    }
+    size_t count = 0;
+    size_t total = 0;
+    size_t actual_page = 1;
+    esp_err_t err = status.sd_present
+                        ? speaker_service_list_files_page(
+                              search, requested_page, page_size, names,
+                              capacity, &count, &total, &actual_page)
+                        : ESP_ERR_INVALID_STATE;
+
+    cJSON *root = cJSON_CreateObject();
+    if (root != NULL) {
+        cJSON_AddBoolToObject(root, "ok",
+                              err == ESP_OK || err == ESP_ERR_NOT_FOUND);
+        cJSON_AddBoolToObject(root, "sd_present", status.sd_present);
+        cJSON_AddStringToObject(root, "directory", "/sdcard/wav");
+        cJSON_AddStringToObject(root, "search", search);
+        cJSON_AddNumberToObject(root, "page", actual_page);
+        cJSON_AddNumberToObject(root, "page_size", page_size);
+        cJSON_AddNumberToObject(root, "total", total);
+        cJSON_AddNumberToObject(
+            root, "total_pages",
+            total == 0 ? 0 : (total + page_size - 1) / page_size);
+        cJSON *files = cJSON_AddArrayToObject(root, "files");
+        if (files != NULL && err == ESP_OK) {
+            for (size_t index = 0; index < count; ++index) {
+                cJSON_AddItemToArray(files, cJSON_CreateString(names[index]));
+            }
+        }
+        if (err != ESP_OK && err != ESP_ERR_NOT_FOUND) {
+            cJSON_AddStringToObject(root, "error", esp_err_to_name(err));
+        }
+    }
+    free(names);
+    return send_json(request, "200 OK", root);
+}
+
+static esp_err_t file_play_handler(httpd_req_t *request)
+{
+    cJSON *root = NULL;
+    esp_err_t err = receive_json(request, &root);
+    if (err != ESP_OK) {
+        cJSON_Delete(root);
+        return send_error_json(request, "400 Bad Request",
+                               "INVALID_JSON", "WAV 播放请求格式错误");
+    }
+    cJSON *name = cJSON_GetObjectItemCaseSensitive(root, "name");
+    if (!cJSON_IsString(name) || name->valuestring[0] == '\0') {
+        cJSON_Delete(root);
+        return send_error_json(request, "400 Bad Request",
+                               "INVALID_FILE", "缺少 WAV 文件名");
+    }
+    char safe_name[SPEAKER_FILE_NAME_MAX];
+    strlcpy(safe_name, name->valuestring, sizeof(safe_name));
+    bool truncated = strlen(name->valuestring) >= sizeof(safe_name);
+    cJSON_Delete(root);
+    if (truncated) {
+        return send_error_json(request, "400 Bad Request",
+                               "INVALID_FILE", "WAV 文件名过长");
+    }
+    return send_command_result(request,
+                               speaker_service_play_file(safe_name),
+                               "WAV 播放命令已加入队列");
+}
+
+static esp_err_t file_pause_handler(httpd_req_t *request)
+{
+    return send_command_result(request,
+                               speaker_service_pause_file(),
+                               "WAV 暂停或继续命令已加入队列");
+}
+
+static esp_err_t file_stop_handler(httpd_req_t *request)
+{
+    return send_command_result(request,
+                               speaker_service_stop_file(),
+                               "WAV 停止命令已加入队列");
+}
+
+esp_err_t device_api_start(void)
+{
+    if (s_server != NULL) {
+        return ESP_OK;
+    }
+    network_status_t network = network_provisioning_get_status();
+    if (network.state != NETWORK_STATE_WIFI_CONNECTED ||
+        network.ip[0] == '\0' || strcmp(network.ip, "0.0.0.0") == 0) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.max_uri_handlers = 32;
+    config.lru_purge_enable = true;
+    esp_err_t err = httpd_start(&s_server, &config);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    const httpd_uri_t routes[] = {
+        {.uri = "/api/ping", .method = HTTP_GET, .handler = ping_handler},
+        {.uri = "/api/status", .method = HTTP_GET, .handler = status_handler},
+        {.uri = "/api/input/status", .method = HTTP_GET,
+         .handler = input_status_handler},
+        {.uri = "/api/input/select", .method = HTTP_POST,
+         .handler = input_select_handler},
+        {.uri = "/api/score", .method = HTTP_POST,
+         .handler = score_upload_handler},
+        {.uri = "/api/scores/sd", .method = HTTP_GET,
+         .handler = sd_scores_handler},
+        {.uri = "/api/scores/sd/select", .method = HTTP_POST,
+         .handler = sd_score_select_handler},
+        {.uri = "/api/scores/sd/rename", .method = HTTP_POST,
+         .handler = sd_score_rename_handler},
+        {.uri = "/api/scores/sd/file", .method = HTTP_GET,
+         .handler = sd_score_file_handler},
+        {.uri = "/api/practice/preparation", .method = HTTP_GET,
+         .handler = preparation_status_handler},
+        {.uri = "/api/practice/preparation/select", .method = HTTP_POST,
+         .handler = sd_score_select_handler},
+        {.uri = "/api/practice/preparation/options", .method = HTTP_POST,
+         .handler = preparation_options_handler},
+        {.uri = "/api/practice/preparation/start", .method = HTTP_POST,
+         .handler = preparation_start_handler},
+        {.uri = "/api/creator/status", .method = HTTP_GET,
+         .handler = creator_status_handler},
+        {.uri = "/api/creator/start", .method = HTTP_POST,
+         .handler = creator_start_handler},
+        {.uri = "/api/creator/action", .method = HTTP_POST,
+         .handler = creator_action_handler},
+        {.uri = "/api/start", .method = HTTP_POST,
+         .handler = practice_start_handler},
+        {.uri = "/api/stop", .method = HTTP_POST,
+         .handler = practice_stop_handler},
+        {.uri = "/api/result", .method = HTTP_GET,
+         .handler = practice_result_handler},
+        {.uri = "/api/audio/status", .method = HTTP_GET,
+         .handler = audio_status_handler},
+        {.uri = "/api/audio/volume", .method = HTTP_POST,
+         .handler = volume_handler},
+        {.uri = "/api/audio/mute", .method = HTTP_POST,
+         .handler = mute_handler},
+        {.uri = "/api/audio/tone", .method = HTTP_POST,
+         .handler = tone_handler},
+        {.uri = "/api/audio/stop", .method = HTTP_POST,
+         .handler = stop_handler},
+        {.uri = "/api/metronome/start", .method = HTTP_POST,
+         .handler = metronome_start_handler},
+        {.uri = "/api/metronome/pause", .method = HTTP_POST,
+         .handler = metronome_pause_handler},
+        {.uri = "/api/metronome/stop", .method = HTTP_POST,
+         .handler = metronome_stop_handler},
+        {.uri = "/api/audio/files", .method = HTTP_GET,
+         .handler = files_handler},
+        {.uri = "/api/audio/file/play", .method = HTTP_POST,
+         .handler = file_play_handler},
+        {.uri = "/api/audio/file/pause", .method = HTTP_POST,
+         .handler = file_pause_handler},
+        {.uri = "/api/audio/file/stop", .method = HTTP_POST,
+         .handler = file_stop_handler},
+    };
+    for (size_t index = 0; index < sizeof(routes) / sizeof(routes[0]); ++index) {
+        err = httpd_register_uri_handler(s_server, &routes[index]);
+        if (err != ESP_OK) {
+            httpd_stop(s_server);
+            s_server = NULL;
+            return err;
+        }
+    }
+    ESP_LOGI(TAG, "device and speaker API ready at http://%s", network.ip);
+    return ESP_OK;
+}
+
+esp_err_t device_api_stop(void)
+{
+    if (s_server == NULL) {
+        return ESP_OK;
+    }
+    esp_err_t err = httpd_stop(s_server);
+    s_server = NULL;
+    return err;
+}
+
+bool device_api_is_running(void)
+{
+    return s_server != NULL;
+}

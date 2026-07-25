@@ -1,0 +1,11 @@
+{
+  "folders": [
+    {
+      "name": "smartscore_s3_audio",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "idf.target": "esp32s3"
+  }
+}

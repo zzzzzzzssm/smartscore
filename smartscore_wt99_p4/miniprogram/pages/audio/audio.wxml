@@ -1,0 +1,106 @@
+<view class="page audio-page">
+  <view class="hero audio-hero">
+    <view class="hero-row">
+      <view>
+        <view class="hero-kicker">RHYTHM · PITCH</view>
+        <view class="hero-title">节拍器与校准音</view>
+        <view class="hero-subtitle">练习前快速确定速度和标准音高</view>
+      </view>
+      <view class="online-dot {{online ? 'on' : ''}}"></view>
+    </view>
+    <view class="hero-status">{{statusText}}</view>
+  </view>
+
+  <view class="offline-card" wx:if="{{online && controlOnly}}">
+    <view class="offline-title">扬声器已禁用</view>
+    <view class="hint">当前只测试屏幕与小程序的控制状态同步，不会产生实际声音。</view>
+  </view>
+
+  <view class="offline-card" wx:if="{{!online}}">
+    <view class="offline-title">{{configured ? '设备暂时离线' : '离线预览模式'}}</view>
+    <view class="hint">
+      {{configured ? '正在等待设备恢复连接；当前可预览和调整参数。' : '当前可预览和调整参数，连接设备后即可播放。'}}
+    </view>
+    <button class="primary-btn" bindtap="openDevicePage">前往设备页</button>
+  </view>
+
+  <view class="section">
+    <view class="card master-card compact-volume">
+      <view class="row between">
+        <view>
+          <view class="card-title">音量</view>
+          <view class="hint">页面 0～100 · 扬声器安全映射到 0～80</view>
+        </view>
+        <view class="volume-value">{{volume}}</view>
+      </view>
+      <slider min="0" max="100" step="1" value="{{volume}}" activeColor="#0f766e" backgroundColor="#dce9e8" bindchanging="onVolumeChanging" bindchange="onVolumeChange" />
+      <view class="action-row compact-actions">
+        <button class="secondary-btn flex-btn" bindtap="toggleMute" loading="{{busy == 'mute'}}">{{muted ? '取消静音' : '静音'}}</button>
+        <button class="stop-btn flex-btn" bindtap="stopAll" loading="{{busy == 'stop'}}">停止所有声音</button>
+      </view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="card metronome-card">
+      <view class="row between">
+        <view>
+          <view class="section-title compact">节拍器</view>
+          <view class="hint">{{online ? '30～240 BPM · 由设备扬声器播放' : '30～240 BPM · 当前为离线参数预览'}}</view>
+        </view>
+        <view class="bpm-badge"><text>{{bpm}}</text> BPM</view>
+      </view>
+
+      <view class="preset-title">常用速度</view>
+      <view class="bpm-presets">
+        <view wx:for="{{commonBpms}}" wx:key="*this" class="bpm-chip {{bpm == item ? 'active' : ''}}" data-bpm="{{item}}" bindtap="selectCommonBpm" hover-class="chip-hover">{{item}}</view>
+      </view>
+
+      <view class="manual-bpm">
+        <input type="number" class="bpm-input" value="{{bpmInput}}" maxlength="3" placeholder="输入 30～240" bindfocus="onBpmFocus" bindblur="onBpmBlur" bindinput="onBpmInput" bindconfirm="applyManualBpm" />
+        <button class="secondary-btn apply-bpm" bindtap="applyManualBpm">应用 BPM</button>
+      </view>
+
+      <view class="preset-title meter-title">拍号</view>
+      <view class="meter-row">
+        <button wx:for="{{meters}}" wx:key="label" class="meter-chip {{meterIndex == index ? 'active' : ''}}" data-index="{{index}}" bindtap="selectMeter">{{item.label}}</button>
+      </view>
+      <view class="beat-row" wx:if="{{metronomeRunning}}">
+        <view wx:for="{{beatDots}}" wx:key="*this" class="beat-dot {{currentBeat == index + 1 ? 'active' : ''}} {{index == 0 ? 'strong' : ''}}"></view>
+        <text>第 {{currentBeat}} / {{meters[meterIndex].beats}} 拍</text>
+      </view>
+      <view class="action-row">
+        <button class="primary-btn flex-btn" bindtap="startMetronome" loading="{{busy == 'metronome'}}">{{metronomePaused ? '继续' : '开始'}}</button>
+        <button class="secondary-btn flex-btn" bindtap="pauseMetronome" disabled="{{!metronomeRunning}}">暂停</button>
+        <button class="ghost-btn flex-btn" bindtap="stopMetronome">停止</button>
+      </view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-head">
+      <view>
+        <view class="section-title compact">校准音</view>
+        <view class="hint">{{online ? '选择音高后会替换当前播放源' : '可提前选择时长；连接设备后播放音高'}}</view>
+      </view>
+      <picker mode="selector" range="{{durationLabels}}" value="{{durationIndex}}" bindchange="onDurationChange">
+        <view class="select-pill">{{durationLabels[durationIndex]}}⌄</view>
+      </picker>
+    </view>
+    <view class="tone-grid">
+      <view wx:for="{{tones}}" wx:key="name" class="tone-key {{activeTone == item.name ? 'active' : ''}}" data-name="{{item.name}}" data-frequency="{{item.frequency}}" bindtap="playTone" hover-class="chip-hover">
+        <view class="tone-name">{{item.name}}</view>
+        <view class="tone-frequency">{{item.frequency}} Hz</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="now-playing {{playing ? 'visible' : ''}}">
+    <view class="now-mark">♩</view>
+    <view class="now-copy">
+      <view class="now-label">当前声音</view>
+      <view class="now-title">{{nowPlaying}}</view>
+    </view>
+    <view class="now-stop" bindtap="stopAll" hover-class="chip-hover">停止</view>
+  </view>
+</view>

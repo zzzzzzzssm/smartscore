@@ -1,0 +1,23 @@
+idf_component_register(
+    SRCS
+        "src/screen_adapter.c"
+        "src/screen_modes.c"
+    INCLUDE_DIRS "include"
+    REQUIRES
+        app_font
+        common
+        display_board_adapter
+        input_source_manager
+        json
+        music_display
+        score_data
+        scoring_service
+        s3_bus
+        screen_legacy_storage
+        screen_score_bridge
+        speaker_service
+        ui_app
+        ui_generated
+        usb_midi
+        esp_timer
+)

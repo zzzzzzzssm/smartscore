@@ -1,0 +1,19 @@
+idf_component_register(
+    SRCS
+         "music_display.c"
+         "leland_score_view.c"
+         "staff_display_test.c"
+         "lv_font_LelandSMuFL_64.c"
+         "lv_font_LelandSMuFL_72.c"
+         "lv_font_LelandBrace_252.c"
+    INCLUDE_DIRS "."
+    REQUIRES
+        app_font
+        lvgl
+        midi_parser
+        musicxml_renderer
+        ui-guider
+        wt99p4c5_s1_board
+        esp_timer
+        json
+)

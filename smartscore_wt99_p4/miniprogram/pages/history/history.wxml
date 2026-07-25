@@ -1,0 +1,75 @@
+<view class="page">
+  <view class="section-title">历史练习记录</view>
+  <view class="hint">点击记录可查看评分明细和逐音符数据。</view>
+
+  <view class="record-list" wx:if="{{records.length}}">
+    <view class="card record-card" wx:for="{{records}}" wx:key="id">
+      <view class="row between">
+        <view class="record-main" bindtap="viewDetail" data-id="{{item.id}}">
+          <view class="record-title">{{item.scoreTitle}}</view>
+          <view class="muted">{{item.practicedAt}}</view>
+        </view>
+        <view class="score-block">
+          <view class="score">{{item.totalScore}}</view>
+          <view class="muted">总分</view>
+        </view>
+      </view>
+      <view class="record-meta">
+        <view>音准 {{item.pitchScore}}</view>
+        <view>节奏 {{item.rhythmScore}}</view>
+        <view>完整度 {{item.completeScore}}</view>
+      </view>
+      <view class="record-actions">
+        <button class="secondary-btn mini-btn" bindtap="viewDetail" data-id="{{item.id}}">查看详情</button>
+        <button class="ghost-btn mini-btn" bindtap="renameRecord" data-id="{{item.id}}">重命名</button>
+        <button class="danger-btn mini-btn" bindtap="deleteRecord" data-id="{{item.id}}">删除</button>
+      </view>
+    </view>
+  </view>
+  <view class="card empty" wx:else>还没有练习记录。</view>
+
+  <view class="detail-mask" wx:if="{{selectedRecord}}" bindtap="closeDetail">
+    <view class="detail-panel" catchtap="noop">
+      <view class="row between">
+        <view>
+          <view class="record-title">{{selectedRecord.scoreTitle}}</view>
+          <view class="muted">{{selectedRecord.practicedAt}}</view>
+        </view>
+        <button class="ghost-btn close-btn" bindtap="closeDetail">关闭</button>
+      </view>
+      <view class="detail-summary">
+        <view>总分 {{selectedRecord.totalScore}}</view>
+        <view>音准 {{selectedRecord.pitchScore}}</view>
+        <view>节奏 {{selectedRecord.rhythmScore}}</view>
+        <view>完整度 {{selectedRecord.completeScore}}</view>
+      </view>
+
+      <view class="detail-title">逐音符数据</view>
+      <scroll-view scroll-x class="note-table-wrap">
+        <view class="note-table">
+          <view class="note-row head">
+            <view>#</view>
+            <view>目标音</view>
+            <view>演奏音</view>
+            <view>目标时间</view>
+            <view>演奏时间</view>
+            <view>时间误差</view>
+            <view>音高误差</view>
+            <view>结果</view>
+          </view>
+          <view class="note-row" wx:for="{{selectedRecord.details}}" wx:key="index">
+            <view>{{item.index}}</view>
+            <view>{{item.target_note}} / {{item.target_midi}}</view>
+            <view>{{item.played_note}} / {{item.played_midi}}</view>
+            <view>{{item.target_start}}s</view>
+            <view>{{item.played_start}}s</view>
+            <view>{{item.time_error}}s</view>
+            <view>{{item.pitch_error}}</view>
+            <view>{{item.result}}</view>
+          </view>
+          <view class="note-empty" wx:if="{{!selectedRecord.details || !selectedRecord.details.length}}">这条记录暂无逐音符明细。</view>
+        </view>
+      </scroll-view>
+    </view>
+  </view>
+</view>

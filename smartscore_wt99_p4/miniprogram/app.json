@@ -1,0 +1,59 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/scores/scores",
+    "pages/practice/practice",
+    "pages/history/history",
+    "pages/device/device",
+    "pages/creator/creator",
+    "pages/audio/audio",
+    "pages/music/music",
+    "pages/profile/profile"
+  ],
+  "window": {
+    "navigationBarTitleText": "谱伴",
+    "navigationBarBackgroundColor": "#0f766e",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#f3f8f8"
+  },
+  "tabBar": {
+    "color": "#667085",
+    "selectedColor": "#0f766e",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "white",
+    "list": [
+      {
+        "pagePath": "pages/index/index",
+        "text": "首页",
+        "iconPath": "assets/tabbar/home.png",
+        "selectedIconPath": "assets/tabbar/home-active.png"
+      },
+      {
+        "pagePath": "pages/scores/scores",
+        "text": "乐谱",
+        "iconPath": "assets/tabbar/scores.png",
+        "selectedIconPath": "assets/tabbar/scores-active.png"
+      },
+      {
+        "pagePath": "pages/practice/practice",
+        "text": "练习",
+        "iconPath": "assets/tabbar/practice.png",
+        "selectedIconPath": "assets/tabbar/practice-active.png"
+      },
+      {
+        "pagePath": "pages/history/history",
+        "text": "记录",
+        "iconPath": "assets/tabbar/history.png",
+        "selectedIconPath": "assets/tabbar/history-active.png"
+      },
+      {
+        "pagePath": "pages/profile/profile",
+        "text": "我的",
+        "iconPath": "assets/tabbar/profile.png",
+        "selectedIconPath": "assets/tabbar/profile-active.png"
+      }
+    ]
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

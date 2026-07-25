@@ -1,0 +1,107 @@
+.profile-card {
+  display: flex;
+  align-items: center;
+  gap: 24rpx;
+  overflow: hidden;
+  background: linear-gradient(135deg, #ffffff 0%, #edfafa 100%);
+}
+
+.avatar {
+  width: 108rpx;
+  height: 108rpx;
+  border-radius: 32rpx;
+  color: #ffffff;
+  background: linear-gradient(135deg, #0f766e 0%, #2563eb 100%);
+  text-align: center;
+  font-size: 48rpx;
+  font-weight: 800;
+  line-height: 108rpx;
+}
+
+.nickname {
+  color: #172033;
+  font-size: 34rpx;
+  font-weight: 800;
+}
+
+.profile-copy {
+  flex: 1;
+}
+
+.profile-tag {
+  display: inline-block;
+  margin-top: 12rpx;
+  padding: 7rpx 14rpx;
+  border-radius: 999rpx;
+  color: #0f766e;
+  background: #dff6f3;
+  font-size: 21rpx;
+  font-weight: 700;
+}
+
+.stats-grid {
+  display: flex;
+  gap: 18rpx;
+}
+
+.stats-grid .metric {
+  flex: 1;
+}
+
+.menu-card {
+  padding: 0 28rpx;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 18rpx;
+  padding: 28rpx 0;
+}
+
+.menu-copy {
+  flex: 1;
+}
+
+.menu-icon {
+  width: 62rpx;
+  height: 62rpx;
+  border-radius: 18rpx;
+  text-align: center;
+  font-size: 26rpx;
+  font-weight: 900;
+  line-height: 62rpx;
+}
+
+.about-icon {
+  color: #0f766e;
+  background: #e8f7f5;
+}
+
+.guide-icon {
+  color: #1d4ed8;
+  background: #eaf2ff;
+}
+
+.contact-icon {
+  color: #7c3aed;
+  background: #f3ecff;
+}
+
+.menu-item + .menu-item {
+  border-top: 1rpx solid #e5eeee;
+}
+
+.menu-title {
+  margin-bottom: 8rpx;
+  color: #172033;
+  font-size: 29rpx;
+  font-weight: 700;
+}
+
+.chevron {
+  margin-left: auto;
+  color: #98a2b3;
+  font-size: 44rpx;
+  line-height: 44rpx;
+}

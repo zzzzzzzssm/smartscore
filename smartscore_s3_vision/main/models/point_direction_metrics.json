@@ -1,0 +1,30 @@
+{
+  "model_name": "mobilenetv2_050.lamb_in1k",
+  "model_file": "point_direction.espdl",
+  "quantization": "INT16",
+  "input_shape_nchw": [1, 3, 128, 128],
+  "espdl_input_shape": [1, 128, 128, 3],
+  "class_names": ["point_right", "point_left", "other"],
+  "training_samples": 5609,
+  "parameters": 691523,
+  "model_bytes": 1636496,
+  "sha256": "31b344a6f94140cfb689309ad99df30cfdbdd2d53d95fad10f4c622a5c10fd2a",
+  "cross_validation": {
+    "method": "eight-fold leave-one-person-out",
+    "accuracy": 0.893920484934926,
+    "macro_f1": 0.8920499527339315,
+    "worst_person_accuracy": 0.8114035087719298,
+    "action_threshold": 0.87,
+    "other_false_action_rate_at_threshold": 0.016894609814963796,
+    "pointing_recall_at_threshold": 0.4979186679474864
+  },
+  "quantized_evaluation": {
+    "samples": 1200,
+    "float_accuracy": 0.9608333333333333,
+    "int16_accuracy": 0.9575,
+    "float_macro_f1": 0.9606592410693838,
+    "int16_macro_f1": 0.9573254340555456,
+    "prediction_agreement": 0.995,
+    "maximum_logit_absolute_error": 1.6942052841186523
+  }
+}

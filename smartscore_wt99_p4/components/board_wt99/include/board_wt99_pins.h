@@ -1,0 +1,85 @@
+#pragma once
+
+/*
+ * WT99P4C5-S1 revision 1V1, schematic sheet 2.
+ * These are P4-side signals connected to the on-board ESP32-C5-WROOM-1.
+ */
+#define BOARD_WT99_C5_SDIO_D0_GPIO 14
+#define BOARD_WT99_C5_SDIO_D1_GPIO 15
+#define BOARD_WT99_C5_SDIO_D2_GPIO 16
+#define BOARD_WT99_C5_SDIO_D3_GPIO 17
+#define BOARD_WT99_C5_SDIO_CLK_GPIO 18
+#define BOARD_WT99_C5_SDIO_CMD_GPIO 19
+#define BOARD_WT99_C5_RESET_GPIO 54
+
+#define BOARD_WT99_C5_SDIO_SLOT 1
+#define BOARD_WT99_C5_SDIO_BUS_WIDTH 4
+#define BOARD_WT99_C5_SDIO_CLOCK_KHZ 40000
+
+/*
+ * Dedicated UART link to the external music-recognition ESP32-S3.
+ * Final MUSIC wiring:
+ * P4 J6-4 GPIO0/TX -> S3 H7-8 MUSIC_RX_MS (module pad 38, S3 GPIO2/RX);
+ * S3 H7-10 MUSIC_TX_MS (module pad 39, S3 GPIO1/TX) -> P4 J6-6 GPIO1/RX.
+ */
+#define BOARD_WT99_MUSIC_UART_PORT 1
+#define BOARD_WT99_MUSIC_UART_TX_GPIO 0
+#define BOARD_WT99_MUSIC_UART_RX_GPIO 1
+#define BOARD_WT99_MUSIC_UART_BAUD_RATE 115200
+
+/*
+ * Dedicated UART link to the external voice-recognition ESP32-S3.
+ * Final VOICE wiring:
+ * P4 J6-20 GPIO32/TX -> S3 H7-13 VOICE_RX_MS (S3 GPIO2/RX);
+ * S3 H7-11 VOICE_TX_MS (S3 GPIO1/TX) -> P4 J6-22 GPIO33/RX.
+ */
+#define BOARD_WT99_VOICE_UART_PORT 2
+#define BOARD_WT99_VOICE_UART_TX_GPIO 32
+#define BOARD_WT99_VOICE_UART_RX_GPIO 33
+#define BOARD_WT99_VOICE_UART_BAUD_RATE 115200
+
+/*
+ * Dedicated UART link to the external camera/gesture-recognition ESP32-S3.
+ * Final CAM wiring:
+ * P4 J6-25 GPIO47/TX -> S3 H7-15 CAM_RX_MS (S3 GPIO2/RX);
+ * S3 H7-17 CAM_TX_MS (S3 GPIO1/TX) -> P4 J6-27 GPIO48/RX.
+ */
+#define BOARD_WT99_CAMERA_UART_PORT 3
+#define BOARD_WT99_CAMERA_UART_TX_GPIO 47
+#define BOARD_WT99_CAMERA_UART_RX_GPIO 48
+#define BOARD_WT99_CAMERA_UART_BAUD_RATE 115200
+
+/*
+ * WT99P4C5-S1 revision 1V1 audio path, schematic sheets 3 and 5.
+ * Do not substitute pin mappings from another ESP32-P4 development board.
+ */
+#define BOARD_WT99_AUDIO_I2C_PORT 1
+#define BOARD_WT99_AUDIO_I2C_SDA_GPIO 7
+#define BOARD_WT99_AUDIO_I2C_SCL_GPIO 8
+
+#define BOARD_WT99_AUDIO_I2S_PORT 1
+#define BOARD_WT99_AUDIO_I2S_MCLK_GPIO 13
+#define BOARD_WT99_AUDIO_I2S_BCLK_GPIO 12
+#define BOARD_WT99_AUDIO_I2S_LRCLK_GPIO 10
+#define BOARD_WT99_AUDIO_I2S_DOUT_GPIO 9
+#define BOARD_WT99_AUDIO_I2S_DIN_GPIO 11
+
+#define BOARD_WT99_AUDIO_PA_ENABLE_GPIO 53
+#define BOARD_WT99_AUDIO_PA_ENABLE_LEVEL 1
+
+#define BOARD_WT99_ES8311_I2C_ADDRESS_7BIT 0x18
+/* esp_codec_dev 1.2.x consumes the legacy 8-bit codec address. */
+#define BOARD_WT99_ES8311_CODEC_DEV_ADDRESS \
+    (BOARD_WT99_ES8311_I2C_ADDRESS_7BIT << 1)
+
+#define BOARD_WT99_AUDIO_DEFAULT_SAMPLE_RATE_HZ 24000
+#define BOARD_WT99_AUDIO_INITIAL_VOLUME_PERCENT 15
+#define BOARD_WT99_AUDIO_MAX_VOLUME_PERCENT 80
+
+/* WT99P4C5-S1 revision 1V1 MicroSD, schematic sheet 5. */
+#define BOARD_WT99_SDMMC_D0_GPIO 39
+#define BOARD_WT99_SDMMC_D1_GPIO 40
+#define BOARD_WT99_SDMMC_D2_GPIO 41
+#define BOARD_WT99_SDMMC_D3_GPIO 42
+#define BOARD_WT99_SDMMC_CLK_GPIO 43
+#define BOARD_WT99_SDMMC_CMD_GPIO 44

@@ -1,0 +1,69 @@
+#include <string.h>
+
+#include "s3_protocol.h"
+#include "unity.h"
+
+TEST_CASE("music protocol parses note_on", "[s3_bus]")
+{
+    const char *line =
+        "{\"v\":1,\"type\":\"note_on\",\"seq\":7,\"sid\":2,"
+        "\"ts_ms\":1234,\"midi\":69,\"velocity\":100,"
+        "\"freq_hz\":440.0,\"confidence\":0.95}";
+    s3_music_message_t message;
+    TEST_ASSERT_EQUAL(
+        S3_PROTOCOL_OK,
+        s3_protocol_parse_music_line(line, strlen(line), &message));
+    TEST_ASSERT_EQUAL(S3_MUSIC_MESSAGE_NOTE_ON, message.type);
+    TEST_ASSERT_EQUAL_UINT32(7, message.seq);
+    TEST_ASSERT_EQUAL_UINT32(2, message.sid);
+    TEST_ASSERT_EQUAL_UINT32(1234, message.ts_ms);
+    TEST_ASSERT_EQUAL_UINT8(69, message.midi);
+    TEST_ASSERT_EQUAL_UINT8(100, message.velocity);
+}
+
+TEST_CASE("music protocol parses note_off", "[s3_bus]")
+{
+    const char *line =
+        "{\"v\":1,\"type\":\"note_off\",\"seq\":8,\"sid\":2,"
+        "\"ts_ms\":1300,\"midi\":69,\"duration_ms\":66,"
+        "\"reason\":\"silence\"}";
+    s3_music_message_t message;
+    TEST_ASSERT_EQUAL(
+        S3_PROTOCOL_OK,
+        s3_protocol_parse_music_line(line, strlen(line), &message));
+    TEST_ASSERT_EQUAL(S3_MUSIC_MESSAGE_NOTE_OFF, message.type);
+    TEST_ASSERT_EQUAL_UINT8(69, message.midi);
+    TEST_ASSERT_EQUAL_UINT8(0, message.velocity);
+}
+
+TEST_CASE("music protocol rejects missing and out of range fields", "[s3_bus]")
+{
+    const char *missing =
+        "{\"v\":1,\"type\":\"note_on\",\"seq\":1,\"sid\":0,"
+        "\"ts_ms\":10,\"midi\":60}";
+    const char *range =
+        "{\"v\":1,\"type\":\"note_on\",\"seq\":1,\"sid\":0,"
+        "\"ts_ms\":10,\"midi\":128,\"velocity\":90}";
+    s3_music_message_t message;
+    TEST_ASSERT_EQUAL(
+        S3_PROTOCOL_INVALID_FIELD,
+        s3_protocol_parse_music_line(missing, strlen(missing), &message));
+    TEST_ASSERT_EQUAL(
+        S3_PROTOCOL_INVALID_FIELD,
+        s3_protocol_parse_music_line(range, strlen(range), &message));
+}
+
+TEST_CASE("music protocol rejects unknown type and trailing garbage", "[s3_bus]")
+{
+    const char *unknown =
+        "{\"v\":1,\"type\":\"raw_pcm\",\"seq\":1,\"sid\":0,\"ts_ms\":10}";
+    const char *trailing =
+        "{\"v\":1,\"type\":\"pong\",\"seq\":1,\"sid\":0,\"ts_ms\":10}x";
+    s3_music_message_t message;
+    TEST_ASSERT_EQUAL(
+        S3_PROTOCOL_UNKNOWN_TYPE,
+        s3_protocol_parse_music_line(unknown, strlen(unknown), &message));
+    TEST_ASSERT_EQUAL(
+        S3_PROTOCOL_INVALID_JSON,
+        s3_protocol_parse_music_line(trailing, strlen(trailing), &message));
+}

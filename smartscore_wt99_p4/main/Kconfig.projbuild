@@ -1,0 +1,32 @@
+menu "SmartScore WT99 stage-one network firmware"
+
+config SMARTSCORE_NETWORK_ONLY
+    bool "Build only the stage-one network firmware"
+    default y
+
+config SMARTSCORE_WEB_PROVISIONING_FALLBACK
+    bool "Enable SmartScore_Setup web provisioning fallback"
+    default n
+    help
+        BLE is the primary provisioning path. Enable this only when the
+        SmartScore_Setup SoftAP fallback is required.
+
+config SMARTSCORE_WIFI_MAX_RETRIES
+    int "Maximum Wi-Fi connection attempts"
+    range 1 10
+    default 5
+
+config SMARTSCORE_WIFI_ATTEMPT_TIMEOUT_SECONDS
+    int "Timeout for each Wi-Fi attempt"
+    range 3 60
+    default 12
+
+config SMARTSCORE_AUTO_CONNECT_SAVED_WIFI
+    bool "Automatically connect saved Wi-Fi at startup"
+    default y
+    help
+        When enabled, startup loads valid credentials from smartscore_net
+        and queues a STA connection. BLE provisioning remains available as
+        a fallback when no credentials are saved or the connection fails.
+
+endmenu

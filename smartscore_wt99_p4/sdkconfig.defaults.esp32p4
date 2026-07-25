@@ -1,0 +1,41 @@
+# Generic ESP32-P4 host-side configuration.  This file deliberately contains
+# no WT99 transport GPIO, reset polarity, bus width, slot or clock settings.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_CONTROLLER_DISABLED=y
+CONFIG_BT_BLUEDROID_ENABLED=n
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_TRANSPORT_UART=n
+
+# The P4 boot ROM reports the fitted flash as 16 MiB.  Keep the generated
+# image header aligned with the detected device instead of IDF's 2 MiB default.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+CONFIG_ESP_WIFI_REMOTE_LIBRARY_HOSTED=y
+CONFIG_ESP_HOSTED_ENABLED=y
+CONFIG_SLAVE_IDF_TARGET_ESP32C5=y
+CONFIG_ESP_HOSTED_CP_TARGET_ESP32C5=y
+CONFIG_ESP_HOSTED_P4_DEV_BOARD_NONE=y
+CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE=y
+CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
+CONFIG_ESP_HOSTED_SDIO_SLOT_1=y
+CONFIG_ESP_HOSTED_SDIO_4_BIT_BUS=y
+CONFIG_ESP_HOSTED_SDIO_CLOCK_FREQ_KHZ=40000
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_CMD_SLOT_1=19
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_CLK_SLOT_1=18
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D0_SLOT_1=14
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D1_4BIT_BUS_SLOT_1=15
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D2_4BIT_BUS_SLOT_1=16
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D3_4BIT_BUS_SLOT_1=17
+CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=54
+CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y
+CONFIG_ESP_HOSTED_NIMBLE_HCI_VHCI=y
+# Allocate SDIO packet buffers individually.  The full screen firmware cannot
+# reserve ESP-Hosted's ~48 KiB contiguous internal-DMA mempool at startup, and
+# ESP-Hosted intentionally excludes PSRAM from this transport allocation.
+# CONFIG_ESP_HOSTED_USE_MEMPOOL is not set
+
+# Source: WT99P4C5-S1 1V1 schematic sheet 2 and the Wireless-Tag
+# WT99P4C5-S1 official sdkconfig.defaults.
+# Keep app_main out of the 8 KiB SPM heap: flash/NVS cache-disabled sections
+# require the task stack to reside in normal internal DRAM on ESP32-P4.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=12288

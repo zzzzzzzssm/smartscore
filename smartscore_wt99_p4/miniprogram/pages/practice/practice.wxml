@@ -1,0 +1,207 @@
+<view class="page">
+  <view class="card current-score">
+    <view class="row between">
+      <view>
+        <view class="muted">当前乐谱</view>
+        <view class="score-title">{{scoreTitle}}</view>
+      </view>
+      <view class="tag {{statusClass}}">{{status}}</view>
+    </view>
+  </view>
+
+  <view class="section" wx:if="{{preparationValid}}">
+    <view class="card preparation-card">
+      <view class="row between preparation-head">
+        <view>
+          <view class="section-title compact-title">乐谱准备</view>
+          <view class="hint">{{preparationMessage}}</view>
+        </view>
+        <view class="tag online">屏幕已同步</view>
+      </view>
+
+      <view class="preparation-group">
+        <view class="muted preparation-label">乐谱类型</view>
+        <view class="preparation-options {{preparationChanging ? 'disabled' : ''}}">
+          <view class="preparation-option {{notationType == 'numbered' ? 'selected' : ''}}"
+                data-notation="numbered" bindtap="selectNotationType">简谱</view>
+          <view class="preparation-option {{notationType == 'staff' ? 'selected' : ''}}"
+                data-notation="staff" bindtap="selectNotationType">五线谱</view>
+        </view>
+      </view>
+
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="control-row card">
+      <button class="primary-btn" bindtap="startPractice"
+              disabled="{{isRecording || isStarting || creatorActive}}">
+        开始演奏跟谱
+      </button>
+      <button class="secondary-btn" bindtap="previewScore"
+              disabled="{{isRecording || isStarting || creatorActive || !preparationValid}}">
+        预览乐谱
+      </button>
+      <button class="secondary-btn" bindtap="stopPractice"
+              disabled="{{!isRecording}}">结束练习</button>
+      <button class="secondary-btn" bindtap="requestAiScore">AI 评分建议</button>
+      <button class="ghost-btn" bindtap="resetPractice">重新练习</button>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="card input-card">
+      <view class="row between input-head">
+        <view>
+          <view class="section-title compact-title">评分输入源</view>
+          <view class="hint">手动选择并保存到设备，练习期间不可切换。</view>
+        </view>
+        <view class="tag warn" wx:if="{{inputLocked}}">练习中已锁定</view>
+      </view>
+      <view class="input-options {{inputLocked || inputChanging ? 'disabled' : ''}}">
+        <view class="input-option {{selectedInput == 'usb_midi' ? 'selected' : ''}}"
+              data-source="usb_midi" bindtap="selectInputSource">
+          <view class="input-check">{{selectedInput == 'usb_midi' ? '●' : '○'}}</view>
+          <view class="input-copy">
+            <view class="input-name">USB MIDI 电子琴</view>
+            <view class="hint {{usbMidiConnected ? 'good-text' : 'bad-text'}}">
+              {{usbMidiConnected ? '已检测到电子琴' : '未检测到 USB MIDI 电子琴'}}
+            </view>
+          </view>
+        </view>
+        <view class="input-option {{selectedInput == 'audio_s3' ? 'selected' : ''}}"
+              data-source="audio_s3" bindtap="selectInputSource">
+          <view class="input-check">{{selectedInput == 'audio_s3' ? '●' : '○'}}</view>
+          <view class="input-copy">
+            <view class="input-name">S3 麦克风音频</view>
+            <view class="hint {{audioS3Connected && audioS3Implemented ? 'good-text' : 'bad-text'}}">
+              {{!audioS3Implemented ? '接口已保留，当前暂未实现' : (audioS3Connected ? '音频节点已连接' : '未检测到 S3 音频节点')}}
+            </view>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="card live-card">
+      <view class="row between live-head">
+        <view>
+          <view class="section-title compact-title">
+            {{selectedInput == 'usb_midi' ? 'MIDI 实时状态' : '音频实时状态'}}
+          </view>
+          <view class="hint">{{liveStatus.message}}</view>
+        </view>
+        <view class="tag {{liveStatus.online ? 'online' : 'bad'}}">{{liveStatus.online ? '在线' : '离线'}}</view>
+      </view>
+      <view class="live-phase">
+        <view>
+          <view class="muted">录音阶段</view>
+          <view class="live-phase-text {{liveStatus.phaseClass}}">{{liveStatus.phase}}</view>
+        </view>
+        <view class="live-progress">
+          <view class="muted">已识别 / 目标</view>
+          <view>{{liveStatus.progress}}</view>
+        </view>
+      </view>
+      <view class="live-grid">
+        <block wx:if="{{selectedInput == 'usb_midi'}}">
+          <view>
+            <view class="muted">电子琴</view>
+            <view>{{usbMidiConnected ? '已连接' : '未连接'}}</view>
+          </view>
+          <view>
+            <view class="muted">输入方式</view>
+            <view>USB MIDI</view>
+          </view>
+          <view>
+            <view class="muted">当前音</view>
+            <view>{{liveStatus.note}}</view>
+          </view>
+          <view>
+            <view class="muted">识别进度</view>
+            <view>{{liveStatus.progress}}</view>
+          </view>
+        </block>
+        <block wx:else>
+          <view>
+            <view class="muted">环境噪声</view>
+            <view>{{liveStatus.noise}}</view>
+          </view>
+          <view>
+            <view class="muted">触发阈值</view>
+            <view>{{liveStatus.threshold}}</view>
+          </view>
+          <view>
+            <view class="muted">当前音量</view>
+            <view>{{liveStatus.rms}}</view>
+          </view>
+          <view>
+            <view class="muted">当前音</view>
+            <view>{{liveStatus.note}}</view>
+          </view>
+        </block>
+      </view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="card chart-card">
+      <view class="row between chart-head">
+        <view class="section-title compact-title">演奏过程图谱</view>
+        <view class="chart-legend">
+          <view class="legend-item"><view class="legend-swatch target"></view>标准谱</view>
+          <view class="legend-item"><view class="legend-swatch played"></view>采集演奏</view>
+          <view class="legend-item"><view class="legend-swatch error"></view>音高误差</view>
+        </view>
+      </view>
+      <view class="hint chart-hint">{{chartHint}}</view>
+      <view class="chart-wrap">
+        <canvas canvas-id="performanceChart" class="performance-chart"></canvas>
+        <view class="chart-empty" wx:if="{{chartEmpty}}">还没有可展示的演奏数据。</view>
+      </view>
+      <view class="chart-stats">
+        <view class="chart-stat">
+          <view class="muted">平均音准误差</view>
+          <view>{{chartStats.avgPitch}}</view>
+        </view>
+        <view class="chart-stat">
+          <view class="muted">最大音准误差</view>
+          <view>{{chartStats.maxPitch}}</view>
+        </view>
+        <view class="chart-stat">
+          <view class="muted">平均节奏误差</view>
+          <view>{{chartStats.avgRhythm}}</view>
+        </view>
+        <view class="chart-stat">
+          <view class="muted">匹配音符</view>
+          <view>{{chartStats.matched}}</view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="score-panel card">
+      <view class="section-title compact-title score-heading">本次评分</view>
+      <view class="score-ring">
+        <view class="score-number">{{result.totalScore}}</view>
+        <view class="muted">总分</view>
+      </view>
+      <view class="score-metrics">
+        <view class="metric">
+          <view class="metric-label">音准</view>
+          <view class="metric-value">{{result.pitchScore}}</view>
+        </view>
+        <view class="metric">
+          <view class="metric-label">节奏</view>
+          <view class="metric-value">{{result.rhythmScore}}</view>
+        </view>
+        <view class="metric">
+          <view class="metric-label">完整度</view>
+          <view class="metric-value">{{result.completeScore}}</view>
+        </view>
+      </view>
+    </view>
+  </view>
+</view>

@@ -1,0 +1,18 @@
+menu "SmartScore speaker service"
+
+config SMARTSCORE_SPEAKER_ENABLED
+    bool "Enable the onboard ES8311 speaker service"
+    default y
+    help
+        Enable the WT99 ES8311, I2S output and NS4150B amplifier service.
+        Disable only for a deliberately silent diagnostic build.
+
+config SMARTSCORE_SPEAKER_STARTUP_TEST
+    bool "Play a low-volume 440 Hz tone after speaker initialization"
+    depends on SMARTSCORE_SPEAKER_ENABLED
+    default n
+    help
+        Engineering-only startup check. Keep disabled for normal firmware so
+        the external speaker never makes an unexpected sound at power-on.
+
+endmenu

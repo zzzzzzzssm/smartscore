@@ -1,0 +1,104 @@
+SmartScore 语音 S3 与 WT99 P4 通信融合说明
+日期：2026-07-25
+
+一、硬件连接
+
+依据用户提供的 8 线连接图及 Netlist_PCB1_2026-07-21.tel：
+1. P4 J6-20 / GPIO32 / UART2_TX -> S3 H7-13 / VOICE_RX_MS / U4.38 / S3 GPIO2(RX)
+2. S3 H7-11 / VOICE_TX_MS / U4.39 / S3 GPIO1(TX) -> P4 J6-22 / GPIO33 / UART2_RX
+3. P4 J6-17 GND <-> S3 H7-18 GND（必须共地）
+4. 供电仍按总接线图的 J6-7 5V -> H7-22 VIN；本次代码没有改动电源控制。
+
+语音链路参数：P4 UART2、S3 UART1、115200 baud、8N1、无硬件流控。
+调试串口不承载板间协议。
+
+二、板间文本协议
+
+每帧均以换行符 \n 结束：
+S3 -> P4：V1,WAKE
+S3 -> P4：V1,TIMEOUT
+S3 -> P4：V1,CMD,<1..7>
+P4 -> S3：V1,ACK,<1..7>,OK
+P4 -> S3：V1,ACK,<1..7>,IGNORED
+
+OK 表示该指令适用于当前页面并已进入现有业务流程；IGNORED 表示当前页面或状态不支持该指令，没有执行页面动作。
+
+三、指令与页面行为
+
+1 开始练习：仅在已选择乐谱的准备页有效，沿用当前输入源、谱式等选择开始练习。
+2 停止练习：仅在正在演奏且尚未暂停时有效，执行“暂停”，不会结束并评分，也不会误切换为继续。
+3 下一页：仅在只读预览或演奏暂停时有效；已到最后一页时不翻页。
+4 上一页：仅在只读预览或演奏暂停时有效；已到第一页时不翻页。
+5 重新开始：在演奏中、演奏暂停或评分结果页有效；先安全结束/清理当前评分会话，再按当前已选乐谱从头开始。
+6 查看评分：在演奏中或演奏暂停时有效；自动结束当前练习，等待评分完成并进入评分页。
+7 返回首页：在主页、选曲、准备、看谱/练习、评分和设置页面有效；若练习尚未结束，会后台完成并丢弃该次结果后释放会话。创作者模式或其它独立模式不强行退出，返回 IGNORED。
+
+四、界面反馈
+
+1. 收到 V1,WAKE 后，在 LVGL 顶层显示圆角语音助手弹窗“正在聆听… / 请说出指令”。
+2. S3 识别等待为 6 秒；收到 V1,TIMEOUT 后弹窗立即消失，不执行动作、不显示额外反馈。
+3. P4 另设 6.5 秒本地兜底隐藏，避免丢失 TIMEOUT 帧时弹窗常驻。
+4. 收到命令后，聆听弹窗改为约 1.8 秒的执行反馈；成功显示“已执行”，页面不适用显示“当前页面无法执行”。
+5. 所有语音事件先通过 lv_async_call 排入 LVGL 线程，UART 接收任务不直接跨线程修改界面。
+
+五、P4 项目改动文件
+
+components/board_wt99/include/board_wt99_pins.h
+- 增加 UART2、GPIO32/33 和 115200 的语音链路板级定义。
+
+components/s3_bus/CMakeLists.txt
+components/s3_bus/include/s3_devices.h
+components/s3_bus/src/s3_voice_node.c
+- 启用原有语音 S3 节点框架；增加 WAKE/TIMEOUT/CMD 解析、事件回调及 ACK 发送。
+- 帧长度、命令范围和异常输入均有限制，超长帧丢弃到下一个换行符。
+
+components/screen_adapter/include/screen_adapter.h
+components/screen_adapter/src/screen_adapter.c
+- 增加语音事件异步入口、语音助手弹窗、页面/状态适配判断。
+- 复用现有开始、暂停、评分、翻页、选中乐谱与页面切换逻辑。
+- 评分完成动作增加“显示结果 / 丢弃并复位 / 复位后重新开始”三种去向，避免返回首页或重新开始时旧评分页再次弹出。
+
+vendor/smartmusic_screen/SmartMusic/components/music_display/music_display.h
+vendor/smartmusic_screen/SmartMusic/components/music_display/music_display.c
+- 增加 VOICE 翻页来源。
+- 在请求入队前检查是否有乐谱以及是否已到第一页/最后一页。
+
+main/main.c
+- 注册语音 S3 事件回调，转交 screen_adapter，并把执行结果回传为 ACK。
+- 启动独立语音 UART，不改变原音乐 S3 UART1 链路。
+
+六、S3 语音项目改动文件
+
+main/voice_config.h
+- 增加 UART1、GPIO1/2、115200 配置。
+
+main/voice_uart_link.h
+main/voice_uart_link.c
+- 新增专用板间 UART 模块，发送 WAKE/TIMEOUT/CMD 并接收、记录 P4 ACK。
+
+main/voice_recognition.c
+- 在原唤醒成功、命令超时、合法命令识别三个状态点发送对应协议帧。
+- 原 UART0 printf/ESP_LOG 调试输出保留。
+
+main/app_main.c
+- 在麦克风和 ESP-SR 启动前初始化语音控制 UART；链路初始化失败会明确报错并停止继续启动。
+
+main/CMakeLists.txt
+- 纳入 voice_uart_link.c。
+
+README.md
+- 补充 S3 与 P4 接线、UART 参数和协议说明。
+
+七、合并注意事项
+
+1. 本次开始前，P4 工作区已有 main/main.c 的音频 S3 时间戳补偿，以及 components/screen_adapter/src/screen_adapter.c 的音频倒计时/跟随优化等未提交改动；这些原有改动均保留，不能在合并时整文件覆盖。
+2. 建议按文件差异合并，尤其 screen_adapter.c 和 main.c 应使用三方合并。
+3. UART 信号必须交叉连接并共地，S3/P4 UART 均为 3.3V 逻辑；不要把 5V 直接接入 UART 信号脚。
+4. 按用户要求，本次没有执行编译、烧录或实机测试，仅完成静态一致性核对。
+
+八、建议实机验收顺序
+
+1. 先只连接 TX/RX/GND，确认两端启动日志分别出现语音 UART 初始化成功。
+2. 说“你好小智”，确认 P4 出现聆听弹窗；不说指令，确认约 6 秒后无动作消失。
+3. 逐条在有效页面验证 1~7，再在无效页面各抽测一次，确认无效指令只反馈、不改变页面状态。
+4. 最后测试“查看评分 -> 返回首页”和“演奏中 -> 重新开始”，确认旧评分页不会延迟覆盖当前页面。

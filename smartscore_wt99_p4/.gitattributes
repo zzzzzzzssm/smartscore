@@ -1,0 +1,3 @@
+# The SmartMusic tree is an immutable, hash-verified source snapshot.
+# Preserve every byte across Windows checkouts, including original whitespace.
+vendor/smartmusic_screen/** -text -whitespace

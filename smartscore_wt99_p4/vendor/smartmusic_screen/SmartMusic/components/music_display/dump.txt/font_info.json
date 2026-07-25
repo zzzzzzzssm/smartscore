@@ -1,0 +1,54 @@
+{
+  "ascent": 99,
+  "descent": -60,
+  "typoAscent": 181,
+  "typoDescent": -181,
+  "typoLineGap": 0,
+  "size": 90,
+  "glyphs": [
+    {
+      "code": 57424,
+      "advanceWidth": 60.38993835449219,
+      "bbox": {
+        "x": 0,
+        "y": -60,
+        "width": 61,
+        "height": 159
+      },
+      "kerning": {},
+      "freetype": {
+        "glyph_index": 74,
+        "metrics": {
+          "width": 61,
+          "height": 159,
+          "horiBearingX": 0,
+          "horiBearingY": 99,
+          "horiAdvance": 60,
+          "vertBearingX": 0,
+          "vertBearingY": 0,
+          "vertAdvance": 362
+        },
+        "linearHoriAdvance": 60.38993835449219,
+        "linearVertAdvance": 362.15965270996094,
+        "advance": {
+          "x": 60,
+          "y": 0
+        },
+        "bitmap": {
+          "width": 61,
+          "rows": 159,
+          "pitch": 61,
+          "num_grays": 256,
+          "pixel_mode": 2,
+          "palette_mode": 0
+        },
+        "bitmap_left": 0,
+        "bitmap_top": 99,
+        "lsb_delta": 0,
+        "rsb_delta": -0.390625
+      }
+    }
+  ],
+  "underlinePosition": -7,
+  "underlineThickness": 5
+}

@@ -1,0 +1,12 @@
+menu "WT99P4C5-S1 board network adaptation"
+
+config SMARTSCORE_WT99_BOARD_REV_1V1
+    bool "WT99P4C5-S1 revision 1V1"
+    default y
+    depends on IDF_TARGET_ESP32P4
+    help
+        Select the pin map documented by SCH_WT99P4C5-S1-1V1 sheet 2 and the
+        Wireless-Tag official WT99P4C5-S1 example: SDIO slot 1, 4-bit,
+        40 MHz, GPIO 14-19, and ESP32-C5 enable/reset on GPIO 54.
+
+endmenu

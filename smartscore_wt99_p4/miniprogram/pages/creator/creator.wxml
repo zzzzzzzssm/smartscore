@@ -1,0 +1,95 @@
+<view class="page">
+  <view class="creator-hero">
+    <view class="creator-symbol">✦</view>
+    <view>
+      <view class="creator-title">创作者模式</view>
+      <view class="creator-subtitle">手机与屏幕共享同一段 MIDI 创作录制</view>
+    </view>
+  </view>
+
+  <view class="card status-card">
+    <view class="row between">
+      <view>
+        <view class="muted">当前状态</view>
+        <view class="state-title {{status.state}}">{{status.stateLabel}}</view>
+      </view>
+      <view class="tag {{status.usb_midi_connected ? 'online' : 'bad'}}">
+        {{status.usb_midi_connected ? 'MIDI 已连接' : 'MIDI 未连接'}}
+      </view>
+    </view>
+    <view class="status-message">{{status.message}}</view>
+    <view class="creator-stats">
+      <view>
+        <view class="metric-label">已录音符</view>
+        <view class="metric-value">{{status.note_count}}</view>
+      </view>
+      <view>
+        <view class="metric-label">当前小节</view>
+        <view class="metric-value">{{status.measure_count}}</view>
+      </view>
+      <view>
+        <view class="metric-label">保存文件</view>
+        <view class="saved-name">{{status.saved_filename || '—'}}</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-title">创作设置</view>
+    <view class="card config-card {{status.active ? 'locked' : ''}}">
+      <view class="config-label">速度 BPM</view>
+      <view class="option-row">
+        <view wx:for="{{bpmOptions}}" wx:key="*this"
+              class="option {{bpm == item ? 'selected' : ''}}"
+              data-value="{{item}}" bindtap="chooseBpm">{{item}}</view>
+      </view>
+
+      <view class="config-label spaced">拍号</view>
+      <view class="option-row">
+        <view wx:for="{{timeOptions}}" wx:key="label"
+              class="option {{timeSigNum == item.num && timeSigDen == item.den ? 'selected' : ''}}"
+              data-num="{{item.num}}" data-den="{{item.den}}"
+              bindtap="chooseTime">{{item.label}}</view>
+      </view>
+
+      <view class="config-label spaced">声部模式</view>
+      <view class="staff-row">
+        <view class="staff-option {{staffMode == 'single' ? 'selected' : ''}}"
+              data-value="single" bindtap="chooseStaff">
+          <view class="staff-title">单声部</view>
+          <view class="hint">右手旋律 / 单谱表</view>
+        </view>
+        <view class="staff-option {{staffMode == 'grand' ? 'selected' : ''}}"
+              data-value="grand" bindtap="chooseStaff">
+          <view class="staff-title">双声部</view>
+          <view class="hint">左右手 / 大谱表</view>
+        </view>
+      </view>
+      <view class="hint lock-hint" wx:if="{{status.active}}">创作进行中，结束或取消后可重新设置。</view>
+    </view>
+  </view>
+
+  <view class="section action-section">
+    <button class="primary-btn full-action" bindtap="startCreator"
+            disabled="{{busy || status.active || !status.available}}">开始创作</button>
+    <view class="creator-actions" wx:if="{{status.active}}">
+      <button class="secondary-btn" data-action="pause" bindtap="runAction"
+              disabled="{{busy || status.state != 'recording'}}">暂停</button>
+      <button class="secondary-btn" data-action="resume" bindtap="runAction"
+              disabled="{{busy || status.state != 'paused'}}">继续</button>
+      <button class="primary-btn" data-action="finish" bindtap="runAction"
+              disabled="{{busy || status.state != 'paused' || status.note_count <= 0}}">结束并保存</button>
+      <button class="danger-btn" data-action="cancel" bindtap="runAction"
+              disabled="{{busy}}">取消创作</button>
+    </view>
+    <view class="hint action-hint">录制完成后请先暂停，再保存到设备 SD 卡；保存后可在“乐谱 → 设备 SD 卡”中读取。</view>
+  </view>
+
+  <view class="card connection-help" wx:if="{{!status.available}}">
+    <view>
+      <view class="help-title">设备尚未就绪</view>
+      <view class="hint">先连接谱伴设备并确认手机与设备处于同一网络。</view>
+    </view>
+    <button class="secondary-btn help-button" bindtap="openDevice">连接设备</button>
+  </view>
+</view>

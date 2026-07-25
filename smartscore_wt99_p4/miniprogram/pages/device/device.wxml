@@ -1,0 +1,138 @@
+<view class="page">
+  <view class="hero device-hero">
+    <view class="hero-kicker">Device Hub</view>
+    <view class="hero-title">智能设备</view>
+    <view class="hero-subtitle">按顺序连接蓝牙、配置 Wi-Fi，并确认设备可用。</view>
+  </view>
+
+  <view class="connection-steps">
+    <view class="step-item {{connection.step == 1 ? 'active' : ''}} {{connection.step > 1 ? 'done' : ''}}">
+      <view class="step-index">1</view>
+      <view>连接蓝牙</view>
+    </view>
+    <view class="step-line"></view>
+    <view class="step-item {{connection.step == 2 ? 'active' : ''}} {{connection.step > 2 ? 'done' : ''}}">
+      <view class="step-index">2</view>
+      <view>配置 Wi-Fi</view>
+    </view>
+    <view class="step-line"></view>
+    <view class="step-item {{connection.step == 3 ? 'active' : ''}}">
+      <view class="step-index">3</view>
+      <view>设备状态</view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-title">1. 连接蓝牙</view>
+    <view class="card bluetooth-card">
+      <view class="row between bluetooth-status">
+        <view>
+          <view class="reserve-title">{{bluetooth.connected ? bluetooth.connectedName : '未连接蓝牙设备'}}</view>
+          <view class="hint">{{bluetooth.statusText}}</view>
+        </view>
+        <view class="status-pill {{bluetooth.connected ? 'online' : 'offline'}}">
+          {{bluetooth.connected ? 'BLE 已连接' : 'BLE 未连接'}}
+        </view>
+      </view>
+
+      <view class="action-grid bluetooth-actions">
+        <button class="primary-btn" bindtap="startBluetoothScan" loading="{{bluetooth.scanning}}">
+          {{bluetooth.scanning ? '扫描中' : '扫描蓝牙'}}
+        </button>
+        <button class="secondary-btn" bindtap="stopBluetoothScan" disabled="{{!bluetooth.scanning}}">停止扫描</button>
+        <button class="ghost-btn" bindtap="disconnectBluetooth" disabled="{{!bluetooth.connected}}">断开蓝牙</button>
+      </view>
+
+      <view class="ble-device-list" wx:if="{{bluetooth.devices.length}}">
+        <view class="ble-device" wx:for="{{bluetooth.devices}}" wx:key="deviceId" bindtap="connectBluetoothDevice" data-id="{{item.deviceId}}">
+          <view>
+            <view class="ble-name">{{item.name || item.localName || 'SmartScore 设备'}}</view>
+            <view class="muted">{{item.deviceId}}</view>
+          </view>
+          <view class="ble-rssi">{{item.RSSI}} dBm</view>
+        </view>
+      </view>
+      <view class="empty bluetooth-empty" wx:else>
+        {{bluetooth.scanning ? '正在搜索 SmartScore 蓝牙设备...' : '点击扫描蓝牙，只显示 SmartScore 设备。'}}
+      </view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-title">2. 配置 Wi-Fi</view>
+    <view class="card ble-provision {{!bluetooth.connected ? 'disabled-card' : ''}}">
+      <view class="hint" wx:if="{{!bluetooth.connected}}">先完成蓝牙连接，再搜索 Wi-Fi。</view>
+      <view class="wifi-scan-row">
+        <button class="secondary-btn" bindtap="startWifiScan" loading="{{wifiProvision.scanning}}" disabled="{{!bluetooth.connected || wifiProvision.scanning || wifiProvision.sending || connection.state == 'WIFI_CONNECTED'}}">
+          {{wifiProvision.scanning ? '搜索中' : '搜索 Wi-Fi'}}
+        </button>
+      </view>
+      <view class="wifi-network-list" wx:if="{{wifiProvision.networks.length}}">
+        <view class="wifi-network" wx:for="{{wifiProvision.networks}}" wx:key="ssid" bindtap="selectWifiNetwork" data-ssid="{{item.ssid}}" data-secure="{{item.secure}}">
+          <view class="wifi-name">{{item.ssid}}</view>
+          <view class="wifi-meta">{{item.secure ? '需要密码' : '开放网络'}} · 信号 {{item.signalStrength}}</view>
+        </view>
+      </view>
+      <input class="text-input" value="{{wifiProvision.ssid}}" placeholder="Wi-Fi 名称" bindinput="onBleWifiSsidInput" disabled="{{!bluetooth.connected}}" />
+      <input class="text-input" value="{{wifiProvision.password}}" password placeholder="Wi-Fi 密码（开放网络可留空）" bindinput="onBleWifiPasswordInput" disabled="{{!bluetooth.connected}}" />
+      <button class="primary-btn full-btn" bindtap="sendBluetoothWifiConfig" loading="{{wifiProvision.sending}}" disabled="{{!bluetooth.connected || !wifiProvision.ssid}}">
+        发送 Wi-Fi 配置
+      </button>
+      <view class="hint">{{wifiProvision.statusText}}</view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-title">3. 设备地址与状态</view>
+    <view class="card status-card">
+      <view class="row between">
+        <view>
+          <view class="device-name">{{device.name}}</view>
+          <view class="muted">{{connection.statusText}}</view>
+        </view>
+        <view class="status-pill {{connection.canReach && connection.serviceOk ? 'online' : 'offline'}}">
+          {{connection.canReach && connection.serviceOk ? '可用' : '不可用'}}
+        </view>
+      </view>
+
+      <view class="form-card address-form">
+        <view class="input-label">设备地址</view>
+        <input class="text-input" value="{{baseUrl}}" placeholder="例如 http://smart-score.local" bindinput="onBaseUrlInput" />
+        <view class="button-row">
+          <button class="secondary-btn" bindtap="saveBaseUrl">保存地址</button>
+          <button class="primary-btn" bindtap="refreshDeviceStatus">检测状态</button>
+        </view>
+      </view>
+
+      <view class="health-grid">
+        <view>
+          <view class="muted">网络连接</view>
+          <view class="{{connection.canReach ? 'good-text' : 'bad-text'}}">{{connection.canReach ? '可连接' : '未连通'}}</view>
+        </view>
+        <view>
+          <view class="muted">工作状态</view>
+          <view class="{{connection.serviceOk ? 'good-text' : 'bad-text'}}">{{connection.serviceOk ? '正常' : '待检测'}}</view>
+        </view>
+        <view>
+          <view class="muted">录音状态</view>
+          <view>{{connection.phase}}</view>
+        </view>
+        <view>
+          <view class="muted">识别进度</view>
+          <view>{{connection.progress}}</view>
+        </view>
+      </view>
+      <view class="device-ip">当前地址：{{baseUrl || '尚未配置'}} · 检测时间：{{connection.lastChecked}}</view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-title">设备操作</view>
+    <view class="action-grid">
+      <button class="primary-btn" bindtap="openAudioCenter">节拍器与校准音</button>
+      <button class="secondary-btn" bindtap="syncScore" disabled="{{!connection.serviceOk}}">同步乐谱</button>
+      <button class="ghost-btn" bindtap="fetchResult" disabled="{{!connection.serviceOk}}">获取练习结果</button>
+      <button class="ghost-btn" bindtap="sendBluetoothPing" disabled="{{!bluetooth.connected}}">测试蓝牙</button>
+    </view>
+  </view>
+</view>
