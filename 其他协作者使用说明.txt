@@ -1,0 +1,181 @@
+SmartScore 四项目协作开发与烧录使用说明
+========================================
+
+仓库地址：
+https://github.com/zzzzzzzssm/smartscore.git
+
+本仓库包含四个项目：
+
+1. smartscore_wt99_p4    ESP32-P4 主控与屏幕项目
+2. smartscore_s3_audio   音乐识别 S3 项目
+3. smartscore_s3_vision  摄像头识别 S3 项目
+4. smartscore_s3_voice   语音识别 S3 项目
+
+
+一、首次准备
+------------
+
+请在自己的电脑上安装：
+
+1. Git
+2. VS Code（推荐）
+3. Espressif ESP-IDF，以及 VS Code 的 Espressif IDF 扩展（推荐）
+4. 对应开发板所需的 USB 串口驱动
+
+如果仓库是私有仓库，需要先让仓库管理员在 GitHub 中授予访问权限。
+
+首次使用 Git 时配置自己的提交身份：
+
+git config --global user.name "你的GitHub用户名"
+git config --global user.email "你的邮箱"
+
+
+二、下载项目
+------------
+
+普通网络使用 HTTPS：
+
+git clone https://github.com/zzzzzzzssm/smartscore.git
+cd smartscore
+
+如果 HTTPS 无法连接，并且已经把本机 SSH 公钥添加到 GitHub，可以使用 SSH 443：
+
+git clone ssh://git@ssh.github.com:443/zzzzzzzssm/smartscore.git
+cd smartscore
+
+以后不要直接复制别人电脑中的 build 目录，应在自己电脑上重新编译。
+
+
+三、开始修改前
+--------------
+
+先获取 main 分支的最新代码：
+
+git switch main
+git pull
+
+每项功能或修复都应建立独立分支，不建议直接修改 main：
+
+git switch -c feature-姓名-功能名称
+
+示例：
+
+git switch -c feature-zhangsan-vision-page-control
+
+
+四、提交自己的修改
+------------------
+
+先查看修改范围：
+
+git status
+git diff
+
+只添加本次确实修改的项目。例如只修改摄像头项目：
+
+git add smartscore_s3_vision
+git commit -m "fix: 修复摄像头翻页指令"
+git push -u origin feature-zhangsan-vision-page-control
+
+推送后，在 GitHub 上创建 Pull Request，请其他开发者检查后再合并到 main。
+
+不要把无关文件、密码、密钥、个人训练环境、临时日志或编译产物提交到仓库。
+
+
+五、同步其他人的最新修改
+----------------------
+
+在自己的功能分支中同步 main：
+
+git fetch origin
+git rebase origin/main
+
+如果出现冲突，打开冲突文件，确认应该保留的代码；处理完成后执行：
+
+git add 冲突文件路径
+git rebase --continue
+
+如果不能确定冲突应该如何处理，请停止操作并联系对应代码的开发者，不要随意删除双方代码。
+
+
+六、ESP-IDF 编译和烧录
+---------------------
+
+Git/GitHub 负责代码版本管理，不能直接替代 ESP-IDF 烧录。开发板必须连接在执行烧录的电脑上。
+
+建议打开“ESP-IDF PowerShell”或先执行自己电脑上 ESP-IDF 的 export.ps1，然后进入需要烧录的项目目录。
+
+摄像头 S3 示例：
+
+cd smartscore\smartscore_s3_vision
+idf.py -p COM6 build flash monitor
+
+音频 S3 示例：
+
+cd smartscore\smartscore_s3_audio
+idf.py -p COM6 build flash monitor
+
+语音 S3 示例：
+
+cd smartscore\smartscore_s3_voice
+idf.py -p COM6 build flash monitor
+
+P4 示例：
+
+cd smartscore\smartscore_wt99_p4
+idf.py -p COM6 build flash monitor
+
+COM6 只是示例，必须替换成自己电脑上开发板的实际串口号。可以在 Windows 设备管理器的“端口（COM 和 LPT）”中查看。
+
+第一次编译或切换芯片目标时，应按照对应项目的 README 和实际芯片选择正确目标。S3 项目通常使用 esp32s3，P4 项目使用 esp32p4：
+
+idf.py set-target esp32s3
+idf.py set-target esp32p4
+
+不要在执行 ESP-IDF 命令时激活摄像头训练使用的 .venv-train 环境，否则可能出现“No module named esp_idf_monitor”。训练环境和 ESP-IDF 环境应分开使用。
+
+串口监视器退出快捷键通常为 Ctrl+]。
+
+
+七、烧录前检查
+--------------
+
+1. 确认当前分支：git branch --show-current
+2. 确认工作区状态：git status
+3. 确认已同步需要测试的代码。
+4. 确认进入了正确的项目子目录。
+5. 确认 ESP-IDF 环境、芯片目标和串口号正确。
+6. 不要同时让多个串口工具占用同一个 COM 端口。
+
+
+八、回退与恢复
+--------------
+
+查看最近提交：
+
+git log --oneline --decorate -20
+
+仓库保存了 2026-07-25 四项目统一快照。需要在独立分支查看或恢复时执行：
+
+git switch -c restore-20260725 snapshot-2026-07-25-four-projects
+
+该命令不会删除 main，只会从快照建立一个新分支。
+
+不要使用 git reset --hard、强制推送或批量删除命令，除非已经确认影响范围并得到项目负责人同意。
+
+
+九、推荐的日常流程
+----------------
+
+1. git switch main
+2. git pull
+3. git switch -c feature-姓名-功能名称
+4. 修改代码
+5. 编译并连接自己的开发板测试
+6. git status 和 git diff 检查修改
+7. git add 对应项目目录
+8. git commit
+9. git push
+10. 在 GitHub 创建 Pull Request
+
+如发现问题涉及多个项目，请在提交说明和 Pull Request 中写清楚修改了哪些项目、通信协议是否变化，以及各开发板需要烧录的版本。
