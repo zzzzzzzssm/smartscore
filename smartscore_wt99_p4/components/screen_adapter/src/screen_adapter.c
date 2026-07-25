@@ -120,6 +120,7 @@ typedef struct {
 } voice_ui_event_t;
 
 LV_FONT_DECLARE(lv_font_gudianChinese_34);
+LV_FONT_DECLARE(lv_font_gudianChinese_34_extra);
 
 lv_ui guider_ui;
 
@@ -1720,9 +1721,12 @@ static void ui_watch_timer_cb(lv_timer_t *timer)
 static void apply_main_menu_fonts(void)
 {
     if (!guider_ui.screen_choose_button_label) return;
+
+    /* "其他" is absent from the generated primary subset. Keep the whole
+     * label in the gudianChinese family by falling back only to the matching
+     * 34 px supplemental subset, never to the SD Source Han font. */
     s_other_mode_font = lv_font_gudianChinese_34;
-    const lv_font_t *fallback = app_font_chinese_22();
-    if (fallback) s_other_mode_font.fallback = fallback;
+    s_other_mode_font.fallback = &lv_font_gudianChinese_34_extra;
     lv_obj_set_style_text_font(guider_ui.screen_choose_button_label,
                                &s_other_mode_font, LV_PART_MAIN);
 }

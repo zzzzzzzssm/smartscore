@@ -21,6 +21,7 @@ idf_component_register(
         "${SMARTMUSIC_UI}/generated/guider_fonts/lv_font_gudianChinese_19.c"
         "${SMARTMUSIC_UI}/generated/guider_fonts/lv_font_gudianChinese_24.c"
         "${SMARTMUSIC_UI}/generated/guider_fonts/lv_font_gudianChinese_34.c"
+        "${SMARTMUSIC_UI}/generated/guider_fonts/lv_font_gudianChinese_34_extra.c"
         "${SMARTMUSIC_UI}/generated/guider_fonts/lv_font_gudianChinese_36.c"
         "${SMARTMUSIC_UI}/generated/guider_fonts/lv_font_gudianChinese_42.c"
         "${SMARTMUSIC_UI}/generated/guider_fonts/lv_font_gudianChinese_48.c"

@@ -17,6 +17,7 @@ idf_component_register(
          "generated/guider_fonts/lv_font_gudianChinese_19.c"
          "generated/guider_fonts/lv_font_gudianChinese_24.c"
          "generated/guider_fonts/lv_font_gudianChinese_34.c"
+         "generated/guider_fonts/lv_font_gudianChinese_34_extra.c"
          "generated/guider_fonts/lv_font_gudianChinese_36.c"
          "generated/guider_fonts/lv_font_gudianChinese_42.c"
          "generated/guider_fonts/lv_font_gudianChinese_48.c"
