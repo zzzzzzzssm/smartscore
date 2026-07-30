@@ -32,6 +32,23 @@
     <view class="format-note">
       JSON 至少需要 title、bpm 和 notes；MIDI 会在手机端转换为可评分音符。
     </view>
+    <view class="ai-upload-block">
+      <view class="upload-title ai-upload-title">AI 识别图片乐谱</view>
+      <view class="hint upload-hint">选择或拍摄一张清晰的单页乐谱，图片压缩后由设备调用豆包识别。</view>
+      <view class="ai-upload-actions">
+        <button class="secondary-btn" bindtap="chooseSheetImage">选择乐谱图片</button>
+        <button class="primary-btn" bindtap="recognizeSheetImage"
+                disabled="{{aiRecognizing || !selectedSheetImage}}">AI 识谱</button>
+      </view>
+      <view class="ai-task-status {{aiRecognitionStatus}}"
+            wx:if="{{aiRecognitionStatus != 'idle'}}">
+        {{aiRecognitionMessage}}
+      </view>
+      <view class="sheet-image-preview" wx:if="{{selectedSheetImage}}">
+        <image src="{{selectedSheetImage.path}}" mode="aspectFit"></image>
+        <view class="hint">图片已准备，可开始 AI 识谱</view>
+      </view>
+    </view>
   </view>
 
   <view wx:if="{{activeSource == 'sd'}}">

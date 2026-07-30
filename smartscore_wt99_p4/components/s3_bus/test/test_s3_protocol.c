@@ -19,6 +19,10 @@ TEST_CASE("music protocol parses note_on", "[s3_bus]")
     TEST_ASSERT_EQUAL_UINT32(1234, message.ts_ms);
     TEST_ASSERT_EQUAL_UINT8(69, message.midi);
     TEST_ASSERT_EQUAL_UINT8(100, message.velocity);
+    TEST_ASSERT_TRUE(message.has_frequency);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 440.0f, message.frequency_hz);
+    TEST_ASSERT_TRUE(message.has_confidence);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.95f, message.confidence);
 }
 
 TEST_CASE("music protocol parses note_off", "[s3_bus]")
@@ -34,6 +38,8 @@ TEST_CASE("music protocol parses note_off", "[s3_bus]")
     TEST_ASSERT_EQUAL(S3_MUSIC_MESSAGE_NOTE_OFF, message.type);
     TEST_ASSERT_EQUAL_UINT8(69, message.midi);
     TEST_ASSERT_EQUAL_UINT8(0, message.velocity);
+    TEST_ASSERT_TRUE(message.has_duration);
+    TEST_ASSERT_EQUAL_UINT32(66, message.duration_ms);
 }
 
 TEST_CASE("music protocol rejects missing and out of range fields", "[s3_bus]")

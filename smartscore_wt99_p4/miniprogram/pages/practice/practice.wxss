@@ -105,6 +105,26 @@
   font-size: 32rpx;
 }
 
+.score-level {
+  margin: 14rpx 0 6rpx;
+  color: #0f766e;
+  font-size: 30rpx;
+  font-weight: 800;
+}
+
+.score-notice {
+  margin: 12rpx 0 4rpx;
+  padding: 14rpx 18rpx;
+  border-radius: 14rpx;
+  color: #9a3412;
+  background: #fff7ed;
+  font-size: 24rpx;
+}
+
+.score-confidence {
+  margin-bottom: 12rpx;
+}
+
 .input-card {
   padding-bottom: 24rpx;
 }

@@ -19,7 +19,6 @@ LV_FONT_DECLARE(lv_font_SimpMusicBasePSMTModified_72)
 #include "lvgl.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
-#include "esp_timer.h"
 #include "bsp/esp-bsp.h"
 
 static const char *TAG = "music_display";
@@ -54,9 +53,9 @@ static void *s_note_selection_user_data;
 #define MUSIC_STATUS_UNKNOWN 0xff
 #define MUSIC_PAGE_TURN_GRACE_MS 500
 #define MUSIC_DISPLAY_GREEN_PITCH_TOLERANCE 2
+#define MUSIC_DISPLAY_RED_PITCH_THRESHOLD 6
 
 static uint8_t s_note_status[MUSIC_MAX_RESULT_SLOTS];
-static int64_t s_warning_show_time;
 
 /* ── 逐音符 span 追踪 ── */
 typedef struct {
@@ -672,8 +671,6 @@ static void apply_midi_data_to_ui(void)
         lv_obj_clear_flag(guider_ui.music_screen_tonality_text, LV_OBJ_FLAG_HIDDEN);
     if (guider_ui.music_screen_warning_infos)
         lv_obj_add_flag(guider_ui.music_screen_warning_infos, LV_OBJ_FLAG_HIDDEN);
-    s_warning_show_time = 0;
-
     /* 标题 */
     if (guider_ui.music_screen_title) {
         lv_label_set_text(guider_ui.music_screen_title,
@@ -851,12 +848,6 @@ void music_display_apply_note_result(int target_index, int expected_midi,
     bsp_display_lock(portMAX_DELAY);
 
     /* 错误时显示警告 */
-    if (played_midi >= 0 && !pitch_ok &&
-        guider_ui.music_screen_warning_infos) {
-        lv_obj_clear_flag(guider_ui.music_screen_warning_infos, LV_OBJ_FLAG_HIDDEN);
-        s_warning_show_time = esp_timer_get_time();
-    }
-
     int idx0 = target_index - 1;
     uint8_t status;
     if (played_midi < 0) {
@@ -865,6 +856,10 @@ void music_display_apply_note_result(int target_index, int expected_midi,
                abs(played_midi - expected_midi) <=
                    MUSIC_DISPLAY_GREEN_PITCH_TOLERANCE) {
         status = 1; /* pitch-tolerant correct */
+    } else if (expected_midi >= 0 &&
+               abs(played_midi - expected_midi) <
+                   MUSIC_DISPLAY_RED_PITCH_THRESHOLD) {
+        status = 2; /* noticeable, but acceptable in beginner mode */
     } else if (!pitch_ok) {
         status = 3; /* wrong */
     } else if (!rhythm_ok) {
@@ -1064,14 +1059,6 @@ static void music_display_task(void *arg)
         }
 
         /* 警告容器 2s 自动隐藏 */
-        if (s_warning_show_time > 0 &&
-            esp_timer_get_time() - s_warning_show_time > 2000000 &&
-            guider_ui.music_screen_warning_infos) {
-            bsp_display_lock(portMAX_DELAY);
-            lv_obj_add_flag(guider_ui.music_screen_warning_infos, LV_OBJ_FLAG_HIDDEN);
-            bsp_display_unlock();
-            s_warning_show_time = 0;
-        }
     }
 }
 

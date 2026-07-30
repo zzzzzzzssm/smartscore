@@ -44,13 +44,12 @@
 #define SCREEN_MATCH_WINDOW_SIZE 6
 #define SCREEN_MATCH_PITCH_BONUS 10000
 #define SCREEN_MATCH_ONSET_WEIGHT 6
-#define SCREEN_FOLLOW_MATCH_PITCH_TOLERANCE 0
-#define SCREEN_AUDIO_FIRST_NOTE_PITCH_TOLERANCE 1
+#define SCREEN_FOLLOW_MATCH_PITCH_TOLERANCE 5
+#define SCREEN_AUDIO_FIRST_NOTE_PITCH_TOLERANCE 2
 #define SCREEN_PREVIEW_EARLY_MS 80
 #define SCREEN_PREVIEW_LATE_MS 300
 #define SCREEN_PREVIEW_DURATION_RATIO 0.60f
 #define SCREEN_DISPLAY_GREEN_PITCH_TOLERANCE 2
-#define SCREEN_DISPLAY_REJECT_PITCH_TOLERANCE 4
 #define SCREEN_TARGET_FINAL_GRACE_MS 80
 #define SCREEN_SESSION_FINISH_GRACE_MS 600
 #define SCREEN_MISSING_BATCH_CAPACITY 8
@@ -149,9 +148,11 @@ static bool s_metronome_running;
 static uint32_t s_audio_countdown_generation;
 static volatile bool s_ready;
 static volatile bool s_start_requested;
+static bool s_practice_starting;
 static volatile bool s_result_task_running;
 static volatile result_action_t s_result_action = RESULT_ACTION_SHOW;
 static lv_font_t s_other_mode_font;
+static lv_font_t s_audio_countdown_font;
 static lv_obj_t *s_stop_button;
 static lv_obj_t *s_pause_button;
 static lv_obj_t *s_pause_label;
@@ -174,6 +175,8 @@ static void finish_practice_async_cb(void *user_data);
 static void queue_automatic_finish(void);
 static void hide_audio_countdown_overlay(void);
 static bool begin_practice_completion(result_action_t action);
+static bool begin_practice_completion_internal(result_action_t action,
+                                                bool allow_detached_recording);
 
 static void notify_camera_practice_state(
     s3_camera_practice_state_t state)
@@ -315,8 +318,11 @@ static void show_audio_countdown_overlay(int seconds)
 
         s_audio_countdown_label =
             lv_label_create(s_audio_countdown_overlay);
+        s_audio_countdown_font = lv_font_gudianChinese_34;
+        s_audio_countdown_font.fallback =
+            &lv_font_gudianChinese_34_extra;
         lv_obj_set_style_text_font(s_audio_countdown_label,
-                                   &lv_font_gudianChinese_34, 0);
+                                   &s_audio_countdown_font, 0);
         lv_obj_set_style_text_color(s_audio_countdown_label,
                                     lv_color_hex(0xFFFFFF), 0);
         lv_obj_set_style_text_align(s_audio_countdown_label,
@@ -882,6 +888,31 @@ static esp_err_t copy_result_json(const char *json,
     return ESP_OK;
 }
 
+static void set_result_task_running(bool running)
+{
+    if (s_session_lock == NULL) {
+        s_result_task_running = running;
+        return;
+    }
+    xSemaphoreTake(s_session_lock, portMAX_DELAY);
+    s_result_task_running = running;
+    xSemaphoreGive(s_session_lock);
+}
+
+static void mark_preparation_ready_after_result(void)
+{
+    if (s_session_lock == NULL) return;
+    xSemaphoreTake(s_session_lock, portMAX_DELAY);
+    if (s_preparation.valid) {
+        s_preparation.phase = SCREEN_PREPARATION_PREPARED;
+        s_preparation.last_error = ESP_OK;
+        snprintf(s_preparation.message, sizeof(s_preparation.message),
+                 "评分完成，可重新练习");
+        ++s_preparation.revision;
+    }
+    xSemaphoreGive(s_session_lock);
+}
+
 static void result_task(void *argument)
 {
     (void)argument;
@@ -901,13 +932,14 @@ static void result_task(void *argument)
         if (err == ESP_OK && result.json != NULL) {
             music_display_show_score(result.json);
             ensure_result_back_button();
+            mark_preparation_ready_after_result();
         } else {
             ESP_LOGE(TAG, "score result unavailable: %s",
                      esp_err_to_name(err));
             set_music_status("\xE8\xAF\x84\xE5\x88\x86\xE5\xA4\xB1\xE8\xB4\xA5\xEF\xBC\x8C\xE8\xAF\xB7\xE8\xBF\x94\xE5\x9B\x9E\xE9\x87\x8D\xE8\xAF\x95");
         }
         free(result.json);
-        s_result_task_running = false;
+        set_result_task_running(false);
         vTaskDelete(NULL);
         return;
     }
@@ -920,12 +952,14 @@ static void result_task(void *argument)
         if (action == RESULT_ACTION_RESTART) {
             set_music_status("\xE6\x97\xA0\xE6\xB3\x95\xE9\x87\x8D\xE6\x96\xB0\xE5\xBC\x80\xE5\xA7\x8B");
         }
-        s_result_task_running = false;
+        set_result_task_running(false);
         vTaskDelete(NULL);
         return;
     }
 
-    if (s_result_action == RESULT_ACTION_RESTART) {
+    const bool restart = s_result_action == RESULT_ACTION_RESTART;
+    set_result_task_running(false);
+    if (restart) {
         esp_err_t start_error = screen_adapter_start_prepared_score();
         if (start_error != ESP_OK) {
             ESP_LOGE(TAG, "voice restart failed: %s",
@@ -933,7 +967,6 @@ static void result_task(void *argument)
             set_music_status("\xE6\x97\xA0\xE6\xB3\x95\xE9\x87\x8D\xE6\x96\xB0\xE5\xBC\x80\xE5\xA7\x8B");
         }
     }
-    s_result_task_running = false;
     vTaskDelete(NULL);
 }
 
@@ -943,54 +976,97 @@ static void stop_practice_event_cb(lv_event_t *event)
     finish_practice();
 }
 
-static bool begin_practice_completion(result_action_t action)
+static bool begin_practice_completion_internal(result_action_t action,
+                                                bool allow_detached_recording)
 {
-    if (s_result_task_running) {
-        if (action != RESULT_ACTION_SHOW) s_result_action = action;
-        return true;
+    bool detached_recording = false;
+    if (allow_detached_recording) {
+        scoring_service_status_t status = {0};
+        scoring_service_get_status(&status);
+        detached_recording = status.state == SCORING_SERVICE_RECORDING ||
+                             status.state == SCORING_SERVICE_PAUSED;
     }
-
     if (s_session_lock == NULL) return false;
     xSemaphoreTake(s_session_lock, portMAX_DELAY);
-    bool active = s_session_active;
+    if (s_result_task_running) {
+        if (action != RESULT_ACTION_SHOW) s_result_action = action;
+        xSemaphoreGive(s_session_lock);
+        return true;
+    }
+    const bool active = s_session_active || detached_recording;
+    if (active) {
+        /* Claim completion before releasing the lock. A phone request and a
+         * screen tap can now race without stopping the recorder twice. */
+        s_result_task_running = true;
+        s_result_action = action;
+    }
     xSemaphoreGive(s_session_lock);
     if (!active) return false;
 
-    if (s_stop_button && lv_obj_is_valid(s_stop_button)) {
-        lv_obj_add_state(s_stop_button, LV_STATE_DISABLED);
+    if (bsp_display_lock(portMAX_DELAY)) {
+        if (s_stop_button && lv_obj_is_valid(s_stop_button)) {
+            lv_obj_add_state(s_stop_button, LV_STATE_DISABLED);
+        }
+        bsp_display_unlock();
     }
     if (action == RESULT_ACTION_SHOW) {
         set_music_status("\xE6\xAD\xA3\xE5\x9C\xA8\xE8\xAF\x84\xE5\x88\x86...");
     } else if (action == RESULT_ACTION_RESTART) {
         set_music_status("\xE6\xAD\xA3\xE5\x9C\xA8\xE9\x87\x8D\xE6\x96\xB0\xE5\xBC\x80\xE5\xA7\x8B...");
     }
-    s_result_action = action;
     end_active_session();
 
     esp_err_t err = scoring_service_stop();
     if (err != ESP_OK) {
+        set_result_task_running(false);
         ESP_LOGE(TAG, "unable to stop scoring: %s", esp_err_to_name(err));
         set_music_status("\xE6\x97\xA0\xE6\xB3\x95\xE5\x81\x9C\xE6\xAD\xA2\xE8\xAF\x84\xE5\x88\x86");
-        if (s_stop_button && lv_obj_is_valid(s_stop_button)) {
-            lv_obj_clear_state(s_stop_button, LV_STATE_DISABLED);
+        if (bsp_display_lock(portMAX_DELAY)) {
+            if (s_stop_button && lv_obj_is_valid(s_stop_button)) {
+                lv_obj_clear_state(s_stop_button, LV_STATE_DISABLED);
+            }
+            bsp_display_unlock();
         }
         return false;
     }
 
-    s_result_task_running = true;
     if (xTaskCreate(result_task, "screen_result",
                     SCREEN_RESULT_TASK_STACK_BYTES, NULL,
                     SCREEN_TASK_PRIORITY, NULL) != pdPASS) {
-        s_result_task_running = false;
+        set_result_task_running(false);
         set_music_status("\xE8\xAF\x84\xE5\x88\x86\xE4\xBB\xBB\xE5\x8A\xA1\xE5\x88\x9B\xE5\xBB\xBA\xE5\xA4\xB1\xE8\xB4\xA5");
         return false;
     }
     return true;
 }
 
+static bool begin_practice_completion(result_action_t action)
+{
+    return begin_practice_completion_internal(action, false);
+}
+
 static void finish_practice(void)
 {
     (void)begin_practice_completion(RESULT_ACTION_SHOW);
+}
+
+esp_err_t screen_adapter_complete_practice(void)
+{
+    if (begin_practice_completion_internal(RESULT_ACTION_SHOW, true)) {
+        return ESP_OK;
+    }
+
+    /* Idempotent remote stop: if another caller already moved scoring past
+     * recording, the HTTP request should wait for/read that same result. */
+    scoring_service_status_t status = {0};
+    scoring_service_get_status(&status);
+    if (status.state == SCORING_SERVICE_SCORING ||
+        status.state == SCORING_SERVICE_READY) {
+        return ESP_OK;
+    }
+    return status.last_error != ESP_OK
+               ? status.last_error
+               : ESP_ERR_INVALID_STATE;
 }
 
 static void finish_practice_async_cb(void *user_data)
@@ -1549,7 +1625,8 @@ static bool start_selected_score(const char *filename,
         return false;
     }
 
-    err = scoring_service_start(input_source_name(input), "midi_strict");
+    err = scoring_service_start(input_source_name(input),
+                                "beginner_mono_v2");
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "scoring start failed for %s: %s",
                  input_source_name(input), esp_err_to_name(err));
@@ -1928,16 +2005,92 @@ esp_err_t screen_adapter_update_preparation(
 
 esp_err_t screen_adapter_start_prepared_score(void)
 {
-    if (!s_ready) return ESP_ERR_INVALID_STATE;
+    if (!s_ready || s_session_lock == NULL) return ESP_ERR_INVALID_STATE;
+
+    xSemaphoreTake(s_session_lock, portMAX_DELAY);
+    if (s_practice_starting || s_session_active) {
+        xSemaphoreGive(s_session_lock);
+        return ESP_OK;
+    }
+    if (!s_preparation.valid || s_result_task_running) {
+        xSemaphoreGive(s_session_lock);
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_practice_starting = true;
+    if (s_preparation.phase == SCREEN_PREPARATION_FOLLOWING ||
+        s_preparation.phase == SCREEN_PREPARATION_READING ||
+        s_preparation.phase == SCREEN_PREPARATION_ERROR) {
+        s_preparation.phase = SCREEN_PREPARATION_PREPARED;
+        s_preparation.last_error = ESP_OK;
+        snprintf(s_preparation.message, sizeof(s_preparation.message),
+                 "乐谱准备就绪");
+        ++s_preparation.revision;
+    }
+    xSemaphoreGive(s_session_lock);
+
+    scoring_service_status_t scoring = {0};
+    scoring_service_get_status(&scoring);
+    esp_err_t err = ESP_OK;
+    if (scoring.state == SCORING_SERVICE_RECORDING ||
+        scoring.state == SCORING_SERVICE_PAUSED ||
+        scoring.state == SCORING_SERVICE_SCORING ||
+        scoring.state == SCORING_SERVICE_UNINITIALIZED) {
+        err = ESP_ERR_INVALID_STATE;
+    }
+    if (err != ESP_OK) {
+        xSemaphoreTake(s_session_lock, portMAX_DELAY);
+        s_practice_starting = false;
+        xSemaphoreGive(s_session_lock);
+        return err;
+    }
+
     score_info_t score = {0};
     score_practice_options_t options = {0};
     bsp_display_lock(portMAX_DELAY);
     bool copied = score_ui_flow_copy_preparation(&score, &options);
     if (copied) score_ui_flow_set_prepare_status("正在载入乐谱…");
     bsp_display_unlock();
-    if (!copied) return ESP_ERR_INVALID_STATE;
-    return start_selected_score(score.filename, &options, NULL)
-               ? ESP_OK : ESP_FAIL;
+    err = copied && start_selected_score(score.filename, &options, NULL)
+              ? ESP_OK
+              : copied ? ESP_FAIL : ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_session_lock, portMAX_DELAY);
+    s_practice_starting = false;
+    xSemaphoreGive(s_session_lock);
+    return err;
+}
+
+esp_err_t screen_adapter_restart_prepared_score(void)
+{
+    scoring_service_status_t scoring = {0};
+    scoring_service_get_status(&scoring);
+    if (s_session_lock == NULL) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_session_lock, portMAX_DELAY);
+    if (s_result_task_running) {
+        if (scoring.state == SCORING_SERVICE_READY) {
+            s_result_action = RESULT_ACTION_RESTART;
+            xSemaphoreGive(s_session_lock);
+            set_music_status("\xE6\xAD\xA3\xE5\x9C\xA8\xE9\x87\x8D\xE6\x96\xB0\xE5\xBC\x80\xE5\xA7\x8B...");
+            for (size_t attempt = 0; attempt < 100U; ++attempt) {
+                vTaskDelay(pdMS_TO_TICKS(10));
+                scoring_service_get_status(&scoring);
+                if (scoring.state == SCORING_SERVICE_RECORDING ||
+                    scoring.state == SCORING_SERVICE_PAUSED) {
+                    return ESP_OK;
+                }
+                xSemaphoreTake(s_session_lock, portMAX_DELAY);
+                const bool result_running = s_result_task_running;
+                xSemaphoreGive(s_session_lock);
+                if (!result_running) {
+                    return screen_adapter_start_prepared_score();
+                }
+            }
+            return ESP_ERR_TIMEOUT;
+        }
+        xSemaphoreGive(s_session_lock);
+        return ESP_ERR_INVALID_STATE;
+    }
+    xSemaphoreGive(s_session_lock);
+    return screen_adapter_start_prepared_score();
 }
 
 void screen_adapter_get_preparation_status(

@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "melody_gate.h"
 #include "music_detector_config.h"
 #include "note_utils.h"
 
@@ -111,6 +112,30 @@ static bool spectrum_supports_yin(const yin_result_t *yin,
                 &chord->debug_candidates[index], yin->midi,
                 MUSIC_SPECTRUM_SUPPORT_MIN_RELATIVE,
                 MUSIC_SPECTRUM_SUPPORT_MIN_PROMINENCE)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool spectrum_supports_yin_pitch_class(
+    const yin_result_t *yin, const chord_result_t *chord)
+{
+    if (!yin->valid || chord->debug_candidate_count <= 0 ||
+        chord->independent_pitch_class_count <= 0 ||
+        chord->independent_pitch_class_count >
+            MUSIC_MELODY_MAX_SPECTRUM_CLASSES) {
+        return false;
+    }
+    for (int index = 0; index < chord->debug_candidate_count; ++index) {
+        const chord_candidate_debug_t *candidate =
+            &chord->debug_candidates[index];
+        if (candidate->midi >= 0 &&
+            candidate->midi % 12 == yin->midi % 12 &&
+            candidate->relative_score >=
+                MUSIC_SPECTRUM_SUPPORT_MIN_RELATIVE &&
+            candidate->prominence >=
+                MUSIC_SPECTRUM_SUPPORT_MIN_PROMINENCE) {
             return true;
         }
     }
@@ -227,6 +252,8 @@ bool music_classifier_update(music_classifier_t *classifier,
     result->rms = mic1_metrics->rms;
     result->selected_mic = 1;
     const bool silence = mic1_metrics->rms < mic1_gate;
+    const bool selected_above_gate = !silence;
+    const bool selected_clipped = mic1_metrics->clipped;
 #else
     result->mic2_rms = mic2_metrics->rms;
     const audio_frame_metrics_t *selected_metrics =
@@ -234,33 +261,52 @@ bool music_classifier_update(music_classifier_t *classifier,
     result->rms = selected_metrics->rms;
     result->selected_mic = selected_mic;
     const bool silence = mic1_metrics->rms < mic1_gate && mic2_metrics->rms < mic2_gate;
+    const bool selected_above_gate =
+        selected_metrics->rms >= (selected_mic == 2 ? mic2_gate : mic1_gate);
+    const bool selected_clipped = selected_metrics->clipped;
 #endif
     music_result_type_t candidate = MUSIC_RESULT_UNKNOWN;
     int identity = -1;
     bool minor = false;
-    const bool strong_single = yin->valid &&
-                               yin->confidence >= MUSIC_YIN_CONFIDENCE_THRESHOLD &&
-                               harmonic_ratio >= MUSIC_SINGLE_HARMONIC_RATIO_THRESHOLD;
     const bool yin_spectrum_single = yin->valid &&
                                      yin->confidence >= MUSIC_YIN_SPECTRAL_SINGLE_CONFIDENCE &&
                                      chord->independent_pitch_class_count == 1 &&
                                      chord->debug_candidate_count > 0 &&
                                      chord->debug_candidates[0].midi == yin->midi;
     const bool yin_harmonic_single = poly_result_is_yin_harmonics(yin, chord);
-    const bool yin_spectrum_supported = spectrum_supports_yin(yin, chord);
-    const bool yin_continuity_fallback =
-        yin->valid && !chord->valid &&
-        yin->confidence >= MUSIC_MELODY_YIN_FALLBACK_CONFIDENCE &&
-        yin->midi >= MUSIC_MELODY_FALLBACK_MIDI_MIN &&
-        yin->midi <= MUSIC_MELODY_FALLBACK_MIDI_MAX &&
-        yin_spectrum_supported;
-    const bool dominant_single = yin_spectrum_single ||
-                                 yin_harmonic_single ||
+    const bool yin_spectrum_supported =
+        spectrum_supports_yin(yin, chord);
+    const bool yin_pitch_class_supported =
+        spectrum_supports_yin_pitch_class(yin, chord);
+    const melody_gate_config_t gate_config = {
+        .strict_yin_confidence = MUSIC_YIN_CONFIDENCE_THRESHOLD,
+        .strict_harmonic_ratio = MUSIC_SINGLE_HARMONIC_RATIO_THRESHOLD,
+        .spectrum_yin_confidence = MUSIC_YIN_SPECTRAL_SINGLE_CONFIDENCE,
+        .harmonic_yin_confidence = MUSIC_MELODY_YIN_OVERRIDE_CONFIDENCE,
+        .strong_yin_confidence = MUSIC_MELODY_STRONG_YIN_CONFIDENCE,
+        .supported_yin_confidence = MUSIC_MELODY_YIN_OVERRIDE_CONFIDENCE,
+        .midi_min = MUSIC_MELODY_FALLBACK_MIDI_MIN,
+        .midi_max = MUSIC_MELODY_FALLBACK_MIDI_MAX,
+    };
+    const melody_gate_decision_t gate = melody_gate_decide(
+        &gate_config, &(melody_gate_observation_t) {
+            .yin_valid = yin->valid,
+            .yin_confidence = yin->confidence,
+            .harmonic_ratio = harmonic_ratio,
+            .midi = yin->midi,
+            .signal_above_gate = selected_above_gate,
+            .clipped = selected_clipped,
+            .spectrum_exact_support =
+                yin_spectrum_single || yin_spectrum_supported,
+            .spectrum_pitch_class_support =
+                yin_pitch_class_supported,
+            .polyphony_is_yin_harmonics = yin_harmonic_single,
+        });
+    const bool dominant_single = gate.dominates_polyphony ||
                                  (yin->valid &&
                                   yin->confidence >= MUSIC_SINGLE_DOMINANCE_YIN_CONFIDENCE &&
                                   harmonic_ratio >= MUSIC_SINGLE_DOMINANCE_HARMONIC_RATIO);
-    const bool accepted_single = strong_single || yin_spectrum_single ||
-                                 yin_harmonic_single || yin_continuity_fallback;
+    const bool accepted_single = gate.accepted;
     *unknown_reason = octave_corrected
                           ? "octave_corrected_stabilizing"
                           : "low_confidence";
@@ -362,9 +408,9 @@ bool music_classifier_update(music_classifier_t *classifier,
     }
     result->type = stable_type;
     if (stable_type == MUSIC_RESULT_SINGLE) {
-        result->confidence = (yin_continuity_fallback ||
-                              (yin_spectrum_single && !strong_single)) ?
-            yin->confidence : fminf(yin->confidence, harmonic_ratio);
+        result->confidence = gate.confidence_from_yin
+                                 ? yin->confidence
+                                 : fminf(yin->confidence, harmonic_ratio);
         const bool recent_attack =
             classifier->pending_attack_ms != 0 &&
             timestamp_ms - classifier->pending_attack_ms <=

@@ -133,7 +133,7 @@ function readFileArrayBuffer(filePath) {
   });
 }
 
-function uploadRawFile(path, filePath, mimeType = 'application/octet-stream') {
+function uploadRawFile(path, filePath, mimeType = 'application/octet-stream', timeout = DEFAULT_TIMEOUT * 2) {
   const baseUrl = getBaseUrl();
   if (!baseUrl) {
     return Promise.reject(new Error('尚未配置设备或后端地址'));
@@ -145,7 +145,7 @@ function uploadRawFile(path, filePath, mimeType = 'application/octet-stream') {
       method: 'POST',
       data,
       header: { 'content-type': mimeType },
-      timeout: DEFAULT_TIMEOUT * 2,
+      timeout,
       success(res) {
         if (res.statusCode >= 200 && res.statusCode < 300) {
           resolve(res.data);
@@ -238,6 +238,9 @@ module.exports = {
   startPreparedPractice: () => request('/api/practice/preparation/start', {
     method: 'POST'
   }),
+  restartPreparedPractice: () => request('/api/practice/restart', {
+    method: 'POST'
+  }),
   getSdScoreFile: (filename) => request(`/api/scores/sd/file?name=${encodeURIComponent(filename)}`),
   getCreatorStatus: () => request('/api/creator/status'),
   startCreator: (config) => request('/api/creator/start', {
@@ -263,9 +266,17 @@ module.exports = {
   stopPractice: () => request('/api/stop', { method: 'POST' }),
   getResult: () => request('/api/result'),
   clearAll: () => request('/api/clear', { method: 'POST' }),
-  requestAiScore: () => request('/api/ai/score', { method: 'POST' }),
+  requestAiScore: () => request('/api/ai/score', {
+    method: 'POST',
+    timeout: 300000
+  }),
   uploadSheetImage: (filePath) => uploadFile('/api/sheet_image', filePath, 'sheet'),
   uploadSheetImages,
-  recognizeSheetImage: (filePath) => uploadRawFile('/api/ai/sheet_to_score', filePath, 'image/jpeg'),
+  recognizeSheetImage: (filePath) => uploadRawFile(
+    '/api/ai/sheet_to_score',
+    filePath,
+    'image/jpeg',
+    300000
+  ),
   showUploadedSheet: () => request('/api/epaper/show_uploaded_sheets', { method: 'POST' })
 };

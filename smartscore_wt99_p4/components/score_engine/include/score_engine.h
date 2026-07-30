@@ -11,10 +11,11 @@ extern "C" {
 #endif
 
 #define SCORE_ENGINE_PROFILE_MIDI_STRICT "midi_strict"
+#define SCORE_ENGINE_PROFILE_BEGINNER_MONO_V2 "beginner_mono_v2"
 
 /*
- * MIDI-only phase-one scoring profile. Audio recovery, octave correction and
- * stable-frame merging are deliberately absent from this API.
+ * Deterministic beginner monophonic scoring. midi_strict remains an input
+ * alias for older app versions; both sources use the same musical rules.
  */
 esp_err_t score_engine_build_midi_result_json(
     const score_document_t *score,

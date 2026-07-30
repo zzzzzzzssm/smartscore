@@ -22,6 +22,10 @@ typedef struct {
     uint8_t velocity;
     uint8_t channel;
     input_source_t source;
+    float confidence;
+    float frequency_hz;
+    uint16_t timing_uncertainty_ms;
+    bool duration_reliable;
 } performance_note_t;
 
 typedef struct {
@@ -29,6 +33,12 @@ typedef struct {
     size_t count;
     uint32_t duration_ms;
     input_source_t input_source;
+    size_t observed_note_count;
+    size_t uncertain_note_count;
+    float confidence_sum;
+    uint32_t input_drop_count;
+    uint32_t input_error_count;
+    bool input_stream_healthy;
 } performance_snapshot_t;
 
 const char *input_source_name(input_source_t source);

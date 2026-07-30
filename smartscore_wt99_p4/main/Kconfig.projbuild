@@ -23,10 +23,11 @@ config SMARTSCORE_WIFI_ATTEMPT_TIMEOUT_SECONDS
 
 config SMARTSCORE_AUTO_CONNECT_SAVED_WIFI
     bool "Automatically connect saved Wi-Fi at startup"
-    default y
+    default n
     help
         When enabled, startup loads valid credentials from smartscore_net
         and queues a STA connection. BLE provisioning remains available as
         a fallback when no credentials are saved or the connection fails.
+        Keep this disabled when every startup must scan and select Wi-Fi again.
 
 endmenu

@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/queue.h"
@@ -12,6 +13,7 @@
 #include "performance_recorder.h"
 #include "score_data.h"
 #include "score_engine.h"
+#include "s3_bus.h"
 
 #define SCORING_TASK_STACK_BYTES 8192
 #define SCORING_TASK_PRIORITY 4
@@ -30,6 +32,12 @@ typedef struct {
     scoring_service_status_t status;
     char *result_json;
     size_t result_length;
+    bool audio_clock_valid;
+    uint32_t audio_sid;
+    uint32_t audio_sender_origin_ms;
+    uint64_t audio_local_origin_us;
+    uint32_t audio_dropped_at_start;
+    uint32_t audio_invalid_at_start;
 } scoring_service_t;
 
 static const char *TAG = "SCORING_SERVICE";
@@ -155,7 +163,7 @@ esp_err_t scoring_service_init(void)
     s_service.status.state = SCORING_SERVICE_IDLE;
     s_service.status.input_source = input_status.selected_input;
     s_service.status.last_error = ESP_OK;
-    strlcpy(s_service.status.profile, "midi_strict",
+    strlcpy(s_service.status.profile, SCORE_ENGINE_PROFILE_BEGINNER_MONO_V2,
             sizeof(s_service.status.profile));
     return ESP_OK;
 }
@@ -163,7 +171,10 @@ esp_err_t scoring_service_init(void)
 esp_err_t scoring_service_start(const char *input_source,
                                 const char *profile)
 {
-    const char *profile_value = profile != NULL ? profile : "midi_strict";
+    const char *requested_profile = profile != NULL
+                                        ? profile
+                                        : SCORE_ENGINE_PROFILE_BEGINNER_MONO_V2;
+    const char *profile_value = SCORE_ENGINE_PROFILE_BEGINNER_MONO_V2;
     if (s_service.lock == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -176,7 +187,8 @@ esp_err_t scoring_service_start(const char *input_source,
          requested_source != input_status.selected_input)) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (strcmp(profile_value, "midi_strict") != 0) {
+    if (strcmp(requested_profile, SCORE_ENGINE_PROFILE_BEGINNER_MONO_V2) != 0 &&
+        strcmp(requested_profile, SCORE_ENGINE_PROFILE_MIDI_STRICT) != 0) {
         return ESP_ERR_NOT_SUPPORTED;
     }
 
@@ -224,6 +236,13 @@ esp_err_t scoring_service_start(const char *input_source,
     s_service.status.played_count = 0;
     s_service.status.last_error = ESP_OK;
     s_service.status.error[0] = '\0';
+    s_service.audio_clock_valid = false;
+    if (locked_source == INPUT_SOURCE_AUDIO_S3) {
+        s3_bus_status_t audio_status;
+        s3_bus_get_status(&audio_status);
+        s_service.audio_dropped_at_start = audio_status.dropped_events;
+        s_service.audio_invalid_at_start = audio_status.invalid_frames;
+    }
     strlcpy(s_service.status.message, "recording note performance",
             sizeof(s_service.status.message));
     strlcpy(s_service.status.profile, profile_value,
@@ -366,6 +385,18 @@ esp_err_t scoring_service_stop(void)
     if (err == ESP_OK) {
         err = score_data_copy(&job.score);
     }
+    if (err == ESP_OK &&
+        job.performance.input_source == INPUT_SOURCE_AUDIO_S3) {
+        s3_bus_status_t audio_status;
+        s3_bus_get_status(&audio_status);
+        job.performance.input_drop_count =
+            audio_status.dropped_events - s_service.audio_dropped_at_start;
+        job.performance.input_error_count =
+            audio_status.invalid_frames - s_service.audio_invalid_at_start;
+        job.performance.input_stream_healthy =
+            audio_status.online && audio_status.ready &&
+            audio_status.stream_enabled;
+    }
     if (err != ESP_OK) {
         score_document_release(&job.score);
         performance_snapshot_release(&job.performance);
@@ -425,6 +456,7 @@ esp_err_t scoring_service_reset(void)
     s_service.status.played_count = 0;
     s_service.status.last_error = ESP_OK;
     s_service.status.error[0] = '\0';
+    s_service.audio_clock_valid = false;
     strlcpy(s_service.status.message, "ready for practice",
             sizeof(s_service.status.message));
     xSemaphoreGive(s_service.lock);
@@ -508,9 +540,54 @@ void scoring_service_handle_usb_event(const usb_midi_event_t *event)
     input_source_manager_unlock();
 }
 
-void scoring_service_handle_audio_s3_event(const usb_midi_event_t *event)
+void scoring_service_handle_audio_s3_event(bool note_on,
+                                           uint32_t sid,
+                                           uint32_t sender_ts_ms,
+                                           uint8_t midi,
+                                           uint8_t velocity,
+                                           float confidence,
+                                           float frequency_hz)
 {
-    (void)handle_note_event(INPUT_SOURCE_AUDIO_S3, event);
+    if (s_service.lock == NULL || midi > 127U) {
+        return;
+    }
+
+    xSemaphoreTake(s_service.lock, portMAX_DELAY);
+    const bool recording =
+        s_service.status.state == SCORING_SERVICE_RECORDING &&
+        s_service.status.input_source == INPUT_SOURCE_AUDIO_S3;
+    if (!recording) {
+        xSemaphoreGive(s_service.lock);
+        return;
+    }
+    if (!s_service.audio_clock_valid) {
+        s_service.audio_clock_valid = true;
+        s_service.audio_sid = sid;
+        s_service.audio_sender_origin_ms = sender_ts_ms;
+        s_service.audio_local_origin_us = (uint64_t)esp_timer_get_time();
+    } else if (sid != s_service.audio_sid) {
+        set_error_locked(ESP_ERR_INVALID_STATE, "audio_session_changed",
+                         "audio recognizer restarted during practice");
+        xSemaphoreGive(s_service.lock);
+        performance_recorder_abort(ESP_ERR_INVALID_STATE,
+                                   "audio_session_changed",
+                                   "audio recognizer restarted during practice");
+        input_source_manager_unlock();
+        return;
+    }
+    const int32_t sender_delta_ms =
+        (int32_t)(sender_ts_ms - s_service.audio_sender_origin_ms);
+    if (sender_delta_ms < 0) {
+        xSemaphoreGive(s_service.lock);
+        return;
+    }
+    const uint64_t timestamp_us =
+        s_service.audio_local_origin_us + (uint64_t)sender_delta_ms * 1000ULL;
+    xSemaphoreGive(s_service.lock);
+
+    performance_recorder_process_audio(note_on, midi, velocity,
+                                       timestamp_us, confidence,
+                                       frequency_hz);
 }
 
 void scoring_service_get_status(scoring_service_status_t *out_status)

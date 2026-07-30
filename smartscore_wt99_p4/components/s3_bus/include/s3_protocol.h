@@ -20,8 +20,14 @@ typedef struct {
     uint32_t seq;
     uint32_t sid;
     uint32_t ts_ms;
+    uint32_t duration_ms;
     uint8_t midi;
     uint8_t velocity;
+    float frequency_hz;
+    float confidence;
+    bool has_duration;
+    bool has_frequency;
+    bool has_confidence;
     bool ready;
     bool stream_enabled;
 } s3_music_message_t;

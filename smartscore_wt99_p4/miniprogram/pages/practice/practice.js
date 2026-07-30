@@ -7,7 +7,19 @@ function emptyResult() {
     totalScore: '-',
     pitchScore: '-',
     rhythmScore: '-',
+    fluencyScore: '-',
     completeScore: '-',
+    level: '',
+    scoreNotice: '',
+    confidenceText: '',
+    targetCount: 0,
+    alignmentMethod: '',
+    startAnchorTargetIndex: 0,
+    startAnchorPlayedIndex: 0,
+    leadingMissingCount: 0,
+    leadingExtraCount: 0,
+    alignmentOriginLocked: false,
+    tempoSampleCount: 0,
     details: []
   };
 }
@@ -233,15 +245,47 @@ Page({
 
   getMatchedDetails(result) {
     const details = result && Array.isArray(result.details) ? result.details : [];
-    return details.filter((item) => (
-      Number(item.target_midi) >= 0 &&
-      Number(item.played_midi) >= 0 &&
-      Number(item.target_start) >= 0 &&
-      Number(item.played_start) >= 0
-    ));
+    return details
+      .filter((item) => (
+        item.result !== 'uncertain' &&
+        item.result !== 'extra' &&
+        item.result !== 'retry' &&
+        Number(item.ref_index) > 0 &&
+        Number(item.target_midi) >= 0 &&
+        Number(item.played_midi) >= 0 &&
+        Number(item.target_start) >= 0 &&
+        Number(item.played_start) >= 0
+      ))
+      .sort((left, right) => Number(left.ref_index) - Number(right.ref_index));
   },
 
   buildTargetNotes(result) {
+    const details = result && Array.isArray(result.details) ? result.details : [];
+    const resultTargets = new Map();
+    details.forEach((item) => {
+      const refIndex = Number(item.ref_index);
+      const midi = Number(item.target_midi);
+      const start = Number(item.target_start);
+      if (refIndex <= 0 || !Number.isFinite(midi) || midi < 0 ||
+          !Number.isFinite(start) || start < 0 || resultTargets.has(refIndex)) return;
+      resultTargets.set(refIndex, {
+        refIndex,
+        midi,
+        start,
+        duration: Math.max(0.08, Number(item.target_duration || 0.25))
+      });
+    });
+    const sortedResultTargets = Array.from(resultTargets.values())
+      .sort((left, right) => left.refIndex - right.refIndex);
+    const expectedTargetCount = Number(
+      result && (result.targetCount || result.target_count)
+    );
+    if (sortedResultTargets.length &&
+        (!Number.isFinite(expectedTargetCount) || expectedTargetCount <= 0 ||
+         sortedResultTargets.length >= expectedTargetCount)) {
+      return sortedResultTargets;
+    }
+
     const current = this.data.currentScore;
     if (current && Array.isArray(current.notes) && current.notes.length) {
       return current.notes
@@ -252,15 +296,7 @@ Page({
         }))
         .filter((note) => Number.isFinite(note.midi) && Number.isFinite(note.start));
     }
-
-    const details = result && Array.isArray(result.details) ? result.details : [];
-    return details
-      .filter((item) => Number(item.target_midi) >= 0 && Number(item.target_start) >= 0)
-      .map((item) => ({
-        midi: Number(item.target_midi),
-        start: Number(item.target_start),
-        duration: Math.max(0.12, Number(item.target_duration || item.played_duration || 0.25))
-      }));
+    return sortedResultTargets;
   },
 
   estimateVisualOffset(matched) {
@@ -315,9 +351,11 @@ Page({
         avgPitch: `${avgPitch.toFixed(2)} 半音`,
         maxPitch: `${maxPitch.toFixed(2)} 半音`,
         avgRhythm: `${avgRhythm.toFixed(2)}s`,
-        matched: `${matched.length} / ${result.target_count || targetNotes.length || matched.length}`
+        matched: `${matched.length} / ${result.targetCount || result.target_count || targetNotes.length || matched.length}`
       },
-      chartHint: 'MIDI 已按音符顺序和演奏速度完成时间归一化，起奏等待不计分。',
+      chartHint: result.alignmentOriginLocked
+        ? '已锁定乐谱开头和起奏时间原点；等待起奏不会把演奏吸附到后面的重复乐句。'
+        : 'MIDI 已按音符顺序和演奏速度完成时间归一化，起奏等待不计分。',
       chartEmpty: false
     });
   },
@@ -576,7 +614,12 @@ Page({
 
     wx.showLoading({ title: '启动练习中' });
     this.setData({ isStarting: true });
-    const startAction = this.data.preparationValid
+    const restartingCompletedPractice =
+      this.data.preparationValid && mode === 'follow' &&
+      this.data.status === '已完成';
+    const startAction = restartingCompletedPractice
+      ? api.restartPreparedPractice()
+      : this.data.preparationValid
       ? api.updatePracticePreparation({ mode })
           .then((preparation) => {
             this.applyPreparationResult(preparation);
@@ -642,14 +685,32 @@ Page({
       throw new Error(api.messageText(result && result.message, '评分失败'));
     }
 
+    const scorable = result.scorable !== false;
+    const referenceOnly = result.score_status === 'reference';
+    const inputConfidence = Number(result.input_confidence);
     return {
-      totalScore: result.total_score,
+      totalScore: scorable ? result.total_score : '-',
       pitchScore: result.pitch_score,
-      rhythmScore: result.rhythm_score,
+      rhythmScore: result.rhythm_evaluable === false ? '-' : result.rhythm_score,
+      fluencyScore: result.fluency_score === undefined ? '-' : result.fluency_score,
       completeScore: result.complete_score,
+      level: result.level || '',
+      scoreNotice: !scorable
+        ? '本次麦克风识别证据不足，未生成正式分数'
+        : (referenceOnly ? '麦克风识别可信度一般，本次分数仅供参考' : ''),
+      confidenceText: Number.isFinite(inputConfidence) && result.input_source === 'audio_s3'
+        ? `输入可信度 ${Math.round(inputConfidence * 100)}%`
+        : '',
+      targetCount: Number(result.target_count || 0),
       startOffset: Number(result.start_offset || 0),
       tempoScale: Number(result.tempo_scale || 1),
       alignmentMethod: result.alignment_method || '',
+      startAnchorTargetIndex: Number(result.start_anchor_target_index || 0),
+      startAnchorPlayedIndex: Number(result.start_anchor_played_index || 0),
+      leadingMissingCount: Number(result.leading_missing_count || 0),
+      leadingExtraCount: Number(result.leading_extra_count || 0),
+      alignmentOriginLocked: result.alignment_origin_locked === true,
+      tempoSampleCount: Number(result.tempo_sample_count || 0),
       details: Array.isArray(result.details) ? result.details : []
     };
   },
@@ -662,7 +723,17 @@ Page({
       totalScore: result.totalScore,
       pitchScore: result.pitchScore,
       rhythmScore: result.rhythmScore,
+      fluencyScore: result.fluencyScore,
       completeScore: result.completeScore,
+      level: result.level,
+      targetCount: result.targetCount,
+      alignmentMethod: result.alignmentMethod,
+      startAnchorTargetIndex: result.startAnchorTargetIndex,
+      startAnchorPlayedIndex: result.startAnchorPlayedIndex,
+      leadingMissingCount: result.leadingMissingCount,
+      leadingExtraCount: result.leadingExtraCount,
+      alignmentOriginLocked: result.alignmentOriginLocked,
+      tempoSampleCount: result.tempoSampleCount,
       details: result.details || [],
       chartStats: this.data.chartStats
     };
@@ -679,30 +750,79 @@ Page({
   },
 
   resetPractice() {
-    this.setData({
-      status: '未开始',
-      statusClass: '',
-      isRecording: false,
-      result: emptyResult()
-    }, () => this.drawPracticeChart());
+    if (this.data.isRecording || this.data.isStarting) return;
+    if (!this.data.preparationValid) {
+      wx.showModal({
+        title: '无法重新练习',
+        content: '设备没有保留当前乐谱，请重新同步一份有效乐谱。',
+        showCancel: false
+      });
+      return;
+    }
+
+    wx.showLoading({ title: '重新开始中' });
+    this.setData({ isStarting: true });
+    api.restartPreparedPractice()
+      .then((result) => {
+        if (!result || result.ok === false) {
+          throw new Error(api.messageText(result && result.message, '重新练习失败'));
+        }
+        this.applyPreparationResult(result);
+        this.setData({
+          status: '正在记录',
+          statusClass: 'recording',
+          isRecording: true,
+          result: this.buildEmptyResult()
+        }, () => this.drawPracticeChart());
+        this.refreshLiveStatus();
+        wx.showToast({ title: '已重新开始', icon: 'success' });
+      })
+      .catch((err) => {
+        wx.showModal({
+          title: '无法重新练习',
+          content: api.errorMessage(err, '设备未能重新开始当前乐谱'),
+          showCancel: false
+        });
+      })
+      .finally(() => {
+        this.setData({ isStarting: false });
+        wx.hideLoading();
+      });
   },
 
   requestAiScore() {
-    wx.showLoading({ title: 'AI 评分中' });
+    wx.showLoading({ title: 'AI 分析中' });
     api.requestAiScore()
       .then((result) => {
         if (!result || result.ok === false) {
           throw new Error(api.messageText(result && result.message, 'AI 评分失败'));
         }
+        const totalScore = result.ai_total_score === undefined ||
+          result.ai_total_score === null
+          ? '-'
+          : result.ai_total_score;
+        const plan = (Array.isArray(result.practice_plan)
+          ? result.practice_plan
+          : [])
+          .filter((item) => typeof item === 'string' && item.trim())
+          .slice(0, 5)
+          .map((item, index) => `${index + 1}. ${item.trim()}`)
+          .join('\n');
+        const content = [
+          result.level || '分析完成',
+          `总分：${totalScore}`,
+          result.summary || '',
+          plan ? `练习建议：\n${plan}` : ''
+        ].filter(Boolean).join('\n');
         wx.showModal({
-          title: 'AI 评分建议',
-          content: `${result.level || '评分完成'}\n总分：${result.ai_total_score || '-'}\n${result.summary || ''}`,
+          title: 'AI 练习建议',
+          content,
           showCancel: false
         });
       })
       .catch((err) => wx.showModal({
-        title: 'AI 评分未完成',
-        content: `${api.errorMessage(err, 'AI 评分失败')}\n请确认设备页地址、ESP32 网络和 AI Key 配置。`,
+        title: 'AI 建议未完成',
+        content: `${api.errorMessage(err, 'AI 分析失败')}\n请确认设备页地址、ESP32 网络和 VEI_API_KEY 配置。`,
         showCancel: false
       }))
       .finally(() => wx.hideLoading());

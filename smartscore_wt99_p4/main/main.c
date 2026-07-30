@@ -28,10 +28,8 @@
 static const char *TAG = "NET";
 static unsigned s_web_success_grace_seconds;
 
-/* Three 64 ms DSP stability frames plus the master-poll UART interval make
- * audio note transitions arrive noticeably later than their acoustic onset.
- * Backdating audio events keeps rhythm scoring and note colouring aligned;
- * USB MIDI timestamps are deliberately left untouched. */
+/* Live colouring uses a display-only latency estimate. Final scoring uses
+ * S3 sender timestamps, so UART polling jitter cannot distort note spacing. */
 #define AUDIO_S3_PIPELINE_LATENCY_US 160000ULL
 
 static void handle_usb_midi_event(const usb_midi_event_t *event, void *context)
@@ -63,7 +61,11 @@ static void handle_music_s3_event(const s3_music_event_t *event, void *context)
                         ? event->velocity
                         : 0,
     };
-    scoring_service_handle_audio_s3_event(&midi_event);
+    scoring_service_handle_audio_s3_event(
+        event->type == S3_MUSIC_EVENT_NOTE_ON,
+        event->sid, event->sender_ts_ms, event->midi, event->velocity,
+        event->has_confidence ? event->confidence : 0.75f,
+        event->has_frequency ? event->frequency_hz : 0.0f);
     screen_adapter_handle_usb_midi_event(&midi_event);
 }
 
@@ -369,16 +371,9 @@ void app_main(void)
              capabilities.wifi_available ? "YES" : "NO",
              capabilities.ble_available ? "YES" : "NO");
 
-    unsigned log_tick = 0;
     while (true) {
         network_status_t status = network_provisioning_get_status();
         manage_network_services(status.state);
-        if ((log_tick++ % 5U) == 0) {
-            ESP_LOGI(TAG, "state=%s ip=%s retries=%u",
-                     network_provisioning_state_name(status.state),
-                     status.ip,
-                     status.retry_count);
-        }
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

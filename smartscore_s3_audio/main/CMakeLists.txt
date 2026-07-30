@@ -6,6 +6,7 @@ idf_component_register(
         "dual_mic_selector.c"
         "yin_detector.c"
         "chord_detector.c"
+        "melody_gate.c"
         "music_classifier.c"
         "music_detector.c"
         "music_uart_link.c"

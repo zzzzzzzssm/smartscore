@@ -102,15 +102,14 @@ esp_err_t wav_stream_list_page(const char *search,
                                size_t *out_total,
                                size_t *out_page)
 {
-    board_sdcard_status_t card;
-    board_sdcard_get_status(&card);
-    if (!card.mounted) {
-        return ESP_ERR_INVALID_STATE;
-    }
     if (names == NULL || out_count == NULL || out_total == NULL ||
         out_page == NULL || requested_page == 0 || page_size == 0 ||
         capacity < page_size) {
         return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t mount_error = board_sdcard_mount();
+    if (mount_error != ESP_OK) {
+        return mount_error;
     }
 
     *out_count = 0;
@@ -155,13 +154,12 @@ esp_err_t wav_stream_list_page(const char *search,
 
 esp_err_t wav_stream_open(const char *safe_name, wav_stream_file_t *out_file)
 {
-    board_sdcard_status_t card;
-    board_sdcard_get_status(&card);
-    if (!card.mounted) {
-        return ESP_ERR_INVALID_STATE;
-    }
     if (!is_safe_file_name(safe_name) || out_file == NULL) {
         return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t mount_error = board_sdcard_mount();
+    if (mount_error != ESP_OK) {
+        return mount_error;
     }
 
     memset(out_file, 0, sizeof(*out_file));

@@ -108,30 +108,6 @@ static void music_poll_task(void *argument)
     TickType_t last_wake = xTaskGetTickCount();
     while (true) {
         (void)send_poll();
-        taskENTER_CRITICAL(&s_status_lock);
-        const uint32_t polls = s_status.polls_sent;
-        const uint32_t rx_bytes = s_status.rx_bytes;
-        const uint32_t valid = s_status.valid_frames;
-        const uint32_t invalid = s_status.invalid_frames;
-        const uint32_t oversized = s_status.oversized_lines;
-        const uint32_t last_rx_ms = s_status.last_rx_ms;
-        const bool received_any = s_received_any;
-        taskEXIT_CRITICAL(&s_status_lock);
-        if (polls > 0 && polls % 100U == 0U) {
-            const uint32_t age_ms = received_any
-                                        ? (uint32_t)(local_now_ms() - last_rx_ms)
-                                        : UINT32_MAX;
-            ESP_LOGI(TAG, "link diag: polls=%" PRIu32 " rx_bytes=%" PRIu32
-                          " valid=%" PRIu32 " invalid=%" PRIu32
-                          " oversized=%" PRIu32 " last_rx_age_ms=%" PRIu32,
-                     polls, rx_bytes, valid, invalid, oversized, age_ms);
-            if (rx_bytes == 0) {
-                ESP_LOGW(TAG, "no S3 UART bytes: check S3 GPIO1/H7-10 -> P4 GPIO1/J6-6 and GND");
-            } else if (valid == 0) {
-                ESP_LOGW(TAG, "UART bytes received but no valid NDJSON: check %d 8N1 and TX/RX direction",
-                         BOARD_WT99_MUSIC_UART_BAUD_RATE);
-            }
-        }
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(S3_MUSIC_POLL_INTERVAL_MS));
     }
 }
@@ -228,8 +204,14 @@ static void queue_note_event(const s3_music_message_t *message)
         .seq = message->seq,
         .sid = message->sid,
         .sender_ts_ms = message->ts_ms,
+        .duration_ms = message->duration_ms,
         .midi = message->midi,
         .velocity = message->velocity,
+        .frequency_hz = message->frequency_hz,
+        .confidence = message->confidence,
+        .has_duration = message->has_duration,
+        .has_frequency = message->has_frequency,
+        .has_confidence = message->has_confidence,
     };
     if (xQueueSend(s_event_queue, &event, 0) != pdTRUE) {
         taskENTER_CRITICAL(&s_status_lock);

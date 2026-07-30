@@ -7,5 +7,6 @@ idf_component_register(
         score_data
         score_engine
         input_source_manager
+        s3_bus
         usb_midi
 )

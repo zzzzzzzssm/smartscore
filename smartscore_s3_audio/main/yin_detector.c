@@ -16,7 +16,6 @@ void yin_detector_init(void)
 {
     memset(s_difference, 0, sizeof(s_difference));
     memset(s_cmnd, 0, sizeof(s_cmnd));
-    note_tuning_reset();
 }
 
 static int local_minimum(int tau, int min_tau, int max_tau)
@@ -117,7 +116,6 @@ void yin_detector_analyze(const float *samples, size_t count, yin_result_t *resu
     if (frequency < MUSIC_MIN_FREQUENCY_HZ || frequency > MUSIC_MAX_FREQUENCY_HZ) {
         return;
     }
-    note_tuning_observe(frequency, confidence);
     result->midi = note_frequency_to_midi(frequency);
     if (result->midi < 0 || result->midi > 127) {
         result->midi = -1;

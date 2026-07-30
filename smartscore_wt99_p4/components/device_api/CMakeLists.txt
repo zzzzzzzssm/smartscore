@@ -4,6 +4,7 @@ idf_component_register(
     REQUIRES
         esp_http_server
         json
+        doubao_client
         network_provisioning
         speaker_service
         usb_midi

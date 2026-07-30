@@ -10,6 +10,7 @@
 #include "sdmmc_cmd.h"
 
 #define BOARD_SDCARD_LDO_CHANNEL 4
+#define BOARD_SDCARD_SAFE_CLOCK_KHZ 10000
 
 static const char *TAG = "BOARD_SD";
 static board_sdcard_status_t s_status;
@@ -35,9 +36,14 @@ esp_err_t board_sdcard_mount(void)
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
     host.slot = SDMMC_HOST_SLOT_0;
     host.pwr_ctrl_handle = s_power;
+    host.max_freq_khz = BOARD_SDCARD_SAFE_CLOCK_KHZ;
 
     sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
-    slot.width = 4;
+    /* Audio streaming needs very little bandwidth. 1-bit mode plus internal
+     * pull-ups is substantially more tolerant of long display-board traces
+     * and cards whose D1..D3 lines are slow during power-up. */
+    slot.width = 1;
+    slot.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
     slot.clk = BOARD_WT99_SDMMC_CLK_GPIO;
     slot.cmd = BOARD_WT99_SDMMC_CMD_GPIO;
     slot.d0 = BOARD_WT99_SDMMC_D0_GPIO;
@@ -70,13 +76,11 @@ esp_err_t board_sdcard_mount(void)
         (uint64_t)s_card->csd.capacity * s_card->csd.sector_size;
     s_status.last_error = ESP_OK;
     ESP_LOGI(TAG,
-             "SD mounted on slot 0, D0..D3=%d,%d,%d,%d CLK=%d CMD=%d, capacity=%llu",
+             "SD mounted on slot 0, 1-bit D0=%d CLK=%d CMD=%d at %dkHz, capacity=%llu",
              BOARD_WT99_SDMMC_D0_GPIO,
-             BOARD_WT99_SDMMC_D1_GPIO,
-             BOARD_WT99_SDMMC_D2_GPIO,
-             BOARD_WT99_SDMMC_D3_GPIO,
              BOARD_WT99_SDMMC_CLK_GPIO,
              BOARD_WT99_SDMMC_CMD_GPIO,
+             BOARD_SDCARD_SAFE_CLOCK_KHZ,
              (unsigned long long)s_status.capacity_bytes);
     return ESP_OK;
 }

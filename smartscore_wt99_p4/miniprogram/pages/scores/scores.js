@@ -1,5 +1,6 @@
 const api = require('../../utils/api');
 const scoreLibrary = require('../../utils/score_library');
+const aiScoreTask = require('../../utils/ai_score_task');
 const { parseMidiToScore } = require('../../utils/util');
 
 Page({
@@ -13,12 +14,45 @@ Page({
     sdTotal: 0,
     sdPresent: true,
     sdLoading: false,
-    currentScoreId: ''
+    currentScoreId: '',
+    selectedSheetImage: null,
+    aiRecognizing: false,
+    aiRecognitionStatus: 'idle',
+    aiRecognitionMessage: ''
+  },
+
+  onLoad() {
+    this.aiTaskListener = (state) => this.applyAiTaskState(state);
+    aiScoreTask.subscribe(this.aiTaskListener);
   },
 
   onShow() {
     this.loadLocalScores();
+    this.applyAiTaskState(aiScoreTask.getState());
     if (this.data.activeSource === 'sd') this.refreshSdScores(1);
+  },
+
+  onUnload() {
+    aiScoreTask.unsubscribe(this.aiTaskListener);
+    this.aiTaskListener = null;
+  },
+
+  applyAiTaskState(state) {
+    const nextData = {
+      aiRecognizing: state.status === 'running',
+      aiRecognitionStatus: state.status,
+      aiRecognitionMessage: state.message || ''
+    };
+    if (state.status === 'succeeded' &&
+        this.lastCompletedAiTaskId !== state.taskId) {
+      this.lastCompletedAiTaskId = state.taskId;
+      const selected = this.data.selectedSheetImage;
+      if (selected && selected.path === state.imagePath) {
+        nextData.selectedSheetImage = null;
+      }
+      this.loadLocalScores();
+    }
+    this.setData(nextData);
   },
 
   loadLocalScores() {
@@ -53,6 +87,77 @@ Page({
         }
       }
     });
+  },
+
+  chooseSheetImage() {
+    wx.chooseMedia({
+      count: 1,
+      mediaType: ['image'],
+      sourceType: ['album', 'camera'],
+      sizeType: ['compressed'],
+      success: (res) => {
+        const file = (res.tempFiles || [])[0];
+        if (file) this.prepareSheetImage(file);
+      },
+      fail: (err) => {
+        const message = api.errorMessage(err, '');
+        if (message && message.toLowerCase().indexOf('cancel') < 0) {
+          wx.showToast({ title: message, icon: 'none' });
+        }
+      }
+    });
+  },
+
+  prepareSheetImage(file) {
+    const originalPath = file.tempFilePath || file.path;
+    if (!originalPath) {
+      wx.showToast({ title: '无法读取所选图片', icon: 'none' });
+      return;
+    }
+    wx.showLoading({ title: '正在压缩图片' });
+    wx.compressImage({
+      src: originalPath,
+      quality: 85,
+      success: (res) => this.setPreparedSheetImage(
+        res.tempFilePath || originalPath,
+        originalPath
+      ),
+      fail: () => this.setPreparedSheetImage(originalPath, originalPath),
+      complete: () => wx.hideLoading()
+    });
+  },
+
+  setPreparedSheetImage(path, originalPath) {
+    wx.getFileInfo({
+      filePath: path,
+      success: (res) => {
+        const size = Number(res.size || 0);
+        if (size > 768 * 1024) {
+          this.setData({ selectedSheetImage: null });
+          wx.showModal({
+            title: '图片仍然过大',
+            content: 'AI 识谱图片需要小于 768 KB，请裁剪图片或选择更清晰的单页乐谱。',
+            showCancel: false
+          });
+          return;
+        }
+        this.setData({
+          selectedSheetImage: { path, originalPath, size }
+        });
+      },
+      fail: () => this.setData({
+        selectedSheetImage: { path, originalPath, size: 0 }
+      })
+    });
+  },
+
+  recognizeSheetImage() {
+    const image = this.data.selectedSheetImage;
+    if (!image || !image.path) {
+      wx.showToast({ title: '请先选择乐谱图片', icon: 'none' });
+      return;
+    }
+    aiScoreTask.start(image.path);
   },
 
   importScoreFile(file) {

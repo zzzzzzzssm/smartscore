@@ -49,7 +49,13 @@ esp_err_t scoring_service_wait_for_result(uint32_t timeout_ms);
 esp_err_t scoring_service_with_result(scoring_result_consumer_t consumer,
                                       void *context);
 void scoring_service_handle_usb_event(const usb_midi_event_t *event);
-void scoring_service_handle_audio_s3_event(const usb_midi_event_t *event);
+void scoring_service_handle_audio_s3_event(bool note_on,
+                                           uint32_t sid,
+                                           uint32_t sender_ts_ms,
+                                           uint8_t midi,
+                                           uint8_t velocity,
+                                           float confidence,
+                                           float frequency_hz);
 void scoring_service_get_status(scoring_service_status_t *out_status);
 const char *scoring_service_state_name(scoring_service_state_t state);
 

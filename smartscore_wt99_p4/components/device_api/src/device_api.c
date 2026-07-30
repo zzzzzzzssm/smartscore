@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "cJSON.h"
+#include "doubao_client.h"
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -626,14 +627,193 @@ static esp_err_t score_upload_handler(httpd_req_t *request)
         cJSON_AddNumberToObject(root, "bpm", score.bpm);
         cJSON_AddStringToObject(root, "input_source",
                                 input_source_name(input.selected_input));
-        cJSON_AddStringToObject(
-            root, "profile",
-            input.selected_input == INPUT_SOURCE_USB_MIDI
-                ? "midi_strict"
-                : "audio_s3_reserved");
+        cJSON_AddStringToObject(root, "profile", "beginner_mono_v2");
         add_preparation_status(root);
     }
     return send_json(request, "200 OK", root);
+}
+
+static esp_err_t ai_sheet_to_score_handler(httpd_req_t *request)
+{
+    if (!doubao_api_key_configured()) {
+        return send_error_json(request, "503 Service Unavailable",
+                               "vei_api_key_missing",
+                               "VEI_API_KEY is not configured in the firmware");
+    }
+
+    char mime_type[48] = "image/jpeg";
+    if (httpd_req_get_hdr_value_str(request, "Content-Type", mime_type,
+                                    sizeof(mime_type)) != ESP_OK ||
+        strncmp(mime_type, "image/", strlen("image/")) != 0) {
+        strlcpy(mime_type, "image/jpeg", sizeof(mime_type));
+    }
+    char *parameters = strchr(mime_type, ';');
+    if (parameters != NULL) {
+        *parameters = '\0';
+    }
+
+    if (request->content_len == 0) {
+        return send_error_json(request, "400 Bad Request",
+                               "sheet_image_missing",
+                               "send a sheet image in the request body");
+    }
+    if (request->content_len > DOUBAO_MAX_IMAGE_BYTES) {
+        return send_error_json(request, "413 Payload Too Large",
+                               "sheet_image_too_large",
+                               "compress the sheet image below 768 KiB");
+    }
+
+    char *image = NULL;
+    size_t image_length = 0;
+    esp_err_t err = receive_large_body(request, DOUBAO_MAX_IMAGE_BYTES,
+                                        &image, &image_length);
+    if (err != ESP_OK) {
+        return send_error_json(request, "400 Bad Request",
+                               "sheet_image_read_failed",
+                               "failed to read the sheet image");
+    }
+
+    char *recognized_json = doubao_recognize_sheet_image(
+        (const uint8_t *)image, image_length, mime_type);
+    heap_caps_free(image);
+    if (recognized_json == NULL) {
+        return send_error_json(request, "502 Bad Gateway",
+                               "doubao_recognition_failed",
+                               "Doubao did not return a recognition result");
+    }
+
+    cJSON *recognized = cJSON_Parse(recognized_json);
+    if (!cJSON_IsObject(recognized)) {
+        cJSON_Delete(recognized);
+        free(recognized_json);
+        return send_error_json(request, "502 Bad Gateway",
+                               "invalid_doubao_response",
+                               "Doubao returned invalid recognition JSON");
+    }
+    cJSON *recognized_ok = cJSON_GetObjectItemCaseSensitive(recognized, "ok");
+    if (cJSON_IsFalse(recognized_ok)) {
+        free(recognized_json);
+        return send_json(request, "200 OK", recognized);
+    }
+
+    char parse_error[96] = {0};
+    size_t note_count = 0;
+    size_t score_length = strlen(recognized_json);
+    err = score_json_parse_and_store(recognized_json, score_length,
+                                     parse_error, sizeof(parse_error),
+                                     &note_count);
+    esp_err_t screen_err = ESP_OK;
+    if (err == ESP_OK)
+        screen_err = screen_adapter_prepare_score_json(
+            recognized_json, score_length, "AI_SCORE.JSON");
+    free(recognized_json);
+    if (screen_err != ESP_OK) {
+        ESP_LOGW(TAG, "AI score stored but screen preparation failed: %s",
+                 esp_err_to_name(screen_err));
+    }
+    if (err != ESP_OK) {
+        cJSON_Delete(recognized);
+        return send_error_json(
+            request,
+            err == ESP_ERR_INVALID_SIZE ? "413 Payload Too Large"
+                                        : "400 Bad Request",
+            parse_error[0] != '\0' ? parse_error : "ai_score_invalid",
+            "Doubao did not return a usable score");
+    }
+
+    if (recognized_ok != NULL) {
+        cJSON_ReplaceItemInObject(recognized, "ok", cJSON_CreateTrue());
+    } else {
+        cJSON_AddBoolToObject(recognized, "ok", true);
+    }
+    cJSON_AddStringToObject(recognized, "source",
+                            "doubao-seed-1.6-vision");
+    cJSON_AddStringToObject(recognized, "model",
+                            "doubao-seed-1.6-vision");
+    cJSON_AddBoolToObject(recognized, "stored_for_scoring", true);
+    cJSON_AddBoolToObject(recognized, "screen_prepared",
+                          screen_err == ESP_OK);
+    cJSON_AddNumberToObject(recognized, "note_count", note_count);
+    cJSON_AddNumberToObject(recognized, "image_bytes",
+                            (double)image_length);
+    return send_json(request, "200 OK", recognized);
+}
+
+typedef struct {
+    char *json;
+} score_result_copy_t;
+
+static esp_err_t copy_score_result(const char *json,
+                                   size_t length,
+                                   void *context)
+{
+    score_result_copy_t *copy = (score_result_copy_t *)context;
+    if (json == NULL || length == 0 || copy == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (heap_caps_get_total_size(MALLOC_CAP_SPIRAM) > 0) {
+        copy->json = heap_caps_malloc(length + 1,
+                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    if (copy->json == NULL) {
+        copy->json = heap_caps_malloc(length + 1,
+                                      MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+    if (copy->json == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+    memcpy(copy->json, json, length);
+    copy->json[length] = '\0';
+    return ESP_OK;
+}
+
+static esp_err_t ai_score_handler(httpd_req_t *request)
+{
+    if (request->content_len > 0) {
+        cJSON *body = NULL;
+        esp_err_t body_err = receive_json(request, &body);
+        cJSON_Delete(body);
+        if (body_err != ESP_OK) {
+            return send_error_json(request, "400 Bad Request",
+                                   "invalid_ai_score_request",
+                                   "body must be an optional JSON object");
+        }
+    }
+    if (!doubao_api_key_configured()) {
+        return send_error_json(request, "503 Service Unavailable",
+                               "vei_api_key_missing",
+                               "VEI_API_KEY is not configured in the firmware");
+    }
+
+    score_result_copy_t context = {0};
+    esp_err_t err = scoring_service_with_result(copy_score_result, &context);
+    if (err != ESP_OK || context.json == NULL) {
+        heap_caps_free(context.json);
+        return send_error_json(request, "409 Conflict",
+                               "score_result_not_available",
+                               "complete a practice session before requesting AI advice");
+    }
+
+    char *advice_json = doubao_score_performance(context.json);
+    heap_caps_free(context.json);
+    if (advice_json == NULL) {
+        return send_error_json(request, "502 Bad Gateway",
+                               "doubao_advice_failed",
+                               "Doubao did not return practice advice");
+    }
+
+    cJSON *advice = cJSON_Parse(advice_json);
+    free(advice_json);
+    if (!cJSON_IsObject(advice)) {
+        cJSON_Delete(advice);
+        return send_error_json(request, "502 Bad Gateway",
+                               "invalid_doubao_response",
+                               "Doubao returned invalid practice advice JSON");
+    }
+    cJSON *advice_ok = cJSON_GetObjectItemCaseSensitive(advice, "ok");
+    return send_json(request,
+                     cJSON_IsFalse(advice_ok) ? "502 Bad Gateway" : "200 OK",
+                     advice);
 }
 
 static bool contains_search_text(const char *text, const char *search)
@@ -986,6 +1166,40 @@ static esp_err_t preparation_start_handler(httpd_req_t *request)
     return send_json(request, "200 OK", response);
 }
 
+static esp_err_t practice_restart_handler(httpd_req_t *request)
+{
+    screen_preparation_status_t preparation = {0};
+    screen_adapter_get_preparation_status(&preparation);
+    if (!preparation.valid) {
+        return send_error_json(request, "409 Conflict",
+                               "score_not_prepared",
+                               "select a score before restarting practice");
+    }
+
+    esp_err_t err = screen_adapter_restart_prepared_score();
+    if (err != ESP_OK) {
+        scoring_service_status_t scoring = {0};
+        scoring_service_get_status(&scoring);
+        const bool scoring_now =
+            scoring.state == SCORING_SERVICE_SCORING;
+        return send_error_json(
+            request, "409 Conflict",
+            scoring_now ? "scoring_in_progress" : "practice_restart_failed",
+            scoring_now ? "wait for the current score before restarting"
+                        : "the prepared score could not be restarted");
+    }
+
+    cJSON *response = cJSON_CreateObject();
+    if (response != NULL) {
+        cJSON_AddBoolToObject(response, "ok", true);
+        cJSON_AddStringToObject(response, "state", "recording");
+        cJSON_AddStringToObject(response, "message",
+                                "practice restarted with the same score");
+        add_preparation_status(response);
+    }
+    return send_json(request, "200 OK", response);
+}
+
 static esp_err_t sd_score_file_handler(httpd_req_t *request)
 {
     char query[DEVICE_API_MAX_QUERY_BYTES + 1] = {0};
@@ -1193,7 +1407,7 @@ static esp_err_t practice_start_handler(httpd_req_t *request)
     }
     const char *profile = cJSON_IsString(profile_json)
                               ? profile_json->valuestring
-                              : "midi_strict";
+                              : "beginner_mono_v2";
     char profile_copy[SCORING_PROFILE_NAME_MAX_LENGTH];
     strlcpy(profile_copy, profile, sizeof(profile_copy));
     bool profile_truncated = strlen(profile) >= sizeof(profile_copy);
@@ -1240,9 +1454,7 @@ static esp_err_t practice_start_handler(httpd_req_t *request)
 
     screen_preparation_status_t preparation = {0};
     screen_adapter_get_preparation_status(&preparation);
-    if (preparation.valid &&
-        (preparation.phase == SCREEN_PREPARATION_PREPARED ||
-         preparation.phase == SCREEN_PREPARATION_ERROR)) {
+    if (preparation.valid) {
         err = screen_adapter_start_prepared_score();
         if (err != ESP_OK)
             return send_error_json(request, "409 Conflict",
@@ -1282,7 +1494,8 @@ static esp_err_t practice_start_handler(httpd_req_t *request)
                                    "未检测到 S3 音频节点");
         }
     }
-    if (strcmp(profile_copy, "midi_strict") != 0) {
+    if (strcmp(profile_copy, "beginner_mono_v2") != 0 &&
+        strcmp(profile_copy, "midi_strict") != 0) {
         return send_error_json(request, "409 Conflict",
                                "unsupported_scoring_profile",
                                "the selected scoring profile is unavailable");
@@ -1321,7 +1534,7 @@ static esp_err_t send_score_result(const char *json,
 
 static esp_err_t practice_stop_handler(httpd_req_t *request)
 {
-    esp_err_t err = scoring_service_stop();
+    esp_err_t err = screen_adapter_complete_practice();
     if (err != ESP_OK) {
         scoring_service_status_t status;
         scoring_service_get_status(&status);
@@ -1655,7 +1868,8 @@ esp_err_t device_api_start(void)
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 32;
+    config.max_uri_handlers = 36;
+    config.stack_size = 16384;
     config.lru_purge_enable = true;
     esp_err_t err = httpd_start(&s_server, &config);
     if (err != ESP_OK) {
@@ -1687,6 +1901,8 @@ esp_err_t device_api_start(void)
          .handler = preparation_options_handler},
         {.uri = "/api/practice/preparation/start", .method = HTTP_POST,
          .handler = preparation_start_handler},
+        {.uri = "/api/practice/restart", .method = HTTP_POST,
+         .handler = practice_restart_handler},
         {.uri = "/api/creator/status", .method = HTTP_GET,
          .handler = creator_status_handler},
         {.uri = "/api/creator/start", .method = HTTP_POST,
@@ -1699,6 +1915,10 @@ esp_err_t device_api_start(void)
          .handler = practice_stop_handler},
         {.uri = "/api/result", .method = HTTP_GET,
          .handler = practice_result_handler},
+        {.uri = "/api/ai/sheet_to_score", .method = HTTP_POST,
+         .handler = ai_sheet_to_score_handler},
+        {.uri = "/api/ai/score", .method = HTTP_POST,
+         .handler = ai_score_handler},
         {.uri = "/api/audio/status", .method = HTTP_GET,
          .handler = audio_status_handler},
         {.uri = "/api/audio/volume", .method = HTTP_POST,

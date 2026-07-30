@@ -14,6 +14,10 @@ typedef struct {
     uint8_t velocity;
     uint8_t channel;
     uint64_t start_us;
+    float confidence;
+    float frequency_hz;
+    uint16_t timing_uncertainty_ms;
+    bool duration_reliable;
 } active_note_t;
 
 typedef struct {
@@ -93,6 +97,10 @@ static bool append_note_locked(const active_note_t *active, uint64_t end_us)
     note->velocity = active->velocity;
     note->channel = active->channel;
     note->source = s_recorder.status.input_source;
+    note->confidence = active->confidence;
+    note->frequency_hz = active->frequency_hz;
+    note->timing_uncertainty_ms = active->timing_uncertainty_ms;
+    note->duration_reliable = active->duration_reliable;
     return true;
 }
 
@@ -161,6 +169,9 @@ esp_err_t performance_recorder_start(input_source_t source)
     free_notes_locked();
     clear_active_locked();
     s_recorder.status.note_count = 0;
+    s_recorder.status.observed_note_count = 0;
+    s_recorder.status.uncertain_note_count = 0;
+    s_recorder.status.confidence_sum = 0.0f;
     s_recorder.pause_started_us = 0;
     s_recorder.paused_total_us = 0;
     s_recorder.status.input_source = source;
@@ -214,8 +225,11 @@ esp_err_t performance_recorder_pause(void)
     uint64_t pause_timeline_us = timeline_us_locked(now_us);
     for (size_t index = 0;
          index < PERFORMANCE_RECORDER_MAX_ACTIVE_NOTES; ++index) {
-        if (s_recorder.active[index].used &&
-            !close_active_locked(index, pause_timeline_us)) {
+        if (!s_recorder.active[index].used) {
+            continue;
+        }
+        s_recorder.active[index].duration_reliable = false;
+        if (!close_active_locked(index, pause_timeline_us)) {
             esp_err_t err = s_recorder.status.last_error;
             xSemaphoreGive(s_recorder.lock);
             return err;
@@ -251,11 +265,15 @@ esp_err_t performance_recorder_resume(void)
     return ESP_OK;
 }
 
-void performance_recorder_process_midi(bool note_on,
-                                       uint8_t midi,
-                                       uint8_t velocity,
-                                       uint8_t channel,
-                                       uint64_t timestamp_us)
+static void process_note(bool note_on,
+                         uint8_t midi,
+                         uint8_t velocity,
+                         uint8_t channel,
+                         uint64_t timestamp_us,
+                         float confidence,
+                         float frequency_hz,
+                         uint16_t timing_uncertainty_ms,
+                         bool duration_reliable)
 {
     if (s_recorder.lock == NULL || midi > 127U || channel > 15U) {
         return;
@@ -269,7 +287,15 @@ void performance_recorder_process_midi(bool note_on,
 
     int active_index = find_active_locked(channel, midi);
     if (note_on) {
+        if (confidence < 0.0f) confidence = 0.0f;
+        if (confidence > 1.0f) confidence = 1.0f;
+        ++s_recorder.status.observed_note_count;
+        s_recorder.status.confidence_sum += confidence;
+        if (confidence < 0.60f) {
+            ++s_recorder.status.uncertain_note_count;
+        }
         if (active_index >= 0) {
+            s_recorder.active[active_index].duration_reliable = false;
             if (!close_active_locked((size_t)active_index, timestamp_us)) {
                 xSemaphoreGive(s_recorder.lock);
                 return;
@@ -290,12 +316,38 @@ void performance_recorder_process_midi(bool note_on,
             .velocity = velocity,
             .channel = channel,
             .start_us = timestamp_us,
+            .confidence = confidence,
+            .frequency_hz = frequency_hz,
+            .timing_uncertainty_ms = timing_uncertainty_ms,
+            .duration_reliable = duration_reliable,
         };
         ++s_recorder.status.active_count;
     } else if (active_index >= 0) {
         close_active_locked((size_t)active_index, timestamp_us);
     }
     xSemaphoreGive(s_recorder.lock);
+}
+
+void performance_recorder_process_midi(bool note_on,
+                                       uint8_t midi,
+                                       uint8_t velocity,
+                                       uint8_t channel,
+                                       uint64_t timestamp_us)
+{
+    process_note(note_on, midi, velocity, channel, timestamp_us,
+                 1.0f, 0.0f, 10U, true);
+}
+
+void performance_recorder_process_audio(bool note_on,
+                                        uint8_t midi,
+                                        uint8_t velocity,
+                                        uint64_t timestamp_us,
+                                        float confidence,
+                                        float frequency_hz)
+{
+    const uint16_t uncertainty_ms = confidence >= 0.80f ? 40U : 80U;
+    process_note(note_on, midi, velocity, 0, timestamp_us,
+                 confidence, frequency_hz, uncertainty_ms, true);
 }
 
 esp_err_t performance_recorder_stop_and_take_snapshot(
@@ -321,8 +373,11 @@ esp_err_t performance_recorder_stop_and_take_snapshot(
                                     : timeline_us_locked(stop_us);
     for (size_t index = 0;
          index < PERFORMANCE_RECORDER_MAX_ACTIVE_NOTES; ++index) {
-        if (s_recorder.active[index].used &&
-            !close_active_locked(index, timeline_stop_us)) {
+        if (!s_recorder.active[index].used) {
+            continue;
+        }
+        s_recorder.active[index].duration_reliable = false;
+        if (!close_active_locked(index, timeline_stop_us)) {
             xSemaphoreGive(s_recorder.lock);
             return s_recorder.status.last_error;
         }
@@ -333,6 +388,12 @@ esp_err_t performance_recorder_stop_and_take_snapshot(
     out_snapshot->duration_ms = elapsed_ms(s_recorder.recording_start_us,
                                             timeline_stop_us);
     out_snapshot->input_source = s_recorder.status.input_source;
+    out_snapshot->observed_note_count =
+        s_recorder.status.observed_note_count;
+    out_snapshot->uncertain_note_count =
+        s_recorder.status.uncertain_note_count;
+    out_snapshot->confidence_sum = s_recorder.status.confidence_sum;
+    out_snapshot->input_stream_healthy = true;
     s_recorder.notes = NULL;
     s_recorder.status.note_capacity = 0;
     s_recorder.status.active_count = 0;

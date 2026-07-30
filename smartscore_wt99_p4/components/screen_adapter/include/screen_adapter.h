@@ -96,6 +96,15 @@ esp_err_t screen_adapter_update_preparation(
 /** Start the currently prepared score using its canonical options. */
 esp_err_t screen_adapter_start_prepared_score(void);
 
+/** Reset a completed result and start the same prepared score again. */
+esp_err_t screen_adapter_restart_prepared_score(void);
+
+/**
+ * Finish the active practice through the shared screen/scoring flow.
+ * Repeated calls while scoring or after the result is ready are harmless.
+ */
+esp_err_t screen_adapter_complete_practice(void);
+
 void screen_adapter_get_preparation_status(
     screen_preparation_status_t *status);
 

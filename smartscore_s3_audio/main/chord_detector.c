@@ -36,13 +36,12 @@ int chord_detector_init(void)
     if (s_initialized) return ESP_OK;
     float window_sum = 0.0f;
     for (int i = 0; i < MUSIC_FFT_SIZE; ++i) {
-        s_hann[i] = 0.5f - 0.5f * cosf(2.0f * (float)M_PI * i /
-                                      (MUSIC_FFT_SIZE - 1));
+        s_hann[i] = 0.5f - 0.5f * cosf(2.0f * (float)M_PI * i / (MUSIC_FFT_SIZE - 1));
         window_sum += s_hann[i];
     }
-    /* Normalize one-sided FFT magnitudes back to signal amplitude. Without
-     * this, a 4096-point transform puts most bins above 1.0 and saturates the
-     * logarithmic noise histogram at the exact value 0.825405. */
+    /* Normalize the one-sided FFT back to signal amplitude. Without this,
+     * the 4096-point transform saturates the logarithmic noise histogram and
+     * reports the fixed 0.825405 floor seen in the failing hardware log. */
     if (window_sum > 1.0e-9f) {
         s_fft_magnitude_scale = 2.0f / window_sum;
     }
@@ -151,13 +150,11 @@ void chord_detector_analyze(const float *mic1_ring, const float *mic2_ring,
     fft_started = esp_timer_get_time();
     fft_magnitude(mic2_ring, write_position, s_mic2_magnitude);
     diagnostics_counters()->mic2_fft_time_us = (uint32_t)(esp_timer_get_time() - fft_started);
-
     const float weight_sum = mic1_rms + mic2_rms;
-    const float mic1_weight = weight_sum > 1.0e-9f ? mic1_rms / weight_sum : 0.5f;
-    const float mic2_weight = 1.0f - mic1_weight;
+    const float weight1 = weight_sum > 1.0e-9f ? mic1_rms / weight_sum : 0.5f;
+    const float weight2 = 1.0f - weight1;
     for (int bin = 0; bin < FFT_BIN_COUNT; ++bin) {
-        s_fused_magnitude[bin] = mic1_weight * s_mic1_magnitude[bin] +
-                                 mic2_weight * s_mic2_magnitude[bin];
+        s_fused_magnitude[bin] = weight1 * s_mic1_magnitude[bin] + weight2 * s_mic2_magnitude[bin];
     }
 #endif
     const float noise_floor = estimate_noise_floor(s_fused_magnitude, first_bin, last_bin);

@@ -57,10 +57,8 @@ void audio_preprocess_frame(audio_preprocess_state_t *state, const int16_t *inpu
         }
         ++state->calibration_frames;
     } else if (!metrics->clipped && metrics->rms < state->noise_floor) {
-        /* Startup calibration can accidentally include music or handling
-         * noise. Recover only downward during later quiet frames; never adapt
-         * upward into a played note. The three-second P4 microphone countdown
-         * gives this conservative recovery time to settle before scoring. */
+        /* Recover downward if startup calibration included handling noise or
+         * keyboard sound. Never adapt upward into a played note. */
         state->noise_floor += MUSIC_NOISE_FLOOR_RECOVERY_ALPHA *
                               (metrics->rms - state->noise_floor);
         const float minimum_floor =

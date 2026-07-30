@@ -29,6 +29,9 @@ typedef struct {
     size_t note_count;
     size_t note_capacity;
     size_t active_count;
+    size_t observed_note_count;
+    size_t uncertain_note_count;
+    float confidence_sum;
     bool buffer_in_psram;
     esp_err_t last_error;
     char error[64];
@@ -44,6 +47,12 @@ void performance_recorder_process_midi(bool note_on,
                                        uint8_t velocity,
                                        uint8_t channel,
                                        uint64_t timestamp_us);
+void performance_recorder_process_audio(bool note_on,
+                                        uint8_t midi,
+                                        uint8_t velocity,
+                                        uint64_t timestamp_us,
+                                        float confidence,
+                                        float frequency_hz);
 esp_err_t performance_recorder_stop_and_take_snapshot(
     performance_snapshot_t *out_snapshot);
 void performance_recorder_abort(esp_err_t error,

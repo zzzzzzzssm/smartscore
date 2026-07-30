@@ -7,7 +7,6 @@
 #include "audio_preprocess.h"
 #include "chord_detector.h"
 #include "diagnostics.h"
-#include "dual_mic_selector.h"
 #include "es7210_capture.h"
 #include "esp_check.h"
 #include "esp_heap_caps.h"
@@ -23,8 +22,10 @@
 
 #if MUSIC_USE_SINGLE_MIC_CH1
 static float s_audio_ring[MUSIC_FFT_SIZE];
+static float s_frame_float[MUSIC_CAPTURE_FRAMES];
 #else
 static float s_audio_ring[2][MUSIC_FFT_SIZE];
+static float s_frame_float[2][MUSIC_CAPTURE_FRAMES];
 #endif
 static float s_yin_window[MUSIC_YIN_WINDOW_SIZE];
 static size_t s_ring_write_position;
@@ -44,6 +45,32 @@ static void copy_yin_window(int selected_mic)
     }
 }
 
+#if !MUSIC_USE_SINGLE_MIC_CH1
+static int update_selected_mic(int selected, int *challenger_count,
+                               const audio_frame_metrics_t metrics[2],
+                               const audio_preprocess_state_t state[2])
+{
+    float score[2];
+    for (int mic = 0; mic < 2; ++mic) {
+        const float snr_proxy = metrics[mic].rms / fmaxf(state[mic].noise_gate, 1.0e-6f);
+        score[mic] = snr_proxy / (snr_proxy + 1.0f);
+        if (metrics[mic].clipped) score[mic] *= 0.15f;
+    }
+    const int current = selected - 1;
+    const int other = 1 - current;
+    if (score[other] > score[current] + MUSIC_MIC_SWITCH_SCORE_MARGIN) {
+        ++*challenger_count;
+        if (*challenger_count >= MUSIC_MIC_SWITCH_CONFIRM_FRAMES) {
+            *challenger_count = 0;
+            return other + 1;
+        }
+    } else {
+        *challenger_count = 0;
+    }
+    return selected;
+}
+#endif
+
 static void log_result(const music_result_t *result, const char *unknown_reason,
                        const chord_result_t *chord)
 {
@@ -56,12 +83,9 @@ static void log_result(const music_result_t *result, const char *unknown_reason,
 #endif
             break;
         case MUSIC_RESULT_SINGLE:
-            ESP_LOGI("RESULT", "SINGLE note=%s midi=%d freq=%.1fHz cents=%+.1f conf=%.2f mic=%d harmonic_ratio=%.2f onset=%s octave_fix=%s",
+            ESP_LOGI("RESULT", "SINGLE note=%s midi=%d freq=%.1fHz cents=%+.1f conf=%.2f mic=%d harmonic_ratio=%.2f",
                      result->note_name, result->midi, result->frequency_hz, result->cents,
-                     result->confidence, result->selected_mic,
-                     result->harmonic_explained_ratio,
-                     result->onset ? "yes" : "no",
-                     result->octave_corrected ? "yes" : "no");
+                     result->confidence, result->selected_mic, result->harmonic_explained_ratio);
             ESP_LOGI("DETECTED_MUSIC", "SINGLE [%s]", result->note_name);
             break;
         case MUSIC_RESULT_INTERVAL: {
@@ -76,16 +100,12 @@ static void log_result(const music_result_t *result, const char *unknown_reason,
 #if MUSIC_USE_SINGLE_MIC_CH1
             ESP_LOGI("RESULT", "INTERVAL notes=[%s,%s] pitch_classes=[%s,%s] midi=[%d,%d] conf=%.2f mic=1",
 #else
-            ESP_LOGI("RESULT", "INTERVAL notes=[%s,%s] pitch_classes=[%s,%s] midi=[%d,%d] conf=%.2f mic=%d",
+            ESP_LOGI("RESULT", "INTERVAL notes=[%s,%s] pitch_classes=[%s,%s] midi=[%d,%d] conf=%.2f mic_fusion=1",
 #endif
                      first_note, second_note,
                      note_pitch_class_name(result->pitch_classes[0]),
                      note_pitch_class_name(result->pitch_classes[1]),
-                     result->midi_notes[0], result->midi_notes[1], result->confidence
-#if !MUSIC_USE_SINGLE_MIC_CH1
-                     , result->selected_mic
-#endif
-                     );
+                     result->midi_notes[0], result->midi_notes[1], result->confidence);
             ESP_LOGI("DETECTED_MUSIC", "NOTES [%s + %s]", first_note, second_note);
             break;
         }
@@ -105,15 +125,11 @@ static void log_result(const music_result_t *result, const char *unknown_reason,
 #if MUSIC_USE_SINGLE_MIC_CH1
             ESP_LOGI("RESULT", "CHORD chord=%s notes=[%s,%s,%s] conf=%.2f mic=1",
 #else
-            ESP_LOGI("RESULT", "CHORD chord=%s notes=[%s,%s,%s] conf=%.2f mic=%d",
+            ESP_LOGI("RESULT", "CHORD chord=%s notes=[%s,%s,%s] conf=%.2f mic_fusion=1",
 #endif
                      result->chord_name, note_pitch_class_name(result->pitch_classes[0]),
                      note_pitch_class_name(result->pitch_classes[1]),
-                     note_pitch_class_name(result->pitch_classes[2]), result->confidence
-#if !MUSIC_USE_SINGLE_MIC_CH1
-                     , result->selected_mic
-#endif
-                     );
+                     note_pitch_class_name(result->pitch_classes[2]), result->confidence);
             ESP_LOGI("DETECTED_MUSIC", "CHORD %s [%s + %s + %s]",
                      result->chord_name, first_note, second_note, third_note);
             break;
@@ -150,24 +166,6 @@ static void log_spectrum_debug(const chord_result_t *spectrum)
              entries[0], entries[1], entries[2]);
 }
 
-static bool result_log_changed(const music_result_t *left,
-                               const music_result_t *right)
-{
-    if (left->type != right->type) return true;
-    if (left->type == MUSIC_RESULT_SINGLE) {
-        return left->midi != right->midi || left->onset;
-    }
-    if (left->type == MUSIC_RESULT_INTERVAL) {
-        return left->pitch_classes[0] != right->pitch_classes[0] ||
-               left->pitch_classes[1] != right->pitch_classes[1];
-    }
-    if (left->type == MUSIC_RESULT_CHORD) {
-        return left->chord_root != right->chord_root ||
-               left->chord_is_minor != right->chord_is_minor;
-    }
-    return false;
-}
-
 static void music_dsp_task(void *argument)
 {
     (void)argument;
@@ -175,8 +173,6 @@ static void music_dsp_task(void *argument)
     audio_preprocess_state_t preprocess;
 #else
     audio_preprocess_state_t preprocess[2];
-    dual_mic_selector_t mic_selector;
-    dual_mic_selection_t mic_selection = {.selected_mic = 1};
 #endif
     audio_frame_metrics_t metrics[2] = {0};
     music_classifier_t classifier;
@@ -184,29 +180,23 @@ static void music_dsp_task(void *argument)
     audio_preprocess_init(&preprocess);
 #else
     for (int mic = 0; mic < 2; ++mic) audio_preprocess_init(&preprocess[mic]);
-    dual_mic_selector_init(&mic_selector);
 #endif
     music_classifier_init(&classifier);
     yin_detector_init();
     int selected_mic = 1;
+#if !MUSIC_USE_SINGLE_MIC_CH1
+    int challenger_count = 0;
+#endif
     uint32_t calibration_start_ms = 0;
     uint32_t last_diagnostic_ms = 0;
     uint32_t last_performance_ms = 0;
     uint32_t last_spectrum_debug_ms = 0;
     uint32_t low_peak_diagnostics = 0;
     chord_result_t last_spectrum_debug = {0};
-    chord_result_t cached_spectrum = {0};
-    bool cached_spectrum_valid = false;
-    bool analysis_was_active = false;
-    unsigned spectrum_hop = 0;
+#if MUSIC_USE_SINGLE_MIC_CH1
     float last_yin_confidence = 0.0f;
     float last_chord_confidence = 0.0f;
-    music_result_t last_logged_result = {0};
-    bool have_logged_result = false;
-    uint32_t last_result_log_ms = 0;
     unsigned active_hangover_blocks = 0;
-#if !MUSIC_USE_SINGLE_MIC_CH1
-    bool startup_health_logged = false;
 #endif
     bool calibrated = false;
     diagnostics_counters_t *counters = diagnostics_counters();
@@ -226,16 +216,22 @@ static void music_dsp_task(void *argument)
         }
         const uint32_t block_timestamp_ms = block->timestamp_ms;
 #if MUSIC_USE_SINGLE_MIC_CH1
-        audio_preprocess_frame(&preprocess, block->mic1,
-                               &s_audio_ring[s_ring_write_position],
+        audio_preprocess_frame(&preprocess, block->mic1, s_frame_float,
                                MUSIC_CAPTURE_FRAMES, &metrics[0]);
+        for (size_t i = 0; i < MUSIC_CAPTURE_FRAMES; ++i) {
+            const size_t index = (s_ring_write_position + i) % MUSIC_FFT_SIZE;
+            s_audio_ring[index] = s_frame_float[i];
+        }
 #else
-        audio_preprocess_frame(&preprocess[0], block->mic1,
-                               &s_audio_ring[0][s_ring_write_position],
+        audio_preprocess_frame(&preprocess[0], block->mic1, s_frame_float[0],
                                MUSIC_CAPTURE_FRAMES, &metrics[0]);
-        audio_preprocess_frame(&preprocess[1], block->mic2,
-                               &s_audio_ring[1][s_ring_write_position],
+        audio_preprocess_frame(&preprocess[1], block->mic2, s_frame_float[1],
                                MUSIC_CAPTURE_FRAMES, &metrics[1]);
+        for (size_t i = 0; i < MUSIC_CAPTURE_FRAMES; ++i) {
+            const size_t index = (s_ring_write_position + i) % MUSIC_FFT_SIZE;
+            s_audio_ring[0][index] = s_frame_float[0][i];
+            s_audio_ring[1][index] = s_frame_float[1][i];
+        }
 #endif
         s_ring_write_position = (s_ring_write_position + MUSIC_CAPTURE_FRAMES) % MUSIC_FFT_SIZE;
         if (s_ring_filled < MUSIC_FFT_SIZE) {
@@ -280,25 +276,10 @@ static void music_dsp_task(void *argument)
                 int64_t started = esp_timer_get_time();
                 yin_detector_analyze(s_yin_window, MUSIC_YIN_WINDOW_SIZE, &yin);
                 counters->yin_time_us = (uint32_t)(esp_timer_get_time() - started);
-                const bool run_spectrum =
-                    !cached_spectrum_valid || !analysis_was_active ||
-                    spectrum_hop == 0;
-                spectrum_hop = (spectrum_hop + 1U) %
-                               MUSIC_SPECTRUM_ANALYSIS_HOPS;
-                if (run_spectrum) {
-                    started = esp_timer_get_time();
-                    chord_detector_analyze(
-                        s_audio_ring, NULL, s_ring_write_position,
-                        metrics[0].rms, 0.0f, &cached_spectrum);
-                    counters->chord_time_us =
-                        (uint32_t)(esp_timer_get_time() - started);
-                    cached_spectrum_valid = true;
-                } else {
-                    counters->mic1_fft_time_us = 0;
-                    counters->mic2_fft_time_us = 0;
-                    counters->chord_time_us = 0;
-                }
-                chord = cached_spectrum;
+                started = esp_timer_get_time();
+                chord_detector_analyze(s_audio_ring, NULL, s_ring_write_position,
+                                       metrics[0].rms, 0.0f, &chord);
+                counters->chord_time_us = (uint32_t)(esp_timer_get_time() - started);
                 harmonic_ratio = yin.valid ?
                     chord_detector_harmonic_explained_ratio(yin.frequency_hz) : 0.0f;
             } else {
@@ -306,66 +287,22 @@ static void music_dsp_task(void *argument)
                 counters->mic1_fft_time_us = 0;
                 counters->mic2_fft_time_us = 0;
                 counters->chord_time_us = 0;
-                cached_spectrum_valid = false;
-                spectrum_hop = 0;
             }
-            analysis_was_active = analysis_active;
             last_yin_confidence = yin.confidence;
             last_chord_confidence = chord.confidence;
 #else
-            dual_mic_selector_update(&mic_selector, metrics, preprocess, &mic_selection);
-            selected_mic = mic_selection.selected_mic;
-            if (mic_selection.switched) {
-                counters->mic_switch_count = mic_selector.switch_count;
-                ESP_LOGI("DUAL_MIC", "primary channel switched to MIC%d health=%s switches=%" PRIu32,
-                         selected_mic, dual_mic_health_name(mic_selection.health),
-                         mic_selector.switch_count);
-            }
-            const bool analysis_active = mic_selection.sound_active || active_hangover_blocks > 0;
-            if (mic_selection.sound_active) {
-                active_hangover_blocks = MUSIC_ACTIVITY_HANGOVER_BLOCKS;
-            } else if (active_hangover_blocks > 0) {
-                --active_hangover_blocks;
-            }
-            if (analysis_active) {
-                copy_yin_window(selected_mic);
-                int64_t started = esp_timer_get_time();
-                yin_detector_analyze(s_yin_window, MUSIC_YIN_WINDOW_SIZE, &yin);
-                counters->yin_time_us = (uint32_t)(esp_timer_get_time() - started);
-                const bool run_spectrum =
-                    !cached_spectrum_valid || !analysis_was_active ||
-                    spectrum_hop == 0;
-                spectrum_hop = (spectrum_hop + 1U) %
-                               MUSIC_SPECTRUM_ANALYSIS_HOPS;
-                if (run_spectrum) {
-                    started = esp_timer_get_time();
-                    chord_detector_analyze(
-                        s_audio_ring[0], s_audio_ring[1],
-                        s_ring_write_position, metrics[0].rms,
-                        metrics[1].rms, &cached_spectrum);
-                    counters->chord_time_us =
-                        (uint32_t)(esp_timer_get_time() - started);
-                    cached_spectrum_valid = true;
-                } else {
-                    counters->mic1_fft_time_us = 0;
-                    counters->mic2_fft_time_us = 0;
-                    counters->chord_time_us = 0;
-                }
-                chord = cached_spectrum;
-                harmonic_ratio = yin.valid ?
-                    chord_detector_harmonic_explained_ratio(yin.frequency_hz) : 0.0f;
-            } else {
-                counters->yin_time_us = 0;
-                counters->mic1_fft_time_us = 0;
-                counters->mic2_fft_time_us = 0;
-                counters->chord_time_us = 0;
-                cached_spectrum_valid = false;
-                spectrum_hop = 0;
-            }
-            analysis_was_active = analysis_active;
+            selected_mic = update_selected_mic(selected_mic, &challenger_count, metrics, preprocess);
+            copy_yin_window(selected_mic);
+            int64_t started = esp_timer_get_time();
+            yin_detector_analyze(s_yin_window, MUSIC_YIN_WINDOW_SIZE, &yin);
+            counters->yin_time_us = (uint32_t)(esp_timer_get_time() - started);
+            started = esp_timer_get_time();
+            chord_detector_analyze(s_audio_ring[0], s_audio_ring[1], s_ring_write_position,
+                                   metrics[0].rms, metrics[1].rms, &chord);
+            counters->chord_time_us = (uint32_t)(esp_timer_get_time() - started);
+            harmonic_ratio = yin.valid ?
+                chord_detector_harmonic_explained_ratio(yin.frequency_hz) : 0.0f;
 #endif
-            last_yin_confidence = yin.confidence;
-            last_chord_confidence = chord.confidence;
             if (chord.debug_candidate_count > 0) {
                 last_spectrum_debug = chord;
                 last_spectrum_debug_ms = block_timestamp_ms;
@@ -379,23 +316,13 @@ static void music_dsp_task(void *argument)
                                                        block_timestamp_ms, &result, &unknown_reason);
 #else
             const bool emit = music_classifier_update(&classifier, &metrics[0], &metrics[1],
-                                                       analysis_active ? 0.0f : 2.0f,
-                                                       analysis_active ? 0.0f : 2.0f,
+                                                       preprocess[0].noise_gate, preprocess[1].noise_gate,
                                                        selected_mic, &yin, harmonic_ratio, &chord,
                                                        block_timestamp_ms, &result, &unknown_reason);
 #endif
             if (emit) music_uart_link_submit_result(&result);
             if (yin.valid) music_uart_link_submit_pitch(&result);
-            if (emit &&
-                (!have_logged_result ||
-                 result_log_changed(&result, &last_logged_result) ||
-                 block_timestamp_ms - last_result_log_ms >=
-                     MUSIC_RESULT_LOG_REPEAT_INTERVAL_MS)) {
-                log_result(&result, unknown_reason, &chord);
-                last_logged_result = result;
-                have_logged_result = true;
-                last_result_log_ms = block_timestamp_ms;
-            }
+            if (emit) log_result(&result, unknown_reason, &chord);
         }
 
         const uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
@@ -405,9 +332,8 @@ static void music_dsp_task(void *argument)
             diagnostics_log_audio(metrics[0].rms, metrics[0].peak, metrics[0].clip_rate,
                                   0.0f, 0.0f, 0.0f, 1, preprocess.noise_floor, 0.0f,
                                   preprocess.noise_gate, 0.0f);
-            ESP_LOGI("DSP_DIAG", "yin_conf=%.2f poly_conf=%.2f tuning=%+.1fc",
-                     last_yin_confidence, last_chord_confidence,
-                     note_tuning_offset_cents());
+            ESP_LOGI("DSP_DIAG", "yin_conf=%.2f poly_conf=%.2f",
+                     last_yin_confidence, last_chord_confidence);
             if (last_spectrum_debug_ms != 0 &&
                 now_ms - last_spectrum_debug_ms <= 1000) {
                 log_spectrum_debug(&last_spectrum_debug);
@@ -418,28 +344,6 @@ static void music_dsp_task(void *argument)
                                   metrics[1].rms, metrics[1].peak, metrics[1].clip_rate,
                                   selected_mic, preprocess[0].noise_floor, preprocess[1].noise_floor,
                                   preprocess[0].noise_gate, preprocess[1].noise_gate);
-            ESP_LOGI("DUAL_MIC", "health=%s MIC1=%s score=%.2f snr=%.1fdB streak=%u "
-                     "MIC2=%s score=%.2f snr=%.1fdB streak=%u selected=MIC%d switches=%" PRIu32,
-                     dual_mic_health_name(mic_selector.health),
-                     dual_mic_channel_state_name(mic_selector.quality[0].state),
-                     mic_selector.quality[0].score, mic_selector.quality[0].snr_db,
-                     mic_selector.quality[0].valid_streak,
-                     dual_mic_channel_state_name(mic_selector.quality[1].state),
-                     mic_selector.quality[1].score, mic_selector.quality[1].snr_db,
-                     mic_selector.quality[1].valid_streak, selected_mic,
-                     mic_selector.switch_count);
-            ESP_LOGI("DSP_DIAG", "yin_conf=%.2f poly_conf=%.2f tuning=%+.1fc",
-                     last_yin_confidence, last_chord_confidence,
-                     note_tuning_offset_cents());
-            if (!startup_health_logged) {
-                startup_health_logged = true;
-                ESP_LOGI("DUAL_MIC", "startup signal check: MIC1 rms=%.5f peak=%.3f clip=%.4f valid=%s; "
-                         "MIC2 rms=%.5f peak=%.3f clip=%.4f valid=%s",
-                         metrics[0].rms, metrics[0].peak, metrics[0].clip_rate,
-                         mic_selector.quality[0].signal_valid ? "yes" : "no",
-                         metrics[1].rms, metrics[1].peak, metrics[1].clip_rate,
-                         mic_selector.quality[1].signal_valid ? "yes" : "no");
-            }
             if (last_spectrum_debug_ms != 0 &&
                 now_ms - last_spectrum_debug_ms <= 1000) {
                 log_spectrum_debug(&last_spectrum_debug);
@@ -462,11 +366,6 @@ static void music_dsp_task(void *argument)
             }
         }
         counters->dsp_cycle_time_us = (uint32_t)(esp_timer_get_time() - cycle_start_us);
-        counters->dsp_cycle_sum_us += counters->dsp_cycle_time_us;
-        ++counters->dsp_cycle_count;
-        if (counters->dsp_cycle_time_us > counters->dsp_cycle_max_us) {
-            counters->dsp_cycle_max_us = counters->dsp_cycle_time_us;
-        }
         const uint32_t block_budget_us = (uint32_t)(1000000ULL * MUSIC_CAPTURE_FRAMES / MUSIC_SAMPLE_RATE_HZ);
         if (counters->dsp_cycle_time_us > block_budget_us) ++counters->dsp_deadline_miss_count;
         if (now_ms - last_performance_ms >= MUSIC_PERFORMANCE_INTERVAL_MS) {

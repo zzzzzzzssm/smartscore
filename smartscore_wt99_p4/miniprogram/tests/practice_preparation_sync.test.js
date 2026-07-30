@@ -88,6 +88,7 @@ async function run() {
     mode: 'read_only'
   });
   await api.startPreparedPractice();
+  await api.restartPreparedPractice();
 
   assert.deepStrictEqual(
     requests.map((item) => item.path),
@@ -95,7 +96,8 @@ async function run() {
       '/api/practice/preparation',
       '/api/practice/preparation/select',
       '/api/practice/preparation/options',
-      '/api/practice/preparation/start'
+      '/api/practice/preparation/start',
+      '/api/practice/restart'
     ]
   );
   assert.deepStrictEqual(requests[1].data, { filename: 'DEMO.JSON' });
@@ -149,6 +151,42 @@ async function run() {
   assert.strictEqual(page.data.isRecording, true);
   assert.ok(toasts.includes('已开始跟谱'));
 
+  page.data.isRecording = false;
+  page.data.result = { totalScore: 88, details: [] };
+  api.restartPreparedPractice = () => Promise.resolve({
+    ok: true,
+    preparation: {
+      valid: true,
+      revision: 9,
+      phase: 'following',
+      title: '测试乐谱',
+      notation_type: 'numbered',
+      mode: 'follow',
+      input_source: 'usb_midi'
+    }
+  });
+  page.resetPractice();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.strictEqual(page.data.status, '正在记录');
+  assert.strictEqual(page.data.isRecording, true);
+  assert.strictEqual(page.data.result.totalScore, '-');
+  assert.ok(toasts.includes('已重新开始'));
+
+  page.data.currentScore = {
+    notes: [{ midi: 72, start: 99, duration: 1 }]
+  };
+  const resultTargets = page.buildTargetNotes({
+    details: [
+      { ref_index: 2, target_midi: 62, target_start: 1, target_duration: 0.5 },
+      { ref_index: 1, target_midi: 60, target_start: 0, target_duration: 0.5 },
+      { ref_index: 1, target_midi: 60, target_start: 0, target_duration: 0.5 }
+    ]
+  });
+  assert.deepStrictEqual(
+    resultTargets.map((item) => [item.refIndex, item.midi, item.start]),
+    [[1, 60, 0], [2, 62, 1]]
+  );
+
   const wxml = fs.readFileSync(
     path.resolve(__dirname, '../pages/practice/practice.wxml'), 'utf8'
   );
@@ -156,6 +194,7 @@ async function run() {
   assert.ok(wxml.includes('五线谱'));
   assert.ok(wxml.includes('预览乐谱'));
   assert.ok(wxml.includes('开始演奏跟谱'));
+  assert.ok(wxml.includes('重新练习'));
   assert.ok(!wxml.includes('使用方式'));
 
   console.log('practice preparation sync tests passed');

@@ -44,8 +44,9 @@
       </button>
       <button class="secondary-btn" bindtap="stopPractice"
               disabled="{{!isRecording}}">结束练习</button>
-      <button class="secondary-btn" bindtap="requestAiScore">AI 评分建议</button>
-      <button class="ghost-btn" bindtap="resetPractice">重新练习</button>
+      <button class="secondary-btn" bindtap="requestAiScore">AI 练习建议</button>
+      <button class="ghost-btn" bindtap="resetPractice"
+              disabled="{{isRecording || isStarting || creatorActive || !preparationValid}}">重新练习</button>
     </view>
   </view>
 
@@ -188,6 +189,9 @@
         <view class="score-number">{{result.totalScore}}</view>
         <view class="muted">总分</view>
       </view>
+      <view class="score-level" wx:if="{{result.level}}">{{result.level}}</view>
+      <view class="score-notice" wx:if="{{result.scoreNotice}}">{{result.scoreNotice}}</view>
+      <view class="muted score-confidence" wx:if="{{result.confidenceText}}">{{result.confidenceText}}</view>
       <view class="score-metrics">
         <view class="metric">
           <view class="metric-label">音准</view>
@@ -196,6 +200,10 @@
         <view class="metric">
           <view class="metric-label">节奏</view>
           <view class="metric-value">{{result.rhythmScore}}</view>
+        </view>
+        <view class="metric">
+          <view class="metric-label">流畅度</view>
+          <view class="metric-value">{{result.fluencyScore}}</view>
         </view>
         <view class="metric">
           <view class="metric-label">完整度</view>

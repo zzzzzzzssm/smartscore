@@ -48,6 +48,36 @@ static bool json_required_bool(const cJSON *object,
     return true;
 }
 
+static bool json_optional_float(const cJSON *object,
+                                const char *name,
+                                float minimum,
+                                float maximum,
+                                float *out_value,
+                                bool *out_present)
+{
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(object, name);
+    *out_present = item != NULL;
+    if (item == NULL) {
+        return true;
+    }
+    if (!cJSON_IsNumber(item) || !isfinite(item->valuedouble) ||
+        item->valuedouble < minimum || item->valuedouble > maximum) {
+        return false;
+    }
+    *out_value = (float)item->valuedouble;
+    return true;
+}
+
+static bool json_optional_u32(const cJSON *object,
+                              const char *name,
+                              uint32_t *out_value,
+                              bool *out_present)
+{
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(object, name);
+    *out_present = item != NULL;
+    return item == NULL || json_u32(object, name, out_value);
+}
+
 static bool parse_type(const char *type, s3_music_message_type_t *out_type)
 {
     static const struct {
@@ -131,10 +161,22 @@ s3_protocol_result_t s3_protocol_parse_music_line(
     case S3_MUSIC_MESSAGE_NOTE_ON:
         fields_valid =
             json_u8_range(root, "midi", 0, 127, &message.midi) &&
-            json_u8_range(root, "velocity", 1, 127, &message.velocity);
+            json_u8_range(root, "velocity", 1, 127, &message.velocity) &&
+            json_optional_float(root, "freq_hz", 0.0f, 24000.0f,
+                                &message.frequency_hz,
+                                &message.has_frequency) &&
+            json_optional_float(root, "confidence", 0.0f, 1.0f,
+                                &message.confidence,
+                                &message.has_confidence);
+        if (fields_valid && !message.has_confidence) {
+            message.confidence = 0.75f;
+        }
         break;
     case S3_MUSIC_MESSAGE_NOTE_OFF:
-        fields_valid = json_u8_range(root, "midi", 0, 127, &message.midi);
+        fields_valid =
+            json_u8_range(root, "midi", 0, 127, &message.midi) &&
+            json_optional_u32(root, "duration_ms", &message.duration_ms,
+                              &message.has_duration);
         message.velocity = 0;
         break;
     case S3_MUSIC_MESSAGE_PONG:
