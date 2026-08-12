@@ -30,11 +30,12 @@
     <view class="hint upload-hint">支持标准 JSON 乐谱和 MIDI 文件。导入后会持久保存到小程序本地，并设为当前乐谱。</view>
     <button class="primary-btn upload-button" bindtap="chooseScoreFile">选择 JSON / MIDI 文件</button>
     <view class="format-note">
-      JSON 至少需要 title、bpm 和 notes；MIDI 会在手机端转换为可评分音符。
+      JSON 至少需要 title、bpm 和 notes；
+      MIDI 会在手机端转换为可评分音符。
     </view>
     <view class="ai-upload-block">
       <view class="upload-title ai-upload-title">AI 识别图片乐谱</view>
-      <view class="hint upload-hint">选择或拍摄一张清晰的单页乐谱，图片压缩后由设备调用豆包识别。</view>
+      <view class="hint upload-hint">选择或拍摄一张清晰的单页乐谱，上传后将用AI识别。</view>
       <view class="ai-upload-actions">
         <button class="secondary-btn" bindtap="chooseSheetImage">选择乐谱图片</button>
         <button class="primary-btn" bindtap="recognizeSheetImage"
@@ -60,7 +61,6 @@
         <button class="primary-btn search-btn" bindtap="searchSdScores"
                 loading="{{sdLoading}}">搜索</button>
       </view>
-      <view class="hint">读取设备目录 /sdcard/scores，仅显示有效且不超过 256 KiB 的 JSON 乐谱。</view>
     </view>
 
     <view class="card empty-state" wx:if="{{!sdPresent}}">
@@ -102,7 +102,7 @@
     <view class="card local-summary">
       <view>
         <view class="upload-title">手机本地乐谱</view>
-        <view class="hint">已持久保存 {{localScores.length}} 首，删除后会同时移除本地 JSON 文件。</view>
+        <view class="hint">已持久保存 {{localScores.length}} 首，删除后会同时移除本地文件。</view>
       </view>
       <button class="secondary-btn small-action" data-source="upload"
               bindtap="switchSource">继续上传</button>

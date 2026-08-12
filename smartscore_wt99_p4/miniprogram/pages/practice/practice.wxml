@@ -44,7 +44,8 @@
       </button>
       <button class="secondary-btn" bindtap="stopPractice"
               disabled="{{!isRecording}}">结束练习</button>
-      <button class="secondary-btn" bindtap="requestAiScore">AI 练习建议</button>
+      <button class="secondary-btn" bindtap="requestAiScore"
+              disabled="{{isAdviceLoading}}">{{isAdviceLoading ? 'AI 分析中' : 'AI 练习建议'}}</button>
       <button class="ghost-btn" bindtap="resetPractice"
               disabled="{{isRecording || isStarting || creatorActive || !preparationValid}}">重新练习</button>
     </view>
@@ -64,7 +65,7 @@
               data-source="usb_midi" bindtap="selectInputSource">
           <view class="input-check">{{selectedInput == 'usb_midi' ? '●' : '○'}}</view>
           <view class="input-copy">
-            <view class="input-name">USB MIDI 电子琴</view>
+            <view class="input-name">USB MIDI输入</view>
             <view class="hint {{usbMidiConnected ? 'good-text' : 'bad-text'}}">
               {{usbMidiConnected ? '已检测到电子琴' : '未检测到 USB MIDI 电子琴'}}
             </view>
@@ -74,7 +75,7 @@
               data-source="audio_s3" bindtap="selectInputSource">
           <view class="input-check">{{selectedInput == 'audio_s3' ? '●' : '○'}}</view>
           <view class="input-copy">
-            <view class="input-name">S3 麦克风音频</view>
+            <view class="input-name">麦克风音频输入</view>
             <view class="hint {{audioS3Connected && audioS3Implemented ? 'good-text' : 'bad-text'}}">
               {{!audioS3Implemented ? '接口已保留，当前暂未实现' : (audioS3Connected ? '音频节点已连接' : '未检测到 S3 音频节点')}}
             </view>

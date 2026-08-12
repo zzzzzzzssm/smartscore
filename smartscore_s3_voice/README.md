@@ -15,7 +15,9 @@
 
 I2S0 工作在主机、仅 RX、16000 Hz、32 位原始采样、左声道模式。SCK/WS/SD 引脚按 `Netlist_PCB1_2026-07-21.tel` 中 `U4` 的 `INMP441_SCK/INMP441_WS/INMP441_SD` 更新。采集数据会转换为 ESP-SR 所需的 16 kHz、`int16_t`、单声道 PCM。串口约每秒输出一次音频 RMS，用于确认麦克风是否采集到声音。
 
-与 WT99 P4 使用独立 UART1、115200 baud、8N1、无流控通信：S3 GPIO1/TX（H7-11 `VOICE_TX_MS`）连接 P4 GPIO33/RX（J6-22），S3 GPIO2/RX（H7-13 `VOICE_RX_MS`）连接 P4 GPIO32/TX（J6-20），并连接公共地。该 UART 只传输 `V1,WAKE`、`V1,TIMEOUT`、`V1,CMD,<id>` 和 P4 返回的 `V1,ACK,<id>,OK|IGNORED` 文本帧；UART0 调试日志保持不变。
+与 WT99 P4 使用独立 UART1、115200 baud、8N1、无流控通信：S3 GPIO1/TX（H7-11 `VOICE_TX_MS`）连接 P4 GPIO33/RX（J6-22），S3 GPIO2/RX（H7-13 `VOICE_RX_MS`）连接 P4 GPIO32/TX（J6-20），并连接公共地。原 `V1,WAKE`、`V1,TIMEOUT`、`V1,CMD,<id>` 和 P4 返回的 `V1,ACK,<id>,OK|IGNORED` 文本帧保持不变；开放式对话音频复用同一 UART，以独立 IMA-ADPCM 二进制帧传输，并包含序号、长度、头/载荷 CRC16 及 ACK/NACK 重传。UART0 调试日志保持不变。
+
+唤醒后仍优先执行原本地命令识别；本地命令命中时音频候选流立即取消，行为与原工程一致。只有原 6 秒 MultiNet 识别超时才发送 `V2,AI,BEGIN` 进入开放式对话，并持续传送 16 kHz 单声道语音；P4 发送 `V2,AI,STOP` 后恢复本地等待唤醒状态。
 
 ## 唤醒词和命令
 

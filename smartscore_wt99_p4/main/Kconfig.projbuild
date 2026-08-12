@@ -23,11 +23,27 @@ config SMARTSCORE_WIFI_ATTEMPT_TIMEOUT_SECONDS
 
 config SMARTSCORE_AUTO_CONNECT_SAVED_WIFI
     bool "Automatically connect saved Wi-Fi at startup"
-    default n
+    default y
     help
         When enabled, startup loads valid credentials from smartscore_net
-        and queues a STA connection. BLE provisioning remains available as
-        a fallback when no credentials are saved or the connection fails.
-        Keep this disabled when every startup must scan and select Wi-Fi again.
+        and tries the saved network with the separate bounded startup policy.
+        BLE provisioning remains available when no credentials are saved or
+        the bounded connection attempt fails.
+
+config SMARTSCORE_SAVED_WIFI_MAX_ATTEMPTS
+    int "Maximum saved Wi-Fi connection attempts at startup"
+    range 1 20
+    default 10
+    help
+        Caps how many times startup may trigger a connection to the saved
+        network. The total startup timeout can end this loop earlier.
+
+config SMARTSCORE_SAVED_WIFI_TOTAL_TIMEOUT_SECONDS
+    int "Total saved Wi-Fi startup timeout"
+    range 1 30
+    default 5
+    help
+        Hard time budget for all saved-network connection attempts at boot.
+        This does not change the timeout used after BLE or web provisioning.
 
 endmenu

@@ -9,7 +9,10 @@
 #include "bsp/esp-bsp.h"
 #include "cJSON.h"
 #include "creator_mode.h"
+#include "esp_cpu.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_memory_utils.h"
 #include "esp_timer.h"
 #include "events_init.h"
 #include "freertos/FreeRTOS.h"
@@ -46,9 +49,6 @@
 #define SCREEN_MATCH_ONSET_WEIGHT 6
 #define SCREEN_FOLLOW_MATCH_PITCH_TOLERANCE 5
 #define SCREEN_AUDIO_FIRST_NOTE_PITCH_TOLERANCE 2
-#define SCREEN_PREVIEW_EARLY_MS 80
-#define SCREEN_PREVIEW_LATE_MS 300
-#define SCREEN_PREVIEW_DURATION_RATIO 0.60f
 #define SCREEN_DISPLAY_GREEN_PITCH_TOLERANCE 2
 #define SCREEN_TARGET_FINAL_GRACE_MS 80
 #define SCREEN_SESSION_FINISH_GRACE_MS 600
@@ -423,19 +423,14 @@ static int find_best_match_in_window(const score_note_t *notes,
                 start_target_us;
             int64_t candidate_expected_us =
                 expected_us + scaled_target_time_us(target_delta_us);
-            int64_t early_us =
-                (int64_t)SCREEN_PREVIEW_EARLY_MS * 1000LL;
-            int64_t scaled_duration_us =
-                scaled_target_time_us(
-                    (int64_t)notes[index].duration_ms * 1000LL);
-            int64_t late_us =
-                (int64_t)((double)scaled_duration_us *
-                          SCREEN_PREVIEW_DURATION_RATIO);
-            int64_t maximum_late_us =
-                (int64_t)SCREEN_PREVIEW_LATE_MS * 1000LL;
-            if (late_us > maximum_late_us) late_us = maximum_late_us;
-            if (timestamp_us < candidate_expected_us - early_us) break;
-            if (timestamp_us > candidate_expected_us + late_us) continue;
+            int64_t rhythm_tolerance_us =
+                (int64_t)SCREEN_RHYTHM_TOLERANCE_MS * 1000LL;
+            if (timestamp_us < candidate_expected_us - rhythm_tolerance_us) {
+                break;
+            }
+            if (timestamp_us > candidate_expected_us + rhythm_tolerance_us) {
+                continue;
+            }
             if (active_onset_ms == UINT32_MAX) {
                 active_onset_ms = notes[index].start_ms;
             } else if (notes[index].start_ms != active_onset_ms) {
@@ -490,8 +485,8 @@ static settled_note_result_t settle_unplayed_target_locked(
         .pitch_ok = false,
     };
     int64_t window_start_ms =
-        target->start_ms > SCREEN_PREVIEW_EARLY_MS
-            ? (int64_t)target->start_ms - SCREEN_PREVIEW_EARLY_MS
+        target->start_ms > SCREEN_RHYTHM_TOLERANCE_MS
+            ? (int64_t)target->start_ms - SCREEN_RHYTHM_TOLERANCE_MS
             : 0;
     int64_t window_end_ms =
         (int64_t)target->start_ms +
@@ -1489,12 +1484,28 @@ static input_source_t selected_input_source(score_input_source_t source)
                                          : INPUT_SOURCE_AUDIO_S3;
 }
 
+static void log_practice_start_task_diagnostics(void)
+{
+    const void *stack_pointer = esp_cpu_get_sp();
+    ESP_LOGI(TAG,
+             "practice start task: name=%s stack_sp=%p external=%s "
+             "high_water=%u internal_free=%u psram_free=%u",
+             pcTaskGetName(NULL), stack_pointer,
+             esp_ptr_external_ram(stack_pointer) ? "yes" : "no",
+             (unsigned)uxTaskGetStackHighWaterMark(NULL),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
+                                                MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM |
+                                                MALLOC_CAP_8BIT));
+}
+
 static bool start_selected_score(const char *filename,
                                  const score_practice_options_t *options,
                                  void *user_data)
 {
     (void)user_data;
     if (filename == NULL || options == NULL) return false;
+    log_practice_start_task_diagnostics();
     if (creator_mode_is_active()) {
         ESP_LOGW(TAG, "practice rejected while Creator Mode is active");
         set_preparation_error(ESP_ERR_INVALID_STATE,

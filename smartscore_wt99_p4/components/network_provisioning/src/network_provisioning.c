@@ -52,17 +52,28 @@ static void release_operation(bool scan)
     portEXIT_CRITICAL(&s_operation_lock);
 }
 
-static const char *failure_reason_from_wifi(uint8_t reason, esp_err_t wait_error)
+static bool wifi_reason_is_auth_failure(uint8_t reason)
 {
-    if (wait_error == ESP_ERR_TIMEOUT) {
-        return "TIMEOUT";
-    }
     switch (reason) {
     case WIFI_REASON_AUTH_EXPIRE:
     case WIFI_REASON_AUTH_FAIL:
     case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
     case WIFI_REASON_HANDSHAKE_TIMEOUT:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static const char *failure_reason_from_wifi(uint8_t reason, esp_err_t wait_error)
+{
+    if (wait_error == ESP_ERR_TIMEOUT) {
+        return "TIMEOUT";
+    }
+    if (wifi_reason_is_auth_failure(reason)) {
         return "AUTH_FAIL";
+    }
+    switch (reason) {
     case WIFI_REASON_NO_AP_FOUND:
         return "NO_AP_FOUND";
     case WIFI_REASON_ASSOC_FAIL:
@@ -70,6 +81,81 @@ static const char *failure_reason_from_wifi(uint8_t reason, esp_err_t wait_error
     default:
         return "CONNECT_FAILED";
     }
+}
+
+static bool connect_saved_wifi(network_command_t *command,
+                               char *ip,
+                               size_t ip_size,
+                               uint8_t *disconnect_reason,
+                               const char **failure_reason,
+                               unsigned *attempts_used)
+{
+    const TickType_t started_at = xTaskGetTickCount();
+    const TickType_t budget_ticks = pdMS_TO_TICKS(
+        (uint32_t)CONFIG_SMARTSCORE_SAVED_WIFI_TOTAL_TIMEOUT_SECONDS * 1000U);
+
+    *attempts_used = 1;
+    esp_err_t err = wifi_remote_start_sta(command->ssid, command->password);
+    if (err != ESP_OK) {
+        *failure_reason = "START_FAILED";
+        return false;
+    }
+
+    for (unsigned attempt = 1;
+         attempt <= CONFIG_SMARTSCORE_SAVED_WIFI_MAX_ATTEMPTS;
+         ++attempt) {
+        *attempts_used = attempt;
+        TickType_t elapsed_ticks = xTaskGetTickCount() - started_at;
+        if (elapsed_ticks >= budget_ticks) {
+            *failure_reason = "TIMEOUT";
+            break;
+        }
+
+        TickType_t remaining_ticks = budget_ticks - elapsed_ticks;
+        uint32_t remaining_ms = (uint32_t)(remaining_ticks * portTICK_PERIOD_MS);
+        if (remaining_ms == 0) {
+            remaining_ms = 1;
+        }
+
+        if (attempt > 1) {
+            network_state_transition(NETWORK_STATE_WIFI_CONNECTING,
+                                     command->request_id,
+                                     attempt - 1,
+                                     command->ssid,
+                                     NULL,
+                                     NULL,
+                                     false);
+        }
+        ESP_LOGI("WIFI", "saved Wi-Fi attempt %u/%u, remaining budget=%lums",
+                 attempt,
+                 (unsigned)CONFIG_SMARTSCORE_SAVED_WIFI_MAX_ATTEMPTS,
+                 (unsigned long)remaining_ms);
+
+        err = wifi_remote_wait_for_connection(
+            remaining_ms, ip, ip_size, disconnect_reason);
+        if (err == ESP_OK) {
+            return true;
+        }
+
+        *failure_reason = failure_reason_from_wifi(*disconnect_reason, err);
+        if (wifi_reason_is_auth_failure(*disconnect_reason) ||
+            attempt == CONFIG_SMARTSCORE_SAVED_WIFI_MAX_ATTEMPTS) {
+            break;
+        }
+
+        elapsed_ticks = xTaskGetTickCount() - started_at;
+        if (elapsed_ticks >= budget_ticks) {
+            *failure_reason = "TIMEOUT";
+            break;
+        }
+
+        err = wifi_remote_retry_sta();
+        if (err != ESP_OK) {
+            *failure_reason = "RETRY_FAILED";
+            break;
+        }
+    }
+    return false;
 }
 
 static void clear_secret(network_command_t *command)
@@ -93,72 +179,103 @@ static void process_connect(network_command_t *command)
                              false);
     ESP_LOGI(TAG, "[WIFI] credentials accepted, ssid=%s", command->ssid);
 
-    esp_err_t err = wifi_remote_start_sta(command->ssid, command->password);
-    if (err != ESP_OK) {
-        network_state_transition(NETWORK_STATE_WIFI_FAILED,
-                                 command->request_id,
-                                 0,
-                                 command->ssid,
-                                 NULL,
-                                 "START_FAILED",
-                                 false);
-        clear_secret(command);
-        return;
-    }
-
     char ip[16] = {0};
     uint8_t disconnect_reason = 0;
     const char *failure_reason = "CONNECT_FAILED";
     bool connected = false;
+    unsigned attempts_used = 0;
+    esp_err_t err = ESP_OK;
 
-    for (unsigned attempt = 1; attempt <= CONFIG_SMARTSCORE_WIFI_MAX_RETRIES; ++attempt) {
-        if (attempt > 1) {
-            unsigned backoff_seconds = 1U << (attempt - 2);
-            if (backoff_seconds > 8) {
-                backoff_seconds = 8;
-            }
-            ESP_LOGI("WIFI", "retry %u/%u after %us",
-                     attempt,
-                     (unsigned)CONFIG_SMARTSCORE_WIFI_MAX_RETRIES,
-                     backoff_seconds);
-            network_state_transition(NETWORK_STATE_WIFI_CONNECTING,
+    if (command->from_saved_credentials) {
+        connected = connect_saved_wifi(command,
+                                       ip,
+                                       sizeof(ip),
+                                       &disconnect_reason,
+                                       &failure_reason,
+                                       &attempts_used);
+    } else {
+        err = wifi_remote_start_sta(command->ssid, command->password);
+        if (err != ESP_OK) {
+            network_state_transition(NETWORK_STATE_WIFI_FAILED,
                                      command->request_id,
-                                     attempt - 1,
+                                     0,
                                      command->ssid,
                                      NULL,
-                                     NULL,
+                                     "START_FAILED",
                                      false);
-            vTaskDelay(pdMS_TO_TICKS(backoff_seconds * 1000U));
-            err = wifi_remote_retry_sta();
-            if (err != ESP_OK) {
-                failure_reason = "RETRY_FAILED";
-                break;
-            }
+            clear_secret(command);
+            return;
         }
 
-        err = wifi_remote_wait_for_connection(
-            CONFIG_SMARTSCORE_WIFI_ATTEMPT_TIMEOUT_SECONDS * 1000U,
-            ip,
-            sizeof(ip),
-            &disconnect_reason);
-        if (err == ESP_OK) {
-            connected = true;
-            break;
+        for (unsigned attempt = 1;
+             attempt <= CONFIG_SMARTSCORE_WIFI_MAX_RETRIES;
+             ++attempt) {
+            if (attempt > 1) {
+                unsigned backoff_seconds = 1U << (attempt - 2);
+                if (backoff_seconds > 8) {
+                    backoff_seconds = 8;
+                }
+                ESP_LOGI("WIFI", "retry %u/%u after %us",
+                         attempt,
+                         (unsigned)CONFIG_SMARTSCORE_WIFI_MAX_RETRIES,
+                         backoff_seconds);
+                network_state_transition(NETWORK_STATE_WIFI_CONNECTING,
+                                         command->request_id,
+                                         attempt - 1,
+                                         command->ssid,
+                                         NULL,
+                                         NULL,
+                                         false);
+                vTaskDelay(pdMS_TO_TICKS(backoff_seconds * 1000U));
+                err = wifi_remote_retry_sta();
+                if (err != ESP_OK) {
+                    failure_reason = "RETRY_FAILED";
+                    break;
+                }
+            }
+
+            err = wifi_remote_wait_for_connection(
+                CONFIG_SMARTSCORE_WIFI_ATTEMPT_TIMEOUT_SECONDS * 1000U,
+                ip,
+                sizeof(ip),
+                &disconnect_reason);
+            if (err == ESP_OK) {
+                connected = true;
+                break;
+            }
+            failure_reason = failure_reason_from_wifi(disconnect_reason, err);
         }
-        failure_reason = failure_reason_from_wifi(disconnect_reason, err);
     }
 
     if (!connected) {
-        wifi_remote_stop();
-        network_state_transition(NETWORK_STATE_WIFI_FAILED,
-                                 command->request_id,
-                                 CONFIG_SMARTSCORE_WIFI_MAX_RETRIES,
-                                 command->ssid,
-                                 NULL,
-                                 failure_reason,
-                                 false);
-        ESP_LOGW(TAG, "Wi-Fi connection failed, ssid=%s reason=%s",
-                 command->ssid, failure_reason);
+        esp_err_t stop_error = wifi_remote_stop();
+        if (stop_error != ESP_OK) {
+            ESP_LOGW(TAG, "Wi-Fi stop after connection failure failed: %s",
+                     esp_err_to_name(stop_error));
+        }
+        if (command->from_saved_credentials) {
+            network_state_transition(NETWORK_STATE_WAITING_CREDENTIALS,
+                                     command->request_id,
+                                     0,
+                                     NULL,
+                                     NULL,
+                                     NULL,
+                                     false);
+            ESP_LOGW(TAG,
+                     "saved Wi-Fi unavailable after %u attempt(s), reason=%s; waiting for BLE credentials",
+                     attempts_used,
+                     failure_reason);
+        } else {
+            network_state_transition(NETWORK_STATE_WIFI_FAILED,
+                                     command->request_id,
+                                     CONFIG_SMARTSCORE_WIFI_MAX_RETRIES,
+                                     command->ssid,
+                                     NULL,
+                                     failure_reason,
+                                     false);
+            ESP_LOGW(TAG, "Wi-Fi connection failed, ssid=%s reason=%s",
+                     command->ssid, failure_reason);
+        }
         clear_secret(command);
         return;
     }

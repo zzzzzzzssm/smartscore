@@ -64,7 +64,7 @@ function start(imagePath) {
     .then((result) => {
       if (state.taskId !== taskId) return;
       if (!result || result.ok === false ||
-          !Array.isArray(result.notes) || !result.notes.length) {
+          !result.compact_score || !Number(result.event_count)) {
         throw new Error(api.messageText(
           result && result.message,
           'AI 未返回有效音符'
@@ -76,7 +76,10 @@ function start(imagePath) {
         bpm: Number(result.bpm || 120),
         time_signature: result.time_signature || '4/4',
         key: result.key || 'C',
-        notes: result.notes
+        compact_score: result.compact_score,
+        event_count: Number(result.event_count || 0),
+        playback_ready: result.playback_ready !== false,
+        notes: Array.isArray(result.notes) ? result.notes : []
       };
       const score = scoreLibrary.saveScore(document, {
         title: document.title,

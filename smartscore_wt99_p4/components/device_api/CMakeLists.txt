@@ -4,8 +4,11 @@ idf_component_register(
     REQUIRES
         esp_http_server
         json
-        doubao_client
+        compact_score
+        dashscope_omr
+        deepseek_advice
         network_provisioning
+        score_capture
         speaker_service
         usb_midi
         score_data

@@ -115,9 +115,10 @@ BLE 收到 `connected` 和 IP 是本阶段主要成功标准，HTTP Ping 是辅�
 
 ## 8. 重启与状态查询
 
-- 当前重复配网测试模式默认关闭 `CONFIG_SMARTSCORE_AUTO_CONNECT_SAVED_WIFI`。断电重启后设备保留 `smartscore_net` 中的配置，但不读取或自动连接，应再次进入 `waiting_credentials`。
-- 重新连接 BLE 后点击“测试蓝牙”，`get_status` 应返回等待配网状态；随后可以再次执行扫描、选择 SSID、发送密码和获取 IP 的完整流程。
-- 将来需要恢复正式自动连接时，在 menuconfig 中启用 `SMARTSCORE_AUTO_CONNECT_SAVED_WIFI` 后重新构建；不需要修改连接代码或清空 NVS。
+- 默认启用 `CONFIG_SMARTSCORE_AUTO_CONNECT_SAVED_WIFI`。断电重启后，设备读取 `smartscore_net` 中的配置并尝试旧网络，最多触发 10 次连接，全部尝试共享 5 秒总预算。
+- 旧网络在 5 秒内可用时，设备自动获取 IP 并恢复 `wifi_connected`；BLE `get_status` 返回已连接状态和 IP。
+- 旧网络不存在或密码失效时，设备最迟在 5 秒预算结束后停止旧连接并进入 `waiting_credentials`。此时 BLE `scan_wifi` 必须可以立即扫描附近网络，用户无需重启设备即可选择并提交新 Wi-Fi。
+- BLE 主动提交的新 Wi-Fi 仍使用正常的 5 次、每次 12 秒连接策略；成功后新凭据覆盖旧配置，下一次重启应自动连接新网络。
 
 ## 9. 网页备用配网
 

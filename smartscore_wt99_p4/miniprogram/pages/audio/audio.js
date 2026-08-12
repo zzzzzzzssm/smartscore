@@ -20,7 +20,7 @@ Page({
     configured: false,
     online: false,
     controlOnly: false,
-    statusText: '等待连接设备',
+    statusText: '设备未连接',
     busy: '',
     volume: 19,
     muted: false,
@@ -50,7 +50,7 @@ Page({
       configured,
       online: false,
       controlOnly: false,
-      statusText: configured ? '正在连接设备…' : '离线预览 · 连接设备后可播放',
+      statusText: configured ? '正在连接设备…' : '设备未连接',
       playing: false,
       nowPlaying: '已停止',
       activeTone: '',
@@ -88,12 +88,8 @@ Page({
     this.statusTimer = null;
   },
 
-  openDevicePage() {
-    wx.navigateTo({ url: '/pages/device/device' });
-  },
-
   showConnectPrompt() {
-    wx.showToast({ title: '请先连接设备', icon: 'none' });
+    wx.showToast({ title: '设备未连接', icon: 'none' });
   },
 
   stateLabel(state) {

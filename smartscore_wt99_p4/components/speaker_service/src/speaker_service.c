@@ -6,10 +6,13 @@
 
 #include "board_sdcard.h"
 #include "board_wt99_pins.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
 #include "freertos/queue.h"
+#include "freertos/stream_buffer.h"
 #include "freertos/task.h"
 #include "wav_stream.h"
 
@@ -18,6 +21,18 @@
 #define SPEAKER_TASK_STACK_BYTES 5120
 #define SPEAKER_TASK_PRIORITY 12
 #define SPEAKER_OUTPUT_DRAIN_MS 30
+#define SPEAKER_STREAM_OUTPUT_DRAIN_MS 80
+#define SPEAKER_STREAM_BUFFER_BYTES (256U * 1024U)
+#define SPEAKER_STREAM_READ_WAIT_MS 10U
+/* The Doubao business stream can pause for several seconds while the
+ * WebSocket itself remains alive.  Keep the existing 256 KiB PSRAM ring, but
+ * build a four-second jitter reserve before starting/resuming 24 kHz S16
+ * mono playback.  STREAM_FINISH still bypasses this threshold so short or
+ * interrupted replies are never stranded in the ring. */
+#define SPEAKER_STREAM_PREBUFFER_BYTES (192U * 1024U)
+#define SPEAKER_STREAM_REBUFFER_BYTES (192U * 1024U)
+#define SPEAKER_STREAM_LOW_WATER_TICKS 2U
+#define SPEAKER_STREAM_BACKPRESSURE_LOG_INTERVAL 50U
 #define METRONOME_QUEUE_LENGTH 6
 #define METRONOME_TASK_STACK_BYTES 3072
 #define METRONOME_TASK_PRIORITY 7
@@ -39,6 +54,10 @@ typedef enum {
     SPEAKER_COMMAND_METRONOME_END,
     SPEAKER_COMMAND_FILE_PLAY,
     SPEAKER_COMMAND_FILE_PAUSE,
+    SPEAKER_COMMAND_STREAM_START,
+    SPEAKER_COMMAND_STREAM_RELEASE,
+    SPEAKER_COMMAND_STREAM_FINISH,
+    SPEAKER_COMMAND_STREAM_ABORT,
 } speaker_command_type_t;
 
 typedef struct {
@@ -56,6 +75,10 @@ typedef struct {
             float gain;
         } click;
         char file_name[SPEAKER_FILE_NAME_MAX];
+        struct {
+            uint32_t sample_rate_hz;
+            bool held;
+        } stream;
         uint8_t volume;
         bool muted;
     } data;
@@ -78,10 +101,12 @@ typedef struct {
 static const char *TAG = "SPEAKER";
 static QueueHandle_t s_queue;
 static QueueHandle_t s_metronome_queue;
+static StreamBufferHandle_t s_stream_buffer;
 static TaskHandle_t s_task;
 static TaskHandle_t s_metronome_task;
 static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 static portMUX_TYPE s_metronome_lock = portMUX_INITIALIZER_UNLOCKED;
+static portMUX_TYPE s_stream_lock = portMUX_INITIALIZER_UNLOCKED;
 static speaker_status_t s_status;
 static speaker_metronome_status_t s_metronome_status;
 static uint32_t s_metronome_generation;
@@ -89,6 +114,17 @@ static bool s_control_only_ready;
 static esp_timer_handle_t s_control_metronome_timer;
 static esp_timer_handle_t s_control_tone_timer;
 static wav_stream_file_t s_file;
+static bool s_stream_finish_requested;
+static bool s_stream_held;
+static bool s_stream_output_started;
+static bool s_stream_resume_file;
+static bool s_stream_rebuffering;
+static uint32_t s_stream_low_water_ticks;
+static uint32_t s_stream_underruns;
+static size_t s_stream_max_buffered_bytes;
+static uint64_t s_stream_received_bytes;
+static uint64_t s_stream_played_bytes;
+static uint32_t s_stream_backpressure_events;
 /* Static double buffer: 2 KiB total, never allocated on the audio task stack. */
 static int16_t s_pcm[2][SPEAKER_CHUNK_SAMPLES];
 
@@ -217,9 +253,22 @@ static void cancel_metronome_for_new_source(void)
     xQueueSendToFront(s_metronome_queue, &command, 0);
 }
 
+static void cancel_running_metronome_for_stream(void)
+{
+    portENTER_CRITICAL(&s_metronome_lock);
+    bool running =
+        s_metronome_status.state == SPEAKER_METRONOME_RUNNING;
+    portEXIT_CRITICAL(&s_metronome_lock);
+    if (running) cancel_metronome_for_new_source();
+}
+
 static void stop_output(esp_err_t cause)
 {
     uint32_t file_rate = s_file.sample_rate_hz;
+    speaker_state_t previous_state;
+    portENTER_CRITICAL(&s_status_lock);
+    previous_state = s_status.state;
+    portEXIT_CRITICAL(&s_status_lock);
     esp_err_t error = board_audio_end_output();
     if (s_file.file != NULL) {
         wav_stream_close(&s_file);
@@ -231,6 +280,17 @@ static void stop_output(esp_err_t cause)
         if (error == ESP_OK) {
             error = rate_error;
         }
+    }
+    if (previous_state == SPEAKER_STATE_STREAM) {
+        esp_err_t rate_error = board_audio_set_sample_rate(
+            BOARD_WT99_AUDIO_DEFAULT_SAMPLE_RATE_HZ);
+        if (error == ESP_OK) error = rate_error;
+        s_stream_finish_requested = false;
+        s_stream_held = false;
+        s_stream_output_started = false;
+        s_stream_rebuffering = false;
+        s_stream_resume_file = false;
+        s_stream_low_water_ticks = 0;
     }
     if (cause != ESP_OK) {
         error = cause;
@@ -459,6 +519,104 @@ static void handle_tone(const speaker_command_t *command,
     }
 }
 
+static void handle_stream_start(uint32_t sample_rate_hz, bool held)
+{
+    if (s_stream_buffer != NULL) xStreamBufferReset(s_stream_buffer);
+    portENTER_CRITICAL(&s_stream_lock);
+    s_stream_max_buffered_bytes = 0;
+    s_stream_received_bytes = 0;
+    s_stream_played_bytes = 0;
+    s_stream_backpressure_events = 0;
+    s_stream_underruns = 0;
+    portEXIT_CRITICAL(&s_stream_lock);
+    speaker_state_t previous_state;
+    portENTER_CRITICAL(&s_status_lock);
+    previous_state = s_status.state;
+    portEXIT_CRITICAL(&s_status_lock);
+    s_stream_resume_file = previous_state == SPEAKER_STATE_FILE_PAUSED &&
+                           s_file.file != NULL;
+    if (!s_stream_resume_file) {
+        stop_output(ESP_OK);
+    }
+    esp_err_t error = board_audio_set_sample_rate(sample_rate_hz);
+    portENTER_CRITICAL(&s_status_lock);
+    s_status.state = error == ESP_OK ? SPEAKER_STATE_STREAM
+                                    : SPEAKER_STATE_ERROR;
+    s_status.frequency_hz = 0.0f;
+    s_status.duration_ms = 0;
+    s_status.elapsed_ms = 0;
+    s_status.last_error = error;
+    portEXIT_CRITICAL(&s_status_lock);
+    s_stream_finish_requested = false;
+    s_stream_held = held;
+    s_stream_output_started = false;
+    s_stream_rebuffering = false;
+    s_stream_low_water_ticks = 0;
+    if (error != ESP_OK) {
+        stop_output(error);
+    } else {
+        ESP_LOGI(TAG,
+                 "PCM stream prepared: %" PRIu32
+                 " Hz, ring=%u prebuffer=%u rebuffer=%u bytes, held=%s resume-file=%s",
+                 sample_rate_hz, (unsigned)SPEAKER_STREAM_BUFFER_BYTES,
+                 (unsigned)SPEAKER_STREAM_PREBUFFER_BYTES,
+                 (unsigned)SPEAKER_STREAM_REBUFFER_BYTES,
+                 held ? "yes" : "no",
+                 s_stream_resume_file ? "yes" : "no");
+    }
+}
+
+static void finish_stream_output(esp_err_t cause)
+{
+    esp_err_t error = ESP_OK;
+    if (s_stream_output_started) error = board_audio_end_output();
+    s_stream_output_started = false;
+    s_stream_finish_requested = false;
+    s_stream_held = false;
+    s_stream_rebuffering = false;
+    s_stream_low_water_ticks = 0;
+
+    portENTER_CRITICAL(&s_stream_lock);
+    const size_t max_buffered = s_stream_max_buffered_bytes;
+    const uint64_t received_bytes = s_stream_received_bytes;
+    const uint64_t played_bytes = s_stream_played_bytes;
+    const uint32_t backpressure_events =
+        s_stream_backpressure_events;
+    portEXIT_CRITICAL(&s_stream_lock);
+    ESP_LOGI(TAG,
+             "PCM stream summary: ring=%u buffered=%u max=%u underruns=%" PRIu32
+             " backpressure=%" PRIu32 " received=%" PRIu64
+             " played=%" PRIu64 " bytes",
+             (unsigned)SPEAKER_STREAM_BUFFER_BYTES,
+             s_stream_buffer != NULL
+                 ? (unsigned)xStreamBufferBytesAvailable(s_stream_buffer)
+                 : 0U,
+             (unsigned)max_buffered, s_stream_underruns,
+             backpressure_events, received_bytes, played_bytes);
+
+    if (cause == ESP_OK && s_stream_resume_file && s_file.file != NULL) {
+        esp_err_t rate_error = board_audio_set_sample_rate(
+            s_file.sample_rate_hz);
+        if (error == ESP_OK) error = rate_error;
+        if (error != ESP_OK) {
+            s_stream_resume_file = false;
+            stop_output(error);
+            return;
+        }
+        portENTER_CRITICAL(&s_status_lock);
+        s_status.state = SPEAKER_STATE_FILE_PAUSED;
+        s_status.frequency_hz = 0.0f;
+        s_status.duration_ms = 0;
+        s_status.last_error = error;
+        portEXIT_CRITICAL(&s_status_lock);
+        s_stream_resume_file = false;
+        ESP_LOGI(TAG, "PCM stream released; prior file remains paused");
+        return;
+    }
+    s_stream_resume_file = false;
+    stop_output(cause != ESP_OK ? cause : error);
+}
+
 static void speaker_task(void *context)
 {
     (void)context;
@@ -478,11 +636,13 @@ static void speaker_task(void *context)
         portEXIT_CRITICAL(&s_status_lock);
 
         TickType_t wait = (state == SPEAKER_STATE_TONE ||
-                           state == SPEAKER_STATE_FILE)
+                           state == SPEAKER_STATE_FILE ||
+                           state == SPEAKER_STATE_STREAM)
                               ? 0
                               : portMAX_DELAY;
         if (xQueueReceive(s_queue, &command, wait) == pdTRUE) {
             if (command.type == SPEAKER_COMMAND_STOP) {
+                if (s_stream_buffer != NULL) xStreamBufferReset(s_stream_buffer);
                 stop_output(ESP_OK);
             } else if (command.type == SPEAKER_COMMAND_VOLUME) {
                 set_last_error(board_audio_set_volume(command.data.volume));
@@ -490,6 +650,29 @@ static void speaker_task(void *context)
                 set_last_error(board_audio_set_mute(command.data.muted));
             } else if (command.type == SPEAKER_COMMAND_FILE_PAUSE) {
                 handle_file_pause();
+            } else if (command.type == SPEAKER_COMMAND_STREAM_START) {
+                handle_stream_start(command.data.stream.sample_rate_hz,
+                                    command.data.stream.held);
+            } else if (command.type == SPEAKER_COMMAND_STREAM_RELEASE) {
+                portENTER_CRITICAL(&s_stream_lock);
+                s_stream_held = false;
+                portEXIT_CRITICAL(&s_stream_lock);
+                ESP_LOGI(TAG, "held PCM stream released");
+            } else if (command.type == SPEAKER_COMMAND_STREAM_FINISH) {
+                portENTER_CRITICAL(&s_status_lock);
+                bool active = s_status.state == SPEAKER_STATE_STREAM;
+                portEXIT_CRITICAL(&s_status_lock);
+                if (active) s_stream_finish_requested = true;
+            } else if (command.type == SPEAKER_COMMAND_STREAM_ABORT) {
+                portENTER_CRITICAL(&s_status_lock);
+                bool active = s_status.state == SPEAKER_STATE_STREAM;
+                portEXIT_CRITICAL(&s_status_lock);
+                if (active) {
+                    if (s_stream_buffer != NULL) {
+                        xStreamBufferReset(s_stream_buffer);
+                    }
+                    finish_stream_output(ESP_OK);
+                }
             } else if (command.type == SPEAKER_COMMAND_METRONOME_BEGIN) {
                 handle_metronome_begin();
             } else if (command.type == SPEAKER_COMMAND_METRONOME_CLICK) {
@@ -544,6 +727,131 @@ static void speaker_task(void *context)
             s_status.task_stack_min_words =
                 uxTaskGetStackHighWaterMark(NULL);
             portEXIT_CRITICAL(&s_status_lock);
+            continue;
+        }
+
+        if (state == SPEAKER_STATE_STREAM) {
+            portENTER_CRITICAL(&s_stream_lock);
+            const bool stream_held = s_stream_held;
+            portEXIT_CRITICAL(&s_stream_lock);
+            if (stream_held) {
+                /* Holding only pauses the consumer. Producers remain fully
+                 * non-blocking and can continue filling the one PSRAM ring. */
+                vTaskDelay(1);
+                continue;
+            }
+            size_t available =
+                xStreamBufferBytesAvailable(s_stream_buffer);
+            if (!s_stream_output_started) {
+                const size_t threshold = s_stream_rebuffering
+                                             ? SPEAKER_STREAM_REBUFFER_BYTES
+                                             : SPEAKER_STREAM_PREBUFFER_BYTES;
+                if (available < threshold &&
+                    !(s_stream_finish_requested && available > 0U)) {
+                    if (s_stream_finish_requested && available == 0U) {
+                        finish_stream_output(ESP_OK);
+                        ESP_LOGI(TAG, "empty PCM stream finished");
+                    } else {
+                        /* P4 uses a 10 ms RTOS tick.  pdMS_TO_TICKS(2)
+                         * becomes zero and leaves this high-priority task
+                         * continuously runnable, starving both the voice
+                         * staging worker and IDLE0 until the watchdog fires. */
+                        vTaskDelay(1);
+                    }
+                    continue;
+                }
+                esp_err_t start_error = board_audio_begin_output();
+                if (start_error != ESP_OK) {
+                    finish_stream_output(start_error);
+                    continue;
+                }
+                const bool recovered_from_underrun =
+                    s_stream_rebuffering;
+                s_stream_output_started = true;
+                s_stream_rebuffering = false;
+                s_stream_low_water_ticks = 0;
+                portENTER_CRITICAL(&s_stream_lock);
+                const size_t max_buffered = s_stream_max_buffered_bytes;
+                portEXIT_CRITICAL(&s_stream_lock);
+                ESP_LOGI(TAG,
+                         "PCM playback released: ring=%u buffered=%u max=%u bytes underruns=%" PRIu32,
+                         (unsigned)SPEAKER_STREAM_BUFFER_BYTES,
+                         (unsigned)available,
+                         (unsigned)max_buffered,
+                         s_stream_underruns);
+                if (recovered_from_underrun) {
+                    ESP_LOGI(TAG,
+                             "PCM rebuffer recovered automatically: buffered=%u threshold=%u bytes underruns=%" PRIu32,
+                             (unsigned)available,
+                             (unsigned)SPEAKER_STREAM_REBUFFER_BYTES,
+                             s_stream_underruns);
+                }
+            }
+
+            available = xStreamBufferBytesAvailable(s_stream_buffer);
+            size_t read_bytes = sizeof(s_pcm[buffer_index]);
+            if (available < read_bytes) {
+                if (s_stream_finish_requested) {
+                    read_bytes = available;
+                } else {
+                    if (++s_stream_low_water_ticks >=
+                        SPEAKER_STREAM_LOW_WATER_TICKS) {
+                        esp_err_t pause_error = board_audio_end_output();
+                        if (pause_error != ESP_OK) {
+                            finish_stream_output(pause_error);
+                            continue;
+                        }
+                        s_stream_output_started = false;
+                        s_stream_rebuffering = true;
+                        s_stream_low_water_ticks = 0;
+                        portENTER_CRITICAL(&s_stream_lock);
+                        ++s_stream_underruns;
+                        const uint32_t underruns = s_stream_underruns;
+                        const size_t max_buffered =
+                            s_stream_max_buffered_bytes;
+                        portEXIT_CRITICAL(&s_stream_lock);
+                        ESP_LOGW(TAG,
+                                 "PCM underrun=%" PRIu32
+                                 "; buffered=%u max=%u, rebuffering to %u bytes",
+                                 underruns,
+                                 (unsigned)available,
+                                 (unsigned)max_buffered,
+                                 (unsigned)SPEAKER_STREAM_REBUFFER_BYTES);
+                    } else {
+                        vTaskDelay(pdMS_TO_TICKS(
+                            SPEAKER_STREAM_READ_WAIT_MS));
+                    }
+                    continue;
+                }
+            } else {
+                s_stream_low_water_ticks = 0;
+            }
+            size_t bytes = read_bytes > 0U
+                               ? xStreamBufferReceive(
+                                     s_stream_buffer,
+                                     s_pcm[buffer_index], read_bytes, 0)
+                               : 0U;
+            if (bytes > 0U) {
+                esp_err_t error = board_audio_write(
+                    s_pcm[buffer_index], bytes / sizeof(int16_t));
+                buffer_index ^= 1U;
+                if (error != ESP_OK) {
+                    stop_output(error);
+                } else {
+                    portENTER_CRITICAL(&s_stream_lock);
+                    s_stream_played_bytes += bytes;
+                    portEXIT_CRITICAL(&s_stream_lock);
+                }
+                continue;
+            }
+            if (s_stream_finish_requested) {
+                /* The I2S DMA queue can still own roughly 64 ms of 24 kHz
+                 * mono PCM after the software ring reaches zero. */
+                vTaskDelay(pdMS_TO_TICKS(
+                    SPEAKER_STREAM_OUTPUT_DRAIN_MS));
+                finish_stream_output(ESP_OK);
+                ESP_LOGI(TAG, "PCM stream playback finished");
+            }
             continue;
         }
 
@@ -710,6 +1018,9 @@ esp_err_t speaker_service_init(void)
     s_queue = xQueueCreate(SPEAKER_QUEUE_LENGTH, sizeof(speaker_command_t));
     s_metronome_queue = xQueueCreate(METRONOME_QUEUE_LENGTH,
                                      sizeof(metronome_command_t));
+    s_stream_buffer = xStreamBufferCreateWithCaps(
+        SPEAKER_STREAM_BUFFER_BYTES, 1U,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (s_queue == NULL || s_metronome_queue == NULL) {
         if (s_queue != NULL) {
             vQueueDelete(s_queue);
@@ -717,10 +1028,18 @@ esp_err_t speaker_service_init(void)
         if (s_metronome_queue != NULL) {
             vQueueDelete(s_metronome_queue);
         }
+        if (s_stream_buffer != NULL) {
+            vStreamBufferDeleteWithCaps(s_stream_buffer);
+        }
         s_queue = NULL;
         s_metronome_queue = NULL;
+        s_stream_buffer = NULL;
         board_audio_deinit();
         return ESP_ERR_NO_MEM;
+    }
+    if (s_stream_buffer == NULL) {
+        ESP_LOGW(TAG,
+                 "real-time PCM buffer unavailable; existing speaker sources remain enabled");
     }
 
     if (xTaskCreate(speaker_task,
@@ -745,15 +1064,20 @@ esp_err_t speaker_service_init(void)
         }
         vQueueDelete(s_queue);
         vQueueDelete(s_metronome_queue);
+        if (s_stream_buffer != NULL) {
+            vStreamBufferDeleteWithCaps(s_stream_buffer);
+        }
         s_queue = NULL;
         s_metronome_queue = NULL;
+        s_stream_buffer = NULL;
         board_audio_deinit();
         return ESP_ERR_NO_MEM;
     }
 
     ESP_LOGI(TAG,
-             "speaker service ready; mono differential output, initial volume=%u%%",
-             BOARD_WT99_AUDIO_INITIAL_VOLUME_PERCENT);
+             "speaker service ready; mono differential output, initial volume=%u%%, stream ring=%u bytes PSRAM",
+             BOARD_WT99_AUDIO_INITIAL_VOLUME_PERCENT,
+             (unsigned)SPEAKER_STREAM_BUFFER_BYTES);
     return ESP_OK;
 }
 
@@ -858,6 +1182,7 @@ esp_err_t speaker_service_stop(void)
     }
     cancel_metronome_for_new_source();
     /* Emergency stop must not leave an older queued PLAY behind it. */
+    if (s_stream_buffer != NULL) xStreamBufferReset(s_stream_buffer);
     xQueueReset(s_queue);
     speaker_command_t command = {.type = SPEAKER_COMMAND_STOP};
     return send_speaker_command(&command, true);
@@ -902,6 +1227,156 @@ esp_err_t speaker_service_set_mute(bool muted)
         .data.muted = muted,
     };
     return send_speaker_command(&command, false);
+}
+
+esp_err_t speaker_service_stream_start(uint32_t sample_rate_hz)
+{
+    if (!speaker_service_is_ready() || s_control_only_ready ||
+        s_stream_buffer == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (sample_rate_hz < 8000U || sample_rate_hz > 48000U) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    cancel_running_metronome_for_stream();
+    speaker_command_t command = {
+        .type = SPEAKER_COMMAND_STREAM_START,
+        .data.stream = {
+            .sample_rate_hz = sample_rate_hz,
+            .held = false,
+        },
+    };
+    return send_speaker_command(&command, false);
+}
+
+esp_err_t speaker_service_stream_start_held(uint32_t sample_rate_hz)
+{
+    if (!speaker_service_is_ready() || s_control_only_ready ||
+        s_stream_buffer == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (sample_rate_hz < 8000U || sample_rate_hz > 48000U) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    cancel_running_metronome_for_stream();
+    speaker_command_t command = {
+        .type = SPEAKER_COMMAND_STREAM_START,
+        .data.stream = {
+            .sample_rate_hz = sample_rate_hz,
+            .held = true,
+        },
+    };
+    return send_speaker_command(&command, false);
+}
+
+esp_err_t speaker_service_stream_release(void)
+{
+    if (!speaker_service_is_ready() || s_control_only_ready ||
+        s_stream_buffer == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    speaker_command_t command = {.type = SPEAKER_COMMAND_STREAM_RELEASE};
+    return send_speaker_command(&command, false);
+}
+
+esp_err_t speaker_service_stream_write(const int16_t *pcm,
+                                       size_t sample_count,
+                                       size_t *accepted_samples)
+{
+    if (accepted_samples != NULL) *accepted_samples = 0;
+    if (pcm == NULL || sample_count == 0U) return ESP_ERR_INVALID_ARG;
+    if (!speaker_service_is_ready() || s_control_only_ready ||
+        s_stream_buffer == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (sample_count > SIZE_MAX / sizeof(*pcm)) return ESP_ERR_INVALID_SIZE;
+    const size_t bytes = sample_count * sizeof(*pcm);
+    /* Keep the byte stream sample-aligned even when FreeRTOS reports an odd
+     * final byte of free ring space.  There is one serialized PCM writer. */
+    const size_t writable =
+        xStreamBufferSpacesAvailable(s_stream_buffer) & ~(size_t)1U;
+    const size_t write_bytes = bytes < writable ? bytes : writable;
+    size_t sent = write_bytes > 0U
+                      ? xStreamBufferSend(
+                            s_stream_buffer, pcm, write_bytes, 0)
+                      : 0U;
+    const size_t buffered = xStreamBufferBytesAvailable(s_stream_buffer);
+    portENTER_CRITICAL(&s_stream_lock);
+    s_stream_received_bytes += sent;
+    if (buffered > s_stream_max_buffered_bytes) {
+        s_stream_max_buffered_bytes = buffered;
+    }
+    const size_t max_buffered = s_stream_max_buffered_bytes;
+    if (accepted_samples != NULL) {
+        *accepted_samples = sent / sizeof(*pcm);
+    }
+    if (sent < bytes) {
+        ++s_stream_backpressure_events;
+        const uint32_t backpressure_events =
+            s_stream_backpressure_events;
+        portEXIT_CRITICAL(&s_stream_lock);
+        if (backpressure_events == 1U ||
+            (backpressure_events %
+             SPEAKER_STREAM_BACKPRESSURE_LOG_INTERVAL) == 0U) {
+            ESP_LOGW(TAG,
+                     "PCM ring backpressure=%" PRIu32
+                     ": accepted=%u/%u samples buffered=%u max=%u",
+                     backpressure_events,
+                     (unsigned)(sent / sizeof(*pcm)),
+                     (unsigned)sample_count, (unsigned)buffered,
+                     (unsigned)max_buffered);
+        }
+    } else {
+        portEXIT_CRITICAL(&s_stream_lock);
+    }
+    return sent > 0U ? ESP_OK : ESP_ERR_TIMEOUT;
+}
+
+esp_err_t speaker_service_stream_finish(void)
+{
+    if (!speaker_service_is_ready() || s_control_only_ready ||
+        s_stream_buffer == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    speaker_command_t command = {.type = SPEAKER_COMMAND_STREAM_FINISH};
+    return send_speaker_command(&command, false);
+}
+
+esp_err_t speaker_service_stream_abort(void)
+{
+    if (!speaker_service_is_ready() || s_control_only_ready ||
+        s_stream_buffer == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    /* Queue behind an already accepted START so START->ABORT is preserved.
+     * This prevents a late queued START from resurrecting a canceled stream. */
+    speaker_command_t command = {.type = SPEAKER_COMMAND_STREAM_ABORT};
+    return send_speaker_command(&command, false);
+}
+
+void speaker_service_stream_get_metrics(speaker_stream_metrics_t *out_metrics)
+{
+    if (out_metrics == NULL) return;
+    memset(out_metrics, 0, sizeof(*out_metrics));
+    out_metrics->capacity_bytes = SPEAKER_STREAM_BUFFER_BYTES;
+    if (s_stream_buffer != NULL) {
+        out_metrics->buffered_bytes =
+            xStreamBufferBytesAvailable(s_stream_buffer);
+    }
+    portENTER_CRITICAL(&s_status_lock);
+    out_metrics->active = s_status.state == SPEAKER_STATE_STREAM;
+    portEXIT_CRITICAL(&s_status_lock);
+    portENTER_CRITICAL(&s_stream_lock);
+    out_metrics->held = s_stream_held;
+    out_metrics->output_started = s_stream_output_started;
+    out_metrics->rebuffering = s_stream_rebuffering;
+    out_metrics->finish_requested = s_stream_finish_requested;
+    out_metrics->max_buffered_bytes = s_stream_max_buffered_bytes;
+    out_metrics->received_bytes = s_stream_received_bytes;
+    out_metrics->played_bytes = s_stream_played_bytes;
+    out_metrics->underruns = s_stream_underruns;
+    out_metrics->backpressure_events = s_stream_backpressure_events;
+    portEXIT_CRITICAL(&s_stream_lock);
 }
 
 static bool valid_meter(uint8_t beats, uint8_t unit)

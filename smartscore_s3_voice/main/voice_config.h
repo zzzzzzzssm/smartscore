@@ -21,6 +21,11 @@
 #define VOICE_WAKE_WORD_TEXT            "你好小智"
 #define VOICE_COMMAND_TIMEOUT_MS        6000
 
+/* Single-turn AI routing keeps the original MultiNet timeout as a fallback. */
+#define VOICE_AI_POST_WAKE_GUARD_MS       80U
+#define VOICE_AI_MIN_QUERY_SPEECH_MS     256U
+#define VOICE_AI_END_SILENCE_MS          500U
+
 /* H7 voice link: GPIO1/TX -> VOICE_TX_MS, GPIO2/RX <- VOICE_RX_MS. */
 #define VOICE_LINK_UART_PORT            UART_NUM_1
 #define VOICE_LINK_TX_GPIO              GPIO_NUM_1

@@ -9,7 +9,9 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "voice_ai_stream.h"
 #include "voice_config.h"
+#include "voice_link_protocol.h"
 
 #define VOICE_LINK_RX_BUFFER_BYTES 512
 #define VOICE_LINK_LINE_BYTES 64
@@ -19,21 +21,46 @@
 static const char *TAG = "voice_uart_link";
 static bool s_initialized;
 static SemaphoreHandle_t s_tx_lock;
+static portMUX_TYPE s_state_lock = portMUX_INITIALIZER_UNLOCKED;
+static bool s_ai_input_done_requested;
+static bool s_ai_stop_requested;
 
-static esp_err_t send_frame(const char *frame)
+static esp_err_t write_locked(const void *data, size_t length)
 {
     if (!s_initialized || s_tx_lock == NULL) return ESP_ERR_INVALID_STATE;
-    if (frame == NULL) return ESP_ERR_INVALID_ARG;
+    if (data == NULL || length == 0U) return ESP_ERR_INVALID_ARG;
 
-    size_t length = strlen(frame);
     xSemaphoreTake(s_tx_lock, portMAX_DELAY);
-    int written = uart_write_bytes(VOICE_LINK_UART_PORT, frame, length);
+    int written = uart_write_bytes(VOICE_LINK_UART_PORT, data, length);
     xSemaphoreGive(s_tx_lock);
     return written == (int)length ? ESP_OK : ESP_FAIL;
 }
 
+static esp_err_t send_frame(const char *frame)
+{
+    if (frame == NULL) return ESP_ERR_INVALID_ARG;
+    return write_locked(frame, strlen(frame));
+}
+
 static void handle_ack_line(const char *line)
 {
+    if (strcmp(line, "V2,AI,INPUT_DONE") == 0) {
+        portENTER_CRITICAL(&s_state_lock);
+        s_ai_input_done_requested = true;
+        portEXIT_CRITICAL(&s_state_lock);
+        ESP_LOGI(TAG, "P4 completed the single-turn AI input");
+        return;
+    }
+
+    if (strcmp(line, "V2,AI,STOP") == 0 ||
+        strncmp(line, "V2,AI,STOP,", 11U) == 0) {
+        portENTER_CRITICAL(&s_state_lock);
+        s_ai_stop_requested = true;
+        portEXIT_CRITICAL(&s_state_lock);
+        ESP_LOGI(TAG, "P4 requested AI conversation stop: %s", line);
+        return;
+    }
+
     unsigned command_id = 0;
     char result[16] = {0};
     if (sscanf(line, "V1,ACK,%u,%15s", &command_id, result) == 2 &&
@@ -53,6 +80,9 @@ static void voice_link_rx_task(void *argument)
     char line[VOICE_LINK_LINE_BYTES];
     size_t line_length = 0;
     bool discarding = false;
+    bool possible_binary = false;
+    bool binary = false;
+    voice_link_parser_t parser;
 
     while (true) {
         int received = uart_read_bytes(VOICE_LINK_UART_PORT, rx, sizeof(rx),
@@ -60,7 +90,40 @@ static void voice_link_rx_task(void *argument)
         if (received <= 0) continue;
 
         for (int index = 0; index < received; ++index) {
-            char byte = (char)rx[index];
+            const uint8_t raw = rx[index];
+            if (binary) {
+                voice_link_packet_t packet;
+                voice_link_parse_result_t parse =
+                    voice_link_parser_feed(&parser, raw, &packet);
+                if (parse == VOICE_LINK_PARSE_COMPLETE) {
+                    voice_ai_stream_handle_feedback(packet.type,
+                                                    packet.sequence);
+                    binary = false;
+                } else if (parse == VOICE_LINK_PARSE_ERROR) {
+                    ESP_LOGW(TAG, "invalid binary feedback frame discarded");
+                    binary = false;
+                }
+                continue;
+            }
+            if (possible_binary) {
+                possible_binary = false;
+                if (raw == VOICE_LINK_MAGIC_1) {
+                    voice_link_parser_begin(&parser);
+                    binary = true;
+                    line_length = 0;
+                    discarding = false;
+                    continue;
+                }
+                if (!discarding && line_length + 1U < sizeof(line)) {
+                    line[line_length++] = (char)VOICE_LINK_MAGIC_0;
+                }
+            }
+            if (raw == VOICE_LINK_MAGIC_0) {
+                possible_binary = true;
+                continue;
+            }
+
+            char byte = (char)raw;
             if (byte == '\r') continue;
             if (byte == '\n') {
                 if (!discarding && line_length > 0) {
@@ -149,4 +212,44 @@ esp_err_t voice_uart_link_send_command(uint8_t command_id)
                           (unsigned)command_id);
     if (length <= 0 || length >= (int)sizeof(frame)) return ESP_FAIL;
     return send_frame(frame);
+}
+
+esp_err_t voice_uart_link_send_ai_begin(void)
+{
+    return send_frame("V2,AI,BEGIN\n");
+}
+
+esp_err_t voice_uart_link_send_ai_speech_end(void)
+{
+    return send_frame("V2,AI,SPEECH_END\n");
+}
+
+esp_err_t voice_uart_link_send_ai_cancel(void)
+{
+    return send_frame("V2,AI,CANCEL\n");
+}
+
+esp_err_t voice_uart_link_write_binary(const void *data, size_t length)
+{
+    return write_locked(data, length);
+}
+
+bool voice_uart_link_take_ai_stop_request(void)
+{
+    bool requested;
+    portENTER_CRITICAL(&s_state_lock);
+    requested = s_ai_stop_requested;
+    s_ai_stop_requested = false;
+    portEXIT_CRITICAL(&s_state_lock);
+    return requested;
+}
+
+bool voice_uart_link_take_ai_input_done_request(void)
+{
+    bool requested;
+    portENTER_CRITICAL(&s_state_lock);
+    requested = s_ai_input_done_requested;
+    s_ai_input_done_requested = false;
+    portEXIT_CRITICAL(&s_state_lock);
+    return requested;
 }

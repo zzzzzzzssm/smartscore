@@ -6,12 +6,12 @@ Page({
     configured: false,
     online: false,
     controlOnly: false,
-    statusText: '等待连接设备',
+    statusText: '设备未连接',
     busy: '',
     volume: 19,
     muted: false,
     sdPresent: false,
-    sdText: '设备离线 · 暂未读取 SD 卡',
+    sdText: '暂无曲库信息',
     filesLoading: false,
     files: [],
     page: 1,
@@ -19,7 +19,7 @@ Page({
     totalPages: 0,
     searchInput: '',
     activeSearch: '',
-    emptyText: '连接设备后读取 SD 卡内容',
+    emptyText: '没有找到可播放的 WAV 文件',
     activeFile: '',
     filePaused: false
   },
@@ -32,16 +32,16 @@ Page({
       configured,
       online: false,
       controlOnly: false,
-      statusText: configured ? '正在连接设备…' : '离线预览 · 连接设备后读取 SD 卡',
+      statusText: configured ? '正在连接设备…' : '设备未连接',
       sdPresent: false,
-      sdText: configured ? '正在等待设备连接' : '设备离线 · 暂未读取 SD 卡',
+      sdText: '暂无曲库信息',
       files: [],
       total: 0,
       totalPages: 0,
       activeFile: '',
       filePaused: false,
       filesLoading: false,
-      emptyText: '连接设备后读取 SD 卡内容'
+      emptyText: '没有找到可播放的 WAV 文件'
     });
     if (configured) {
       this.refreshStatus();
@@ -78,12 +78,8 @@ Page({
     this.statusTimer = null;
   },
 
-  openDevicePage() {
-    wx.navigateTo({ url: '/pages/device/device' });
-  },
-
   showConnectPrompt() {
-    wx.showToast({ title: '请先连接设备', icon: 'none' });
+    wx.showToast({ title: '设备未连接', icon: 'none' });
   },
 
   audioErrorText(error) {
@@ -138,14 +134,14 @@ Page({
         controlOnly: false,
         statusText: api.errorMessage(err, '设备连接失败'),
         sdPresent: false,
-        sdText: '设备离线 · 连接后读取 SD 卡',
+        sdText: '暂无曲库信息',
         files: [],
         total: 0,
         totalPages: 0,
         filesLoading: false,
         activeFile: '',
         filePaused: false,
-        emptyText: '连接设备后读取 SD 卡内容'
+        emptyText: '没有找到可播放的 WAV 文件'
       });
       return false;
     }).finally(() => {
@@ -208,7 +204,8 @@ Page({
     if (this.data.online) {
       this.loadFiles(1);
     } else {
-      this.setData({ emptyText: '连接设备后读取 SD 卡内容' });
+      this.setData({ emptyText: '没有找到可播放的 WAV 文件' });
+      this.showConnectPrompt();
     }
   },
 

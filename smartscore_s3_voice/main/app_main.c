@@ -10,6 +10,7 @@
 #include "esp_log.h"
 #include "esp_psram.h"
 #include "voice_config.h"
+#include "voice_ai_stream.h"
 #include "voice_recognition.h"
 #include "voice_uart_link.h"
 
@@ -58,6 +59,13 @@ void app_main(void)
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "语音控制 UART 初始化失败: %s", esp_err_to_name(err));
         return;
+    }
+
+    err = voice_ai_stream_init();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG,
+                 "AI 语音流桥接不可用，本地唤醒和本地命令继续运行: %s",
+                 esp_err_to_name(err));
     }
 
     err = audio_inmp441_init();

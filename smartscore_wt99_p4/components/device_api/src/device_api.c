@@ -1,21 +1,29 @@
 #include "device_api.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "cJSON.h"
-#include "doubao_client.h"
+#include "compact_score.h"
+#include "compact_score_store.h"
+#include "dashscope_omr.h"
+#include "deepseek_advice.h"
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "esp_random.h"
+#include "esp_timer.h"
 #include "input_source_manager.h"
 #include "network_provisioning.h"
+#include "score_capture.h"
 #include "score_data.h"
 #include "score_json_parser.h"
 #include "score_storage.h"
 #include "scoring_service.h"
 #include "screen_adapter.h"
 #include "speaker_service.h"
+#include "sdkconfig.h"
 #include "usb_midi.h"
 
 #define DEVICE_API_MAX_BODY_BYTES 512
@@ -25,6 +33,7 @@
 #define DEVICE_API_SCORE_PAGE_SIZE 20
 #define DEVICE_API_SCORE_MAX_BODY_BYTES (256 * 1024)
 #define DEVICE_API_SCORING_TIMEOUT_MS 10000
+#define DEVICE_API_MAX_OPEN_SOCKETS 5
 
 static const char *TAG = "DEVICE_API";
 static httpd_handle_t s_server;
@@ -112,6 +121,8 @@ static const char *speaker_state_name(speaker_state_t state)
             return "file";
         case SPEAKER_STATE_FILE_PAUSED:
             return "file_paused";
+        case SPEAKER_STATE_STREAM:
+            return "stream";
         case SPEAKER_STATE_ERROR:
             return "error";
         default:
@@ -635,21 +646,26 @@ static esp_err_t score_upload_handler(httpd_req_t *request)
 
 static esp_err_t ai_sheet_to_score_handler(httpd_req_t *request)
 {
-    if (!doubao_api_key_configured()) {
+    if (!dashscope_omr_api_key_configured()) {
         return send_error_json(request, "503 Service Unavailable",
-                               "vei_api_key_missing",
-                               "VEI_API_KEY is not configured in the firmware");
+                               "dashscope_key_missing",
+                               "DASHSCOPE_API_KEY is not configured in the firmware");
     }
 
     char mime_type[48] = "image/jpeg";
     if (httpd_req_get_hdr_value_str(request, "Content-Type", mime_type,
-                                    sizeof(mime_type)) != ESP_OK ||
-        strncmp(mime_type, "image/", strlen("image/")) != 0) {
+                                    sizeof(mime_type)) != ESP_OK) {
         strlcpy(mime_type, "image/jpeg", sizeof(mime_type));
     }
     char *parameters = strchr(mime_type, ';');
     if (parameters != NULL) {
         *parameters = '\0';
+    }
+    if (strcmp(mime_type, "image/jpeg") != 0 &&
+        strcmp(mime_type, "image/jpg") != 0) {
+        return send_error_json(request, "415 Unsupported Media Type",
+                               "sheet_image_not_jpeg",
+                               "send one complete JPEG page");
     }
 
     if (request->content_len == 0) {
@@ -657,15 +673,15 @@ static esp_err_t ai_sheet_to_score_handler(httpd_req_t *request)
                                "sheet_image_missing",
                                "send a sheet image in the request body");
     }
-    if (request->content_len > DOUBAO_MAX_IMAGE_BYTES) {
+    if (request->content_len > SCORE_CAPTURE_MAX_JPEG_BYTES) {
         return send_error_json(request, "413 Payload Too Large",
                                "sheet_image_too_large",
-                               "compress the sheet image below 768 KiB");
+                               "JPEG exceeds the full-page upload limit");
     }
 
     char *image = NULL;
     size_t image_length = 0;
-    esp_err_t err = receive_large_body(request, DOUBAO_MAX_IMAGE_BYTES,
+    esp_err_t err = receive_large_body(request, SCORE_CAPTURE_MAX_JPEG_BYTES,
                                         &image, &image_length);
     if (err != ESP_OK) {
         return send_error_json(request, "400 Bad Request",
@@ -673,70 +689,238 @@ static esp_err_t ai_sheet_to_score_handler(httpd_req_t *request)
                                "failed to read the sheet image");
     }
 
-    char *recognized_json = doubao_recognize_sheet_image(
-        (const uint8_t *)image, image_length, mime_type);
-    heap_caps_free(image);
-    if (recognized_json == NULL) {
-        return send_error_json(request, "502 Bad Gateway",
-                               "doubao_recognition_failed",
-                               "Doubao did not return a recognition result");
-    }
-
-    cJSON *recognized = cJSON_Parse(recognized_json);
-    if (!cJSON_IsObject(recognized)) {
-        cJSON_Delete(recognized);
-        free(recognized_json);
-        return send_error_json(request, "502 Bad Gateway",
-                               "invalid_doubao_response",
-                               "Doubao returned invalid recognition JSON");
-    }
-    cJSON *recognized_ok = cJSON_GetObjectItemCaseSensitive(recognized, "ok");
-    if (cJSON_IsFalse(recognized_ok)) {
-        free(recognized_json);
-        return send_json(request, "200 OK", recognized);
-    }
-
-    char parse_error[96] = {0};
-    size_t note_count = 0;
-    size_t score_length = strlen(recognized_json);
-    err = score_json_parse_and_store(recognized_json, score_length,
-                                     parse_error, sizeof(parse_error),
-                                     &note_count);
-    esp_err_t screen_err = ESP_OK;
-    if (err == ESP_OK)
-        screen_err = screen_adapter_prepare_score_json(
-            recognized_json, score_length, "AI_SCORE.JSON");
-    free(recognized_json);
-    if (screen_err != ESP_OK) {
-        ESP_LOGW(TAG, "AI score stored but screen preparation failed: %s",
-                 esp_err_to_name(screen_err));
-    }
+    char task_id[SCORE_CAPTURE_TASK_ID_CAPACITY];
+    snprintf(task_id, sizeof(task_id), "omr-%08lx-%08lx-%08lx",
+             (unsigned long)((uint64_t)esp_timer_get_time() & 0xffffffffU),
+             (unsigned long)esp_random(), (unsigned long)esp_random());
+    score_capture_t capture = {0};
+    err = score_capture_from_jpeg((const uint8_t *)image, image_length,
+                                  task_id, &capture);
     if (err != ESP_OK) {
-        cJSON_Delete(recognized);
-        return send_error_json(
-            request,
-            err == ESP_ERR_INVALID_SIZE ? "413 Payload Too Large"
-                                        : "400 Bad Request",
-            parse_error[0] != '\0' ? parse_error : "ai_score_invalid",
-            "Doubao did not return a usable score");
+        heap_caps_free(image);
+        return send_error_json(request, "400 Bad Request",
+                               "invalid_full_page_jpeg",
+                               "JPEG header or dimensions are invalid");
     }
 
-    if (recognized_ok != NULL) {
-        cJSON_ReplaceItemInObject(recognized, "ok", cJSON_CreateTrue());
-    } else {
-        cJSON_AddBoolToObject(recognized, "ok", true);
+    dashscope_omr_result_t omr = {0};
+    dashscope_omr_error_t omr_error =
+        dashscope_omr_recognize(&capture, &omr);
+    heap_caps_free(image);
+    if (omr_error != DASHSCOPE_OMR_OK) {
+        const char *status = "502 Bad Gateway";
+        if (omr_error == DASHSCOPE_OMR_ERR_BUSY) {
+            status = "409 Conflict";
+        } else if (omr_error == DASHSCOPE_OMR_ERR_HTTP_RATE_LIMIT) {
+            status = "429 Too Many Requests";
+        } else if (omr_error == DASHSCOPE_OMR_ERR_TIMEOUT) {
+            status = "504 Gateway Timeout";
+        } else if (omr_error == DASHSCOPE_OMR_ERR_NOT_CONFIGURED) {
+            status = "503 Service Unavailable";
+        } else if (omr_error == DASHSCOPE_OMR_ERR_SCORE_SCHEMA ||
+                   omr_error == DASHSCOPE_OMR_ERR_INNER_JSON) {
+            status = "422 Unprocessable Entity";
+        }
+        char message[160];
+        if (omr_error == DASHSCOPE_OMR_ERR_SCORE_SCHEMA) {
+            snprintf(message, sizeof(message),
+                     "compact score validation failed at %s: %s",
+                     omr.score_error.path,
+                     compact_score_error_name(omr.score_error.code));
+        } else {
+            snprintf(message, sizeof(message),
+                     "DashScope full-page recognition failed: %s",
+                     dashscope_omr_error_name(omr_error));
+        }
+        const char *code = dashscope_omr_error_name(omr_error);
+        dashscope_omr_result_free(&omr);
+        return send_error_json(request, status, code, message);
     }
-    cJSON_AddStringToObject(recognized, "source",
-                            "doubao-seed-1.6-vision");
-    cJSON_AddStringToObject(recognized, "model",
-                            "doubao-seed-1.6-vision");
-    cJSON_AddBoolToObject(recognized, "stored_for_scoring", true);
-    cJSON_AddBoolToObject(recognized, "screen_prepared",
-                          screen_err == ESP_OK);
-    cJSON_AddNumberToObject(recognized, "note_count", note_count);
-    cJSON_AddNumberToObject(recognized, "image_bytes",
-                            (double)image_length);
-    return send_json(request, "200 OK", recognized);
+
+    size_t event_count = omr.score->event_count;
+    compact_score_kind_t kind = omr.score->kind;
+    compact_score_meta_t score_meta = omr.score->meta;
+    compact_score_playback_t playback = {0};
+    compact_score_error_t playback_error = {0};
+    compact_score_error_code_t playback_result = COMPACT_SCORE_ERR_CAPACITY;
+    if (omr.score->sounding_note_count <= SCORE_DATA_MAX_NOTES) {
+        playback_result = compact_score_build_playback(
+            omr.score, 120, &playback, &playback_error);
+    } else {
+        playback_error.code = COMPACT_SCORE_ERR_CAPACITY;
+        strlcpy(playback_error.path, "playback.notes",
+                sizeof(playback_error.path));
+    }
+
+    if (compact_score_store_init() != ESP_OK) {
+        compact_score_playback_free(&playback);
+        dashscope_omr_result_free(&omr);
+        return send_error_json(request, "500 Internal Server Error",
+                               "compact_score_store_init_failed",
+                               "unable to initialize compact score storage");
+    }
+    compact_score_document_t *owned_score = omr.score;
+    omr.score = NULL;
+    err = compact_score_store_replace(task_id, owned_score);
+    if (err != ESP_OK) {
+        compact_score_free(owned_score);
+        compact_score_playback_free(&playback);
+        dashscope_omr_result_free(&omr);
+        return send_error_json(request, "409 Conflict",
+                               "duplicate_omr_task",
+                               "recognition task was already committed");
+    }
+
+    bool playback_ready = playback_result == COMPACT_SCORE_OK;
+    bool stored_for_scoring = false;
+    bool screen_prepared = false;
+    char *legacy_json = NULL;
+    if (playback_ready) {
+        cJSON *legacy = cJSON_CreateObject();
+        cJSON *notes = cJSON_AddArrayToObject(legacy, "notes");
+        if (legacy != NULL && notes != NULL) {
+            cJSON_AddStringToObject(legacy, "title", "AI full-page OMR");
+            cJSON_AddNumberToObject(legacy, "bpm", playback.bpm);
+            char time_signature[16] = "4/4";
+            if (score_meta.has_time_signature) {
+                snprintf(time_signature, sizeof(time_signature), "%u/%u",
+                         score_meta.time_signature_numerator,
+                         score_meta.time_signature_denominator);
+            }
+            cJSON_AddStringToObject(legacy, "time_signature", time_signature);
+            cJSON_AddStringToObject(
+                legacy, "key",
+                score_meta.has_nkey ? score_meta.nkey : "unknown");
+            for (size_t index = 0; index < playback.note_count; ++index) {
+                const compact_score_playback_note_t *note =
+                    &playback.notes[index];
+                cJSON *item = cJSON_CreateObject();
+                if (item == NULL) {
+                    cJSON_Delete(legacy);
+                    legacy = NULL;
+                    break;
+                }
+                cJSON_AddNumberToObject(item, "midi", note->midi);
+                cJSON_AddNumberToObject(item, "start",
+                                        (double)note->start_ms / 1000.0);
+                cJSON_AddNumberToObject(item, "duration",
+                                        (double)note->duration_ms / 1000.0);
+                cJSON_AddNumberToObject(item, "staff", note->staff);
+                cJSON_AddNumberToObject(item, "voice", note->voice);
+                cJSON_AddNumberToObject(item, "event_index",
+                                        note->event_index);
+                cJSON_AddItemToArray(notes, item);
+            }
+            if (legacy != NULL) {
+                legacy_json = cJSON_PrintUnformatted(legacy);
+                cJSON_Delete(legacy);
+            }
+        } else {
+            cJSON_Delete(legacy);
+        }
+        if (legacy_json == NULL) {
+            playback_ready = false;
+            playback_error.code = COMPACT_SCORE_ERR_NO_MEMORY;
+            strlcpy(playback_error.path, "playback.json",
+                    sizeof(playback_error.path));
+        }
+    }
+
+    size_t note_count = 0;
+    if (playback_ready) {
+        char parse_error[96] = {0};
+        err = score_json_parse_and_store(
+            legacy_json, strlen(legacy_json), parse_error,
+            sizeof(parse_error), &note_count);
+        stored_for_scoring = err == ESP_OK;
+        if (stored_for_scoring) {
+            esp_err_t screen_error = screen_adapter_prepare_score_json(
+                legacy_json, strlen(legacy_json), "AI_OMR.JSON");
+            screen_prepared = screen_error == ESP_OK;
+            if (screen_error != ESP_OK) {
+                ESP_LOGW(TAG,
+                         "OMR stored but screen preparation failed task=%s error=%s",
+                         task_id, esp_err_to_name(screen_error));
+            }
+        } else {
+            playback_ready = false;
+            playback_error.code = err == ESP_ERR_INVALID_SIZE
+                                      ? COMPACT_SCORE_ERR_CAPACITY
+                                      : COMPACT_SCORE_ERR_UNPLAYABLE;
+            strlcpy(playback_error.path,
+                    parse_error[0] != '\0' ? parse_error : "score_data",
+                    sizeof(playback_error.path));
+        }
+    }
+
+    cJSON *response = cJSON_CreateObject();
+    cJSON *compact = cJSON_Parse(omr.compact_json);
+    if (response == NULL || !cJSON_IsObject(compact)) {
+        cJSON_Delete(response);
+        cJSON_Delete(compact);
+        cJSON_free(legacy_json);
+        compact_score_playback_free(&playback);
+        dashscope_omr_result_free(&omr);
+        return send_error_json(request, "500 Internal Server Error",
+                               "omr_response_build_failed",
+                               "unable to build recognition response");
+    }
+    cJSON_AddBoolToObject(response, "ok", true);
+    cJSON_AddStringToObject(response, "task_id", task_id);
+    cJSON_AddStringToObject(response, "source", "alibaba-cloud-bailian");
+    cJSON_AddStringToObject(response, "model", DASHSCOPE_OMR_MODEL);
+    cJSON_AddStringToObject(response, "kind",
+                            kind == COMPACT_SCORE_KIND_NUMBERED ? "n" : "s");
+    cJSON_AddItemToObject(response, "compact_score", compact);
+    cJSON_AddBoolToObject(response, "playback_ready", playback_ready);
+    cJSON_AddBoolToObject(response, "stored_for_scoring", stored_for_scoring);
+    cJSON_AddBoolToObject(response, "screen_prepared", screen_prepared);
+    cJSON_AddNumberToObject(response, "event_count", event_count);
+    cJSON_AddNumberToObject(response, "note_count", note_count);
+    cJSON_AddNumberToObject(response, "image_bytes", image_length);
+    cJSON_AddNumberToObject(response, "image_width", capture.width);
+    cJSON_AddNumberToObject(response, "image_height", capture.height);
+    cJSON_AddBoolToObject(response, "model_downscaled",
+                          capture.model_will_downscale);
+    cJSON_AddNumberToObject(response, "request_elapsed_ms", omr.elapsed_ms);
+    cJSON_AddNumberToObject(response, "http_status", omr.http_status);
+    cJSON_AddNumberToObject(response, "attempt_count", omr.attempt_count);
+    cJSON *usage = cJSON_AddObjectToObject(response, "usage");
+    if (usage != NULL) {
+        cJSON_AddNumberToObject(usage, "input_tokens",
+                                omr.usage.input_tokens);
+        cJSON_AddNumberToObject(usage, "output_tokens",
+                                omr.usage.output_tokens);
+        cJSON_AddNumberToObject(usage, "total_tokens",
+                                omr.usage.total_tokens);
+    }
+    cJSON *notes_response = cJSON_AddArrayToObject(response, "notes");
+    if (notes_response != NULL && legacy_json != NULL) {
+        cJSON *legacy = cJSON_Parse(legacy_json);
+        cJSON *legacy_notes = cJSON_IsObject(legacy)
+                                  ? cJSON_DetachItemFromObject(legacy, "notes")
+                                  : NULL;
+        if (cJSON_IsArray(legacy_notes)) {
+            cJSON_ReplaceItemInObject(response, "notes", legacy_notes);
+        } else {
+            cJSON_Delete(legacy_notes);
+        }
+        cJSON_Delete(legacy);
+    }
+    if (playback_ready) {
+        cJSON_AddStringToObject(response, "title", "AI full-page OMR");
+        cJSON_AddNumberToObject(response, "bpm", playback.bpm);
+    } else {
+        cJSON_AddStringToObject(response, "playback_error",
+                                compact_score_error_name(playback_error.code));
+        cJSON_AddStringToObject(response, "playback_error_path",
+                                playback_error.path);
+    }
+
+    cJSON_free(legacy_json);
+    compact_score_playback_free(&playback);
+    dashscope_omr_result_free(&omr);
+    return send_json(request, "200 OK", response);
 }
 
 typedef struct {
@@ -779,10 +963,10 @@ static esp_err_t ai_score_handler(httpd_req_t *request)
                                    "body must be an optional JSON object");
         }
     }
-    if (!doubao_api_key_configured()) {
+    if (!deepseek_advice_api_key_configured()) {
         return send_error_json(request, "503 Service Unavailable",
-                               "vei_api_key_missing",
-                               "VEI_API_KEY is not configured in the firmware");
+                               "deepseek_key_missing",
+                               "DEEPSEEK_API_KEY is not configured in the firmware");
     }
 
     score_result_copy_t context = {0};
@@ -794,12 +978,22 @@ static esp_err_t ai_score_handler(httpd_req_t *request)
                                "complete a practice session before requesting AI advice");
     }
 
-    char *advice_json = doubao_score_performance(context.json);
+    char *advice_json = NULL;
+    deepseek_advice_error_t advice_error = deepseek_advice_generate(
+        context.json, &advice_json);
     heap_caps_free(context.json);
-    if (advice_json == NULL) {
-        return send_error_json(request, "502 Bad Gateway",
-                               "doubao_advice_failed",
-                               "Doubao did not return practice advice");
+    if (advice_error != DEEPSEEK_ADVICE_OK || advice_json == NULL) {
+        const char *status = advice_error == DEEPSEEK_ADVICE_ERR_TIMEOUT
+                                 ? "504 Gateway Timeout"
+                                 : "502 Bad Gateway";
+        char message[160];
+        snprintf(message, sizeof(message),
+                 "DeepSeek practice advice failed: %s",
+                 deepseek_advice_error_name(advice_error));
+        free(advice_json);
+        return send_error_json(request, status,
+                               deepseek_advice_error_name(advice_error),
+                               message);
     }
 
     cJSON *advice = cJSON_Parse(advice_json);
@@ -807,13 +1001,10 @@ static esp_err_t ai_score_handler(httpd_req_t *request)
     if (!cJSON_IsObject(advice)) {
         cJSON_Delete(advice);
         return send_error_json(request, "502 Bad Gateway",
-                               "invalid_doubao_response",
-                               "Doubao returned invalid practice advice JSON");
+                               "invalid_advice_json",
+                               "DeepSeek returned invalid practice advice JSON");
     }
-    cJSON *advice_ok = cJSON_GetObjectItemCaseSensitive(advice, "ok");
-    return send_json(request,
-                     cJSON_IsFalse(advice_ok) ? "502 Bad Gateway" : "200 OK",
-                     advice);
+    return send_json(request, "200 OK", advice);
 }
 
 static bool contains_search_text(const char *text, const char *search)
@@ -1869,12 +2060,21 @@ esp_err_t device_api_start(void)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_uri_handlers = 36;
+    config.max_open_sockets = DEVICE_API_MAX_OPEN_SOCKETS;
     config.stack_size = 16384;
+    /* Request handlers can commit NVS and access partition-backed storage.
+     * IDF 5.5.3 requires the active task stack to remain accessible while
+     * flash disables cache. Request bodies and other large buffers still use
+     * their existing PSRAM allocations. */
+    config.task_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
     config.lru_purge_enable = true;
     esp_err_t err = httpd_start(&s_server, &config);
     if (err != ESP_OK) {
         return err;
     }
+    ESP_LOGI(TAG,
+             "socket budget ready: http_clients=%u http_internal=3 lwip_max=%d",
+             (unsigned)config.max_open_sockets, CONFIG_LWIP_MAX_SOCKETS);
 
     const httpd_uri_t routes[] = {
         {.uri = "/api/ping", .method = HTTP_GET, .handler = ping_handler},

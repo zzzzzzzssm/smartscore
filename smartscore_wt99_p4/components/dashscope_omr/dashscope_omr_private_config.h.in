@@ -1,0 +1,4 @@
+#pragma once
+
+/* Generated in the private build directory. Never log or commit this file. */
+#define DASHSCOPE_API_KEY "@DASHSCOPE_OMR_API_KEY_VALUE@"

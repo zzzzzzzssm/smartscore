@@ -37,6 +37,7 @@ function todayText() {
 function normalizeScore(raw, overrides = {}) {
   const source = Object.assign({}, raw || {}, overrides || {});
   const notes = normalizeNotes(source.notes);
+  const compactScore = source.compact_score || source.compactScore || null;
   const bpm = Number(source.bpm);
   return {
     id: String(source.id || newScoreId()),
@@ -51,6 +52,10 @@ function normalizeScore(raw, overrides = {}) {
     source: String(source.source || '手机本地'),
     originFilename: String(source.originFilename || ''),
     localFilePath: String(source.localFilePath || ''),
+    compact_score: compactScore,
+    eventCount: Number(source.eventCount || source.event_count || 0),
+    playbackReady: source.playbackReady !== false &&
+      source.playback_ready !== false,
     notes
   };
 }
@@ -79,6 +84,9 @@ function writeScoreFile(score) {
     time_signature: score.time_signature,
     key: score.key,
     source: score.source,
+    compact_score: score.compact_score,
+    event_count: score.eventCount,
+    playback_ready: score.playbackReady,
     notes: score.notes
   };
   wx.getFileSystemManager().writeFileSync(
@@ -109,7 +117,7 @@ function saveScore(raw, overrides = {}) {
   const score = normalizeScore(raw, Object.assign({}, overrides, {
     id: overrides.id || newScoreId()
   }));
-  if (!score.notes.length) {
+  if (!score.notes.length && !score.compact_score) {
     throw new Error('乐谱没有可用音符');
   }
   score.localFilePath = writeScoreFile(score);

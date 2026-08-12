@@ -1359,14 +1359,14 @@ esp_err_t score_engine_build_midi_result_json(
     float total_score = 0.0f;
     if (!no_reliable_attempt) {
         if (rhythm_evaluable) {
-            total_score = 0.55f * pitch_score +
-                          0.25f * rhythm_score +
-                          0.10f * fluency_score +
-                          0.10f * complete_score;
+            total_score = (complete_score / 100.0f) *
+                          ((55.0f * pitch_score +
+                            25.0f * rhythm_score +
+                            10.0f * fluency_score) / 90.0f);
         } else {
-            total_score = (0.55f * pitch_score +
-                           0.10f * fluency_score +
-                           0.10f * complete_score) / 0.75f;
+            total_score = (complete_score / 100.0f) *
+                          ((55.0f * pitch_score +
+                            10.0f * fluency_score) / 65.0f);
         }
         total_score = clamp_float(total_score, 0.0f, 100.0f);
     } else {
@@ -1427,9 +1427,11 @@ esp_err_t score_engine_build_midi_result_json(
     json_append_escaped(&header, score->title);
     json_appendf(
         &header,
-        ",\"input_source\":\"%s\",\"profile\":\"beginner_mono_v2\","
+        ",\"practice_bpm\":%u,\"piece_duration_sec\":%.3f,"
+        "\"input_source\":\"%s\",\"profile\":\"beginner_mono_v2\","
         "\"scoring_version\":\"2.1.0\",\"score_status\":\"%s\","
         "\"scorable\":%s,\"official_score\":%s,\"level\":",
+        (unsigned)score->bpm, (double)score_end_ms / 1000.0,
         input_source, score_status,
         scorable ? "true" : "false",
         official_score ? "true" : "false");

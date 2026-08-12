@@ -1,4 +1,15 @@
-# 乐谱解析测试
+# Compact score host tests
 
-后续记录乐谱数据解析测试范围。
-当前状态：仅建立目录与说明占位，尚未实现。
+These tests compile the production `compact_score.c` and
+`dashscope_omr_response.c` sources with ESP-IDF's cJSON source. They do not
+contain or require an API key.
+
+Run on Windows with Visual Studio Build Tools installed:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tests/score_parser_test/run_tests.ps1
+```
+
+The suite covers numbered notation, a two-staff piano score, deterministic
+sorting, measure and schema errors, both JSON response layers,
+`finish_reason=length`, usage parsing, and HTTP retry policy.

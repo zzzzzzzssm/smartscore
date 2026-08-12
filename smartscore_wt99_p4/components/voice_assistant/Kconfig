@@ -1,0 +1,29 @@
+menu "Qwen Audio Realtime voice assistant"
+
+    config SMARTSCORE_QWEN_AUDIO_REALTIME_ASSISTANT
+        bool "Enable Qwen-Audio-Realtime-Plus voice assistant"
+        default y
+        depends on SMARTSCORE_SPEAKER_ENABLED
+
+    config SMARTSCORE_QWEN_AUDIO_REALTIME_ENDPOINT
+        string "WebSocket endpoint"
+        default "wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen-audio-3.0-realtime-plus"
+        depends on SMARTSCORE_QWEN_AUDIO_REALTIME_ASSISTANT
+
+    config SMARTSCORE_QWEN_AUDIO_REALTIME_VOICE
+        string "Output voice"
+        default "longanqian"
+        depends on SMARTSCORE_QWEN_AUDIO_REALTIME_ASSISTANT
+
+    config SMARTSCORE_QWEN_AUDIO_REALTIME_INSTRUCTIONS
+        string "System instructions"
+        default "You are the SmartScore piano voice assistant. Answer naturally and concisely in Chinese. The phrase 你好小智 is only a wake phrase and is not the user's question."
+        depends on SMARTSCORE_QWEN_AUDIO_REALTIME_ASSISTANT
+
+    config SMARTSCORE_QWEN_AUDIO_REALTIME_RECONNECT_MS
+        int "WebSocket reconnect delay (milliseconds)"
+        range 1000 30000
+        default 3000
+        depends on SMARTSCORE_QWEN_AUDIO_REALTIME_ASSISTANT
+
+endmenu

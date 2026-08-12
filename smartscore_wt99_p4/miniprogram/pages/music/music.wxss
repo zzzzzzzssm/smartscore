@@ -11,12 +11,12 @@
 .offline-card { margin-top:20rpx; padding:28rpx; border:1rpx solid #f5d7a7; border-radius:20rpx; background:#fffbeb; text-align:left; box-shadow:0 12rpx 32rpx rgba(23,32,51,.06); }
 .offline-title { margin-bottom:8rpx; color:#92400e; font-size:30rpx; font-weight:800; }
 .offline-card button { width:220rpx; min-height:64rpx; margin:20rpx 0 0; padding:0 20rpx; font-size:25rpx; line-height:64rpx; }
-.card-title { font-size:30rpx; font-weight:800; }
+.card-title { font-size:32rpx; font-weight:800; }
 .volume-card { padding-top:22rpx; padding-bottom:22rpx; }
 .volume-card slider { margin:18rpx 0 8rpx; }
-.volume-value { color:#0f766e; font-size:42rpx; font-weight:900; }
-.control-row { gap:12rpx; margin-top:12rpx; }
-.control-btn { flex:1; min-width:0; min-height:64rpx; padding:0 10rpx; font-size:25rpx; line-height:64rpx; }
+.volume-value { color:#0f766e; font-size:46rpx; font-weight:900; }
+.control-row { gap:16rpx; margin-top:14rpx; }
+.control-btn { flex:1; min-width:0; min-height:66rpx; padding:0 10rpx; font-size:28rpx; line-height:66rpx; }
 .stop-btn { border-radius:16rpx; color:#b42318; background:#fff1f0; font-weight:700; }
 .section-title.compact { margin:0; font-size:32rpx; }
 .refresh-btn { display:flex; align-items:center; justify-content:center; flex:0 0 116rpx; width:116rpx; min-width:0; min-height:58rpx; padding:0; border-radius:14rpx; color:#0f766e; background:#e8f7f5; box-sizing:border-box; font-size:23rpx; line-height:1; }

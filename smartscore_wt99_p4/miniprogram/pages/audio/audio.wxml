@@ -16,20 +16,11 @@
     <view class="hint">当前只测试屏幕与小程序的控制状态同步，不会产生实际声音。</view>
   </view>
 
-  <view class="offline-card" wx:if="{{!online}}">
-    <view class="offline-title">{{configured ? '设备暂时离线' : '离线预览模式'}}</view>
-    <view class="hint">
-      {{configured ? '正在等待设备恢复连接；当前可预览和调整参数。' : '当前可预览和调整参数，连接设备后即可播放。'}}
-    </view>
-    <button class="primary-btn" bindtap="openDevicePage">前往设备页</button>
-  </view>
-
   <view class="section">
     <view class="card master-card compact-volume">
       <view class="row between">
         <view>
           <view class="card-title">音量</view>
-          <view class="hint">页面 0～100 · 扬声器安全映射到 0～80</view>
         </view>
         <view class="volume-value">{{volume}}</view>
       </view>
@@ -46,7 +37,7 @@
       <view class="row between">
         <view>
           <view class="section-title compact">节拍器</view>
-          <view class="hint">{{online ? '30～240 BPM · 由设备扬声器播放' : '30～240 BPM · 当前为离线参数预览'}}</view>
+          <view class="hint">30～240 BPM · 由设备扬声器播放</view>
         </view>
         <view class="bpm-badge"><text>{{bpm}}</text> BPM</view>
       </view>
@@ -81,7 +72,7 @@
     <view class="section-head">
       <view>
         <view class="section-title compact">校准音</view>
-        <view class="hint">{{online ? '选择音高后会替换当前播放源' : '可提前选择时长；连接设备后播放音高'}}</view>
+        <view class="hint">选择音高后会替换当前播放源</view>
       </view>
       <picker mode="selector" range="{{durationLabels}}" value="{{durationIndex}}" bindchange="onDurationChange">
         <view class="select-pill">{{durationLabels[durationIndex]}}⌄</view>

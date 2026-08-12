@@ -16,41 +16,41 @@
   <view class="section">
     <view class="section-heading-row">
       <view class="section-title">核心功能</view>
-      <button class="connect-mini" bindtap="goDevice">
+      <button class="connect-mini" bindtap="goDevice" style="position: relative; left: 106rpx; top: 1rpx">
         <text class="connect-dot"></text>
         连接设备
       </button>
     </view>
     <view class="feature-grid">
       <view class="feature-card" bindtap="goScores">
-        <view class="feature-icon score-icon">♬</view>
+        <view class="feature-icon score-icon"style="font-size: 48rpx;">♬</view>
         <view class="feature-title">上传乐谱</view>
-        <view class="feature-desc">导入图片、JSON 或 MIDI</view>
+        <view class="feature-desc">支持图片、JSON 和 MIDI</view>
       </view>
       <view class="feature-card" bindtap="goPractice">
-        <view class="feature-icon practice-icon">▶</view>
+        <view class="feature-icon practice-icon"style="font-size: 48rpx;">▶</view>
         <view class="feature-title">开始练习</view>
-        <view class="feature-desc">音准、节奏、完整度评分</view>
+        <view class="feature-desc">边演奏边查看实时反馈</view>
       </view>
       <view class="feature-card" bindtap="goAudioTools">
-        <view class="feature-icon audio-icon">♩</view>
+        <view class="feature-icon audio-icon"style="font-size: 48rpx;">♩</view>
         <view class="feature-title">节拍器与校准音</view>
-        <view class="feature-desc">速度、拍号与标准音参考</view>
+        <view class="feature-desc">练节奏、校音准</view>
       </view>
       <view class="feature-card" bindtap="goMusic">
-        <view class="feature-icon music-icon">♫</view>
+        <view class="feature-icon music-icon"style="font-size: 48rpx;">♫</view>
         <view class="feature-title">音乐播放模式</view>
-        <view class="feature-desc">搜索并播放 SD 卡音乐</view>
+        <view class="feature-desc">播放乐谱或本地音乐</view>
       </view>
       <view class="feature-card" bindtap="goHistory">
-        <view class="feature-icon history-icon">↺</view>
+        <view class="feature-icon history-icon" style="font-size: 48rpx;">↺</view>
         <view class="feature-title">查看记录</view>
-        <view class="feature-desc">追踪每次练习表现</view>
+        <view class="feature-desc">回顾成绩与练习进步</view>
       </view>
       <view class="feature-card" bindtap="goCreator">
-        <view class="feature-icon creator-icon">✦</view>
+        <view class="feature-icon creator-icon"style="font-size: 48rpx;">✦</view>
         <view class="feature-title">创作者模式</view>
-        <view class="feature-desc">弹奏录入、暂停续写与 SD 保存</view>
+        <view class="feature-desc">录下灵感，随时保存</view>
       </view>
     </view>
   </view>

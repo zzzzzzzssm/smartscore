@@ -20,6 +20,7 @@ typedef enum {
     SPEAKER_STATE_METRONOME,
     SPEAKER_STATE_FILE,
     SPEAKER_STATE_FILE_PAUSED,
+    SPEAKER_STATE_STREAM,
     SPEAKER_STATE_ERROR,
 } speaker_state_t;
 
@@ -55,6 +56,21 @@ typedef struct {
     board_audio_status_t hardware;
 } speaker_status_t;
 
+typedef struct {
+    bool active;
+    bool held;
+    bool output_started;
+    bool rebuffering;
+    bool finish_requested;
+    size_t capacity_bytes;
+    size_t buffered_bytes;
+    size_t max_buffered_bytes;
+    uint64_t received_bytes;
+    uint64_t played_bytes;
+    uint32_t underruns;
+    uint32_t backpressure_events;
+} speaker_stream_metrics_t;
+
 esp_err_t speaker_service_init(void);
 /* Initialize the same control/status API without ES8311, I2S or PCM output. */
 esp_err_t speaker_service_init_control_only(void);
@@ -65,6 +81,21 @@ esp_err_t speaker_service_play_tone(float frequency_hz,
 esp_err_t speaker_service_stop(void);
 esp_err_t speaker_service_set_volume(uint8_t percent);
 esp_err_t speaker_service_set_mute(bool muted);
+
+/* 16-bit mono PCM stream path used by real-time assistants. */
+esp_err_t speaker_service_stream_start(uint32_t sample_rate_hz);
+/* Prepare the same single PSRAM ring without allowing I2S consumption yet. */
+esp_err_t speaker_service_stream_start_held(uint32_t sample_rate_hz);
+/* Release a held stream. Existing prebuffer/rebuffer rules still apply. */
+esp_err_t speaker_service_stream_release(void);
+/* Non-blocking backpressure API. accepted_samples may be smaller than
+ * sample_count; the caller must retain and retry the unaccepted tail. */
+esp_err_t speaker_service_stream_write(const int16_t *pcm,
+                                       size_t sample_count,
+                                       size_t *accepted_samples);
+esp_err_t speaker_service_stream_finish(void);
+esp_err_t speaker_service_stream_abort(void);
+void speaker_service_stream_get_metrics(speaker_stream_metrics_t *out_metrics);
 
 esp_err_t speaker_service_metronome_start(uint16_t bpm,
                                           uint8_t beats_per_measure,

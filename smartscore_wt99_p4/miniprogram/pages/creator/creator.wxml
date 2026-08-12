@@ -82,14 +82,8 @@
       <button class="danger-btn" data-action="cancel" bindtap="runAction"
               disabled="{{busy}}">取消创作</button>
     </view>
-    <view class="hint action-hint">录制完成后请先暂停，再保存到设备 SD 卡；保存后可在“乐谱 → 设备 SD 卡”中读取。</view>
+    
   </view>
 
-  <view class="card connection-help" wx:if="{{!status.available}}">
-    <view>
-      <view class="help-title">设备尚未就绪</view>
-      <view class="hint">先连接谱伴设备并确认手机与设备处于同一网络。</view>
-    </view>
-    <button class="secondary-btn help-button" bindtap="openDevice">连接设备</button>
-  </view>
+  
 </view>

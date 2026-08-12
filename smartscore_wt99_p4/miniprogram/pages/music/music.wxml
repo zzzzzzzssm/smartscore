@@ -16,21 +16,12 @@
     <view class="hint">播放、暂停、停止与音量状态仍会和屏幕同步，但当前不会输出声音。</view>
   </view>
 
-  <view class="offline-card" wx:if="{{!online}}">
-    <view class="offline-title">{{configured ? '设备暂时离线' : '离线预览模式'}}</view>
-    <view class="hint">
-      {{configured ? '正在等待设备恢复连接；当前可提前查看播放器界面。' : '当前可提前查看播放器界面，连接设备后读取 SD 卡。'}}
-    </view>
-    <button class="primary-btn" bindtap="openDevicePage">前往设备页</button>
-  </view>
-
   <block>
     <view class="section">
       <view class="card volume-card">
         <view class="row between">
           <view>
             <view class="card-title">音量</view>
-            <view class="hint">{{online ? '页面 0～100 · 扬声器映射到 0～80' : '音量控制将在连接设备后生效'}}</view>
           </view>
           <view class="volume-value">{{volume}}</view>
         </view>
@@ -47,7 +38,7 @@
       <view class="section-head">
         <view>
           <view class="section-title compact">SD 卡曲库</view>
-          <view class="hint">{{online ? '/sdcard/wav · 每页 10 首' : '连接设备后读取 /sdcard/wav'}}</view>
+          <view class="hint">/sdcard/wav · 每页 10 首</view>
         </view>
         <view class="refresh-btn {{filesLoading ? 'disabled' : ''}}" bindtap="refreshFiles" hover-class="control-hover">{{filesLoading ? '刷新中' : '刷新'}}</view>
       </view>

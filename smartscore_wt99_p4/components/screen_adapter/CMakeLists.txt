@@ -7,6 +7,8 @@ idf_component_register(
         app_font
         common
         display_board_adapter
+        esp_hw_support
+        heap
         input_source_manager
         json
         music_display

@@ -24,6 +24,58 @@ function emptyResult() {
   };
 }
 
+function adviceText(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function formatPracticeAdvice(result) {
+  const summary = adviceText(result && result.summary);
+  const focus = Array.isArray(result && result.focus) ? result.focus : [];
+  const session = result && result.next_session;
+  const steps = session && Array.isArray(session.steps) ? session.steps : [];
+  if (!summary || focus.length === 0 || !session || steps.length === 0) {
+    throw new Error('DeepSeek 返回的练习建议不完整');
+  }
+
+  const lines = [summary, '', '优先练习：'];
+  focus.slice(0, 3).forEach((item, index) => {
+    const practice = item && item.practice ? item.practice : {};
+    const problem = adviceText(item && item.problem);
+    const action = adviceText(practice.action);
+    const target = adviceText(practice.target);
+    if (!problem || !action || !target) {
+      throw new Error('DeepSeek 返回的重点建议不完整');
+    }
+    lines.push(`${index + 1}. ${problem}`);
+    const evidence = (Array.isArray(item.evidence) ? item.evidence : [])
+      .map(adviceText)
+      .filter(Boolean);
+    if (evidence.length) lines.push(`依据：${evidence.join('；')}`);
+    lines.push(`练习：${action}`);
+    lines.push(`参数：${practice.bpm} BPM，${practice.minutes}分钟，重复${practice.repetitions}次`);
+    lines.push(`达标：${target}`);
+  });
+
+  lines.push('', `下次练习（${session.total_minutes}分钟）：`);
+  steps.forEach((step, index) => {
+    const action = adviceText(step && step.action);
+    if (!action) throw new Error('DeepSeek 返回的练习步骤不完整');
+    lines.push(`${index + 1}. ${action}（${step.minutes}分钟）`);
+  });
+
+  const encouragement = adviceText(result.encouragement);
+  if (encouragement) lines.push('', encouragement);
+  const insufficient = (Array.isArray(result.insufficient_data)
+    ? result.insufficient_data
+    : [])
+    .map(adviceText)
+    .filter(Boolean);
+  if (insufficient.length) {
+    lines.push('', `数据不足：${insufficient.join('；')}`);
+  }
+  return lines.join('\n');
+}
+
 Page({
   data: {
     scoreTitle: '未选择乐谱',
@@ -32,6 +84,7 @@ Page({
     statusClass: '',
     isRecording: false,
     isStarting: false,
+    isAdviceLoading: false,
     preparationValid: false,
     preparationChanging: false,
     preparationRevision: 0,
@@ -75,6 +128,7 @@ Page({
   },
 
   onShow() {
+    this.pageVisible = true;
     const app = getApp();
     const current = scoreLibrary.getCurrentScore() || app.globalData.currentScore;
     this.setData({
@@ -85,15 +139,18 @@ Page({
   },
 
   onHide() {
+    this.pageVisible = false;
     this.stopStatusPolling();
   },
 
   onUnload() {
+    this.pageVisible = false;
     this.stopStatusPolling();
   },
 
   startStatusPolling() {
     this.stopStatusPolling();
+    if (!this.pageVisible || this.data.isAdviceLoading) return;
     this.refreshLiveStatus();
     this.statusTimer = setInterval(() => this.refreshLiveStatus(), 1000);
   },
@@ -141,6 +198,9 @@ Page({
   },
 
   refreshLiveStatus() {
+    if (this.statusRefreshInFlight || this.data.isAdviceLoading) {
+      return Promise.resolve(false);
+    }
     if (!api.getBaseUrl()) {
       this.setData({
         liveStatus: {
@@ -156,10 +216,11 @@ Page({
           message: '请先在设备页完成蓝牙和 Wi-Fi 连接'
         }
       });
-      return;
+      return Promise.resolve(false);
     }
 
-    Promise.all([
+    this.statusRefreshInFlight = true;
+    return Promise.all([
       api.getStatus(),
       api.getCreatorStatus().catch(() => null),
       api.getPracticePreparation().catch(() => null)
@@ -240,6 +301,9 @@ Page({
             message: '无法连接到设备，请检查设备地址和网络'
           }
         });
+      })
+      .finally(() => {
+        this.statusRefreshInFlight = false;
       });
   },
 
@@ -791,29 +855,17 @@ Page({
   },
 
   requestAiScore() {
+    if (this.adviceRequestInFlight || this.data.isAdviceLoading) return false;
+    this.adviceRequestInFlight = true;
+    this.stopStatusPolling();
+    this.setData({ isAdviceLoading: true });
     wx.showLoading({ title: 'AI 分析中' });
-    api.requestAiScore()
+    return api.requestAiScore()
       .then((result) => {
         if (!result || result.ok === false) {
-          throw new Error(api.messageText(result && result.message, 'AI 评分失败'));
+          throw new Error(api.messageText(result && result.message, 'AI 建议生成失败'));
         }
-        const totalScore = result.ai_total_score === undefined ||
-          result.ai_total_score === null
-          ? '-'
-          : result.ai_total_score;
-        const plan = (Array.isArray(result.practice_plan)
-          ? result.practice_plan
-          : [])
-          .filter((item) => typeof item === 'string' && item.trim())
-          .slice(0, 5)
-          .map((item, index) => `${index + 1}. ${item.trim()}`)
-          .join('\n');
-        const content = [
-          result.level || '分析完成',
-          `总分：${totalScore}`,
-          result.summary || '',
-          plan ? `练习建议：\n${plan}` : ''
-        ].filter(Boolean).join('\n');
+        const content = formatPracticeAdvice(result);
         wx.showModal({
           title: 'AI 练习建议',
           content,
@@ -822,9 +874,17 @@ Page({
       })
       .catch((err) => wx.showModal({
         title: 'AI 建议未完成',
-        content: `${api.errorMessage(err, 'AI 分析失败')}\n请确认设备页地址、ESP32 网络和 VEI_API_KEY 配置。`,
+        content: `${api.errorMessage(err, 'AI 分析失败')}\n请确认设备页地址、ESP32 网络和 DEEPSEEK_API_KEY 配置。`,
         showCancel: false
       }))
-      .finally(() => wx.hideLoading());
-  }
+      .finally(() => {
+        this.adviceRequestInFlight = false;
+        wx.hideLoading();
+        this.setData({ isAdviceLoading: false }, () => {
+          if (this.pageVisible) this.startStatusPolling();
+        });
+      });
+  },
+
+  formatPracticeAdvice
 });
