@@ -1,6 +1,7 @@
 #include "es7210_capture.h"
 
 #include <inttypes.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
@@ -16,6 +17,7 @@
 #include "es7210_adc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "board_pins.h"
 #include "diagnostics.h"
@@ -51,6 +53,8 @@ static const audio_codec_if_t *s_codec_if;
 static esp_codec_dev_handle_t s_codec_dev;
 static QueueHandle_t s_free_queue;
 static QueueHandle_t s_filled_queue;
+static SemaphoreHandle_t s_codec_lock;
+static volatile float s_input_gain_db = MUSIC_ES7210_INPUT_GAIN_DB;
 static audio_capture_block_t s_blocks[MUSIC_CAPTURE_BUFFER_COUNT];
 static int16_t s_interleaved[MUSIC_CAPTURE_FRAMES * BOARD_AUDIO_CHANNELS];
 static int s_mic1_slot_index = BOARD_MIC1_SLOT_INDEX;
@@ -400,6 +404,7 @@ static esp_err_t initialize_codec(void)
                         ESP_FAIL, TAG, "opening ES7210 input failed");
     ESP_RETURN_ON_FALSE(esp_codec_dev_set_in_gain(s_codec_dev, MUSIC_ES7210_INPUT_GAIN_DB) == ESP_CODEC_DEV_OK,
                         ESP_FAIL, TAG, "setting ES7210 input gain failed");
+    s_input_gain_db = MUSIC_ES7210_INPUT_GAIN_DB;
 
     uint8_t power = 0;
     ESP_RETURN_ON_ERROR(read_register(ES7210_REG_MIC12_POWER, &power), TAG, "MIC power read failed");
@@ -455,6 +460,9 @@ esp_err_t es7210_capture_init(void)
     ESP_RETURN_ON_ERROR(confirm_dual_slot_mapping(), TAG,
                         "dual microphone enable/mapping validation failed");
 #endif
+    s_codec_lock = xSemaphoreCreateMutex();
+    ESP_RETURN_ON_FALSE(s_codec_lock != NULL, ESP_ERR_NO_MEM, TAG,
+                        "codec mutex allocation failed");
     s_free_queue = xQueueCreate(MUSIC_CAPTURE_BUFFER_COUNT, sizeof(int));
     s_filled_queue = xQueueCreate(MUSIC_CAPTURE_BUFFER_COUNT, sizeof(int));
     ESP_RETURN_ON_FALSE(s_free_queue && s_filled_queue, ESP_ERR_NO_MEM, TAG, "capture queue allocation failed");
@@ -475,7 +483,10 @@ static void audio_capture_task(void *argument)
             ++counters->dropped_buffer_count;
             continue;
         }
-        const int error = esp_codec_dev_read(s_codec_dev, s_interleaved, sizeof(s_interleaved));
+        xSemaphoreTake(s_codec_lock, portMAX_DELAY);
+        const int error = esp_codec_dev_read(s_codec_dev, s_interleaved,
+                                             sizeof(s_interleaved));
+        xSemaphoreGive(s_codec_lock);
         if (error != ESP_CODEC_DEV_OK) {
             ++counters->i2s_read_error_count;
             xQueueSend(s_free_queue, &index, portMAX_DELAY);
@@ -507,6 +518,40 @@ esp_err_t es7210_capture_start(void)
     const BaseType_t result = xTaskCreatePinnedToCore(audio_capture_task, "AudioCaptureTask", 4096,
                                                        NULL, 22, NULL, 0);
     return result == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
+}
+
+static bool supported_gain(float gain_db)
+{
+    static const float gains[] = {
+        MUSIC_ES7210_GAIN_OPTION_1_DB,
+        MUSIC_ES7210_GAIN_OPTION_2_DB,
+        MUSIC_ES7210_GAIN_OPTION_3_DB,
+        MUSIC_ES7210_GAIN_OPTION_4_DB,
+        MUSIC_ES7210_GAIN_OPTION_5_DB,
+    };
+    for (size_t index = 0; index < sizeof(gains) / sizeof(gains[0]); ++index) {
+        if (fabsf(gain_db - gains[index]) < 0.1f) return true;
+    }
+    return false;
+}
+
+esp_err_t es7210_capture_set_input_gain(float gain_db)
+{
+    if (!supported_gain(gain_db)) return ESP_ERR_INVALID_ARG;
+    if (s_codec_dev == NULL || s_codec_lock == NULL) return ESP_ERR_INVALID_STATE;
+    if (fabsf(s_input_gain_db - gain_db) < 0.1f) return ESP_OK;
+    if (xSemaphoreTake(s_codec_lock, pdMS_TO_TICKS(250)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    const int result = esp_codec_dev_set_in_gain(s_codec_dev, gain_db);
+    if (result == ESP_CODEC_DEV_OK) s_input_gain_db = gain_db;
+    xSemaphoreGive(s_codec_lock);
+    return result == ESP_CODEC_DEV_OK ? ESP_OK : ESP_FAIL;
+}
+
+float es7210_capture_get_input_gain(void)
+{
+    return s_input_gain_db;
 }
 
 int es7210_capture_take_block(audio_capture_block_t **block, uint32_t timeout_ms)

@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "s3_bus.h"
 #include "usb_midi.h"
 
 #ifdef __cplusplus
@@ -16,6 +17,9 @@ esp_err_t screen_adapter_start(void);
 
 /** Fan current USB MIDI events into Creator Mode and live score coloring. */
 void screen_adapter_handle_usb_midi_event(const usb_midi_event_t *event);
+
+/** Fan an Audio S3 event into device-only diagnostic UI. */
+void screen_adapter_handle_audio_s3_event(const s3_music_event_t *event);
 
 bool screen_adapter_is_ready(void);
 

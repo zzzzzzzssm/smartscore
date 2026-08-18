@@ -56,6 +56,45 @@ typedef enum {
 #define MUSIC_INTERVAL_MAX_ACTIVE_CLASSES       4
 #define MUSIC_FUNDAMENTAL_NOISE_MULTIPLIER      2.2f
 #define MUSIC_FUNDAMENTAL_RELATIVE_THRESHOLD    0.04f
+
+/* The demo profile is enabled only by the P4 note-monitor session.  Absolute
+ * noise rejection and temporal voting stay unchanged, while weak independent
+ * fundamentals are allowed to contribute to an interval/chord. */
+#define MUSIC_DEMO_INTERVAL_MAX_ACTIVE_CLASSES   5
+#define MUSIC_DEMO_INITIAL_GAIN_DB               24.0f
+#define MUSIC_DEMO_MIN_GAIN_DB                   18.0f
+#define MUSIC_DEMO_MAX_GAIN_DB                   30.0f
+#define MUSIC_DEMO_GAIN_STEP_DB                   3.0f
+#define MUSIC_DEMO_GAIN_SETTLE_MS               350U
+#define MUSIC_DEMO_CLIP_CONFIRM_FRAMES            2U
+#define MUSIC_DEMO_LOW_PEAK_THRESHOLD            0.08f
+#define MUSIC_DEMO_LOW_PEAK_RAISE_MS           3000U
+#define MUSIC_DEMO_AMBIENT_TRACK_ALPHA            0.006f
+#define MUSIC_DEMO_SNR_HIGH_DB                   18.0f
+#define MUSIC_DEMO_SNR_MEDIUM_DB                 10.0f
+#define MUSIC_DEMO_SNR_MIN_DB                     6.0f
+#define MUSIC_DEMO_HIGH_SNR_INTERVAL_THRESHOLD    0.48f
+#define MUSIC_DEMO_MEDIUM_SNR_INTERVAL_THRESHOLD  0.52f
+#define MUSIC_DEMO_HIGH_SNR_CHORD_THRESHOLD       0.58f
+#define MUSIC_DEMO_MEDIUM_SNR_CHORD_THRESHOLD     0.61f
+#define MUSIC_DEMO_HIGH_SNR_ACTIVE_THRESHOLD      0.12f
+#define MUSIC_DEMO_MEDIUM_SNR_ACTIVE_THRESHOLD    0.15f
+#define MUSIC_DEMO_HIGH_SNR_RELATIVE_THRESHOLD    0.020f
+#define MUSIC_DEMO_MEDIUM_SNR_RELATIVE_THRESHOLD  0.030f
+#define MUSIC_DEMO_HIGH_SNR_INTERVAL_CONSECUTIVE  3
+#define MUSIC_DEMO_MEDIUM_SNR_INTERVAL_CONSECUTIVE 4
+#define MUSIC_DEMO_CHORD_CONSECUTIVE               4
+#define MUSIC_DEMO_POLY_MAX_ACTIVE_CLASSES         4
+#define MUSIC_DEMO_POLY_MIN_RELATIVE              0.30f
+#define MUSIC_DEMO_POLY_MIN_PROMINENCE            1.08f
+#define MUSIC_DEMO_CHORD_MIN_RELATIVE             0.32f
+#define MUSIC_DEMO_CHORD_MIN_PROMINENCE           1.10f
+#define MUSIC_DEMO_STRONG_SINGLE_SECONDARY_RELATIVE 0.45f
+#define MUSIC_DEMO_ADJACENT_MIN_RELATIVE          0.45f
+#define MUSIC_DEMO_ADJACENT_MIN_PROMINENCE        1.25f
+#define MUSIC_DEMO_ADJACENT_MIN_PEAK_BINS          3
+#define MUSIC_SPECTRUM_LOW_BAND_MAX_HZ           250.0f
+#define MUSIC_SPECTRUM_MID_BAND_MAX_HZ           800.0f
 #define MUSIC_HARMONIC_SUPPORT_WEIGHT           0.45f
 #define MUSIC_HARMONIC_SUPPRESSION_WEIGHT       0.85f
 #define MUSIC_HARMONIC_RATIO_TOLERANCE          0.03f

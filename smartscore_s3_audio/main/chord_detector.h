@@ -35,6 +35,7 @@ typedef struct {
     float confidence;
     float chroma[12];
     float spectrum_noise_floor;
+    float band_noise_floor[3];
     int harmonic_rejected_count;
     int debug_candidate_count;
     chord_candidate_debug_t debug_candidates[CHORD_DEBUG_CANDIDATE_COUNT];
@@ -42,6 +43,7 @@ typedef struct {
 
 int chord_detector_init(void);
 void chord_detector_analyze(const float *mic1_ring, const float *mic2_ring,
-                            size_t write_position, float mic1_rms, float mic2_rms,
-                            chord_result_t *result);
+                            size_t write_position, float mic1_weight,
+                            float mic2_weight, bool demo_profile,
+                            float signal_snr_db, chord_result_t *result);
 float chord_detector_harmonic_explained_ratio(float fundamental_hz);

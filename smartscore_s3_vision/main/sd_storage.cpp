@@ -54,7 +54,7 @@ esp_err_t SdStorage::init()
     mount_config.allocation_unit_size = vision_config::kSdAllocationUnitBytes;
     mount_config.disk_status_check_enable = true;
     mount_config.use_one_fat = false;
-    mount_config.rootdir_entries = 0;
+    //mount_config.rootdir_entries = 0;
 
     const esp_err_t err = esp_vfs_fat_sdmmc_mount(
         vision_config::kSdMountPoint, &host, &slot, &mount_config, &card_);

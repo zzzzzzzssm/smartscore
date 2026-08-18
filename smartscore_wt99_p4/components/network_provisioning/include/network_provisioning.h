@@ -17,6 +17,12 @@ esp_err_t network_provisioning_submit_credentials(int request_id,
 esp_err_t network_provisioning_submit_reset(int request_id);
 esp_err_t network_provisioning_submit_scan(int request_id);
 
+/** Read the already saved credentials for the dedicated voice-S3 handoff. */
+esp_err_t network_provisioning_get_saved_credentials(char *ssid,
+                                                      size_t ssid_size,
+                                                      char *password,
+                                                      size_t password_size);
+
 network_status_t network_provisioning_get_status(void);
 const char *network_provisioning_state_name(network_state_t state);
 

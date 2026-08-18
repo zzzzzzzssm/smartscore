@@ -7,10 +7,24 @@ static uint16_t read_u16_le(const uint8_t *data)
     return (uint16_t)data[0] | ((uint16_t)data[1] << 8U);
 }
 
+static uint32_t read_u32_le(const uint8_t *data)
+{
+    return (uint32_t)data[0] | ((uint32_t)data[1] << 8U) |
+           ((uint32_t)data[2] << 16U) | ((uint32_t)data[3] << 24U);
+}
+
 static void write_u16_le(uint8_t *data, uint16_t value)
 {
     data[0] = (uint8_t)(value & 0xFFU);
     data[1] = (uint8_t)(value >> 8U);
+}
+
+static void write_u32_le(uint8_t *data, uint32_t value)
+{
+    data[0] = (uint8_t)(value & 0xFFU);
+    data[1] = (uint8_t)((value >> 8U) & 0xFFU);
+    data[2] = (uint8_t)((value >> 16U) & 0xFFU);
+    data[3] = (uint8_t)((value >> 24U) & 0xFFU);
 }
 
 uint16_t voice_link_crc16(const void *data, size_t length)
@@ -30,7 +44,7 @@ uint16_t voice_link_crc16(const void *data, size_t length)
 
 esp_err_t voice_link_encode_packet(uint8_t type,
                                    uint8_t flags,
-                                   uint16_t sequence,
+                                   uint32_t sequence,
                                    const void *payload,
                                    uint16_t payload_length,
                                    uint8_t *output,
@@ -53,13 +67,13 @@ esp_err_t voice_link_encode_packet(uint8_t type,
     output[2] = VOICE_LINK_VERSION;
     output[3] = type;
     output[4] = flags;
-    write_u16_le(&output[5], sequence);
-    write_u16_le(&output[7], payload_length);
-    write_u16_le(&output[9], voice_link_crc16(&output[2], 7U));
+    write_u32_le(&output[5], sequence);
+    write_u16_le(&output[9], payload_length);
+    write_u16_le(&output[11], voice_link_crc16(&output[2], 9U));
     if (payload_length > 0U) {
-        memcpy(&output[11], payload, payload_length);
+        memcpy(&output[13], payload, payload_length);
     }
-    write_u16_le(&output[11U + payload_length],
+    write_u16_le(&output[13U + payload_length],
                  voice_link_crc16(payload, payload_length));
     *output_length = required;
     return ESP_OK;
@@ -84,14 +98,14 @@ voice_link_parse_result_t voice_link_parser_feed(
             return VOICE_LINK_PARSE_MORE;
         }
         if (parser->header[0] != VOICE_LINK_VERSION ||
-            read_u16_le(&parser->header[7]) !=
-                voice_link_crc16(parser->header, 7U)) {
+            read_u16_le(&parser->header[9]) !=
+                voice_link_crc16(parser->header, 9U)) {
             return VOICE_LINK_PARSE_ERROR;
         }
         parser->packet.type = parser->header[1];
         parser->packet.flags = parser->header[2];
-        parser->packet.sequence = read_u16_le(&parser->header[3]);
-        parser->packet.payload_length = read_u16_le(&parser->header[5]);
+        parser->packet.sequence = read_u32_le(&parser->header[3]);
+        parser->packet.payload_length = read_u16_le(&parser->header[7]);
         if (parser->packet.payload_length > VOICE_LINK_MAX_PAYLOAD_BYTES) {
             return VOICE_LINK_PARSE_ERROR;
         }

@@ -11,6 +11,11 @@ typedef enum {
     MUSIC_RESULT_CHORD
 } music_result_type_t;
 
+typedef enum {
+    MUSIC_RECOGNITION_PROFILE_STRICT = 0,
+    MUSIC_RECOGNITION_PROFILE_DEMO,
+} music_recognition_profile_t;
+
 typedef struct {
     music_result_type_t type;
     float rms;
@@ -37,3 +42,5 @@ typedef struct {
 } music_result_t;
 
 int music_detector_start(void);
+void music_detector_set_recognition_profile(music_recognition_profile_t profile);
+music_recognition_profile_t music_detector_get_recognition_profile(void);

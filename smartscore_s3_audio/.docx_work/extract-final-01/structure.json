@@ -1,0 +1,1435 @@
+{
+  "path": "D:\\qianrushi\\smartscore_s3_audio\\智能乐谱辅助系统_本地音频采集与音乐识别子模块设计文档.docx",
+  "sha256": "a06863ffe44e70c6d4a389d3f5bec41e854bc79f0c7d75bd28702536746856ee",
+  "paragraph_count": 44,
+  "table_count": 3,
+  "inline_shape_count": 1,
+  "section_count": 1,
+  "sections": [
+    {
+      "index": 1,
+      "width_twips": 11906,
+      "height_twips": 16838,
+      "top_margin_twips": 2211,
+      "bottom_margin_twips": 2155,
+      "left_margin_twips": 1418,
+      "right_margin_twips": 1418,
+      "header_distance_twips": 851,
+      "footer_distance_twips": 992,
+      "different_first_page": false,
+      "header": [
+        "智能乐谱辅助系统技术报告"
+      ],
+      "footer": [
+        "第 1 页"
+      ],
+      "first_page_header": [],
+      "first_page_footer": []
+    }
+  ],
+  "styles": [
+    {
+      "name": "Normal",
+      "font": "Calibri",
+      "font_ascii": "Calibri",
+      "font_hansi": "Calibri",
+      "font_east_asia": "Microsoft YaHei",
+      "font_cs": null,
+      "size_pt": 10.5,
+      "bold": false,
+      "alignment": 3,
+      "space_before_pt": null,
+      "space_after_pt": 5.0,
+      "line_spacing": 1.15,
+      "first_line_indent_twips": 420
+    },
+    {
+      "name": "Header",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": 1.0,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Footer",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": 1.0,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 1",
+      "font": "Calibri",
+      "font_ascii": "Calibri",
+      "font_hansi": "Calibri",
+      "font_east_asia": "Microsoft YaHei",
+      "font_cs": null,
+      "size_pt": 16.0,
+      "bold": true,
+      "alignment": 0,
+      "space_before_pt": 16.0,
+      "space_after_pt": 8.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 2",
+      "font": "Calibri",
+      "font_ascii": "Calibri",
+      "font_hansi": "Calibri",
+      "font_east_asia": "Microsoft YaHei",
+      "font_cs": null,
+      "size_pt": 13.0,
+      "bold": true,
+      "alignment": 0,
+      "space_before_pt": 12.0,
+      "space_after_pt": 6.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 3",
+      "font": "Calibri",
+      "font_ascii": "Calibri",
+      "font_hansi": "Calibri",
+      "font_east_asia": "Microsoft YaHei",
+      "font_cs": null,
+      "size_pt": 11.0,
+      "bold": true,
+      "alignment": 0,
+      "space_before_pt": 8.0,
+      "space_after_pt": 4.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 4",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": true,
+      "alignment": null,
+      "space_before_pt": 10.0,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 5",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": 10.0,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 6",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": 10.0,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 7",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": 10.0,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 8",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": 10.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": 10.0,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 9",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": 10.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": 10.0,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "No Spacing",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": 1.0,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Title",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": 26.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 15.0,
+      "line_spacing": 1.0,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Subtitle",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": 12.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Paragraph",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Body Text",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 6.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Body Text 2",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 6.0,
+      "line_spacing": 2.0,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Body Text 3",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": 8.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 6.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": -360
+    },
+    {
+      "name": "List 2",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": -360
+    },
+    {
+      "name": "List 3",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": -360
+    },
+    {
+      "name": "List Bullet",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Bullet 2",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Bullet 3",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Number",
+      "font": "Calibri",
+      "font_ascii": "Calibri",
+      "font_hansi": "Calibri",
+      "font_east_asia": "Microsoft YaHei",
+      "font_cs": null,
+      "size_pt": 10.5,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 3.0,
+      "line_spacing": 1.15,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Number 2",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Number 3",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Continue",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 6.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Continue 2",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 6.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Continue 3",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 6.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "macro",
+      "font": "Courier",
+      "font_ascii": "Courier",
+      "font_hansi": "Courier",
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": 10.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Quote",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Caption",
+      "font": "Calibri",
+      "font_ascii": "Calibri",
+      "font_hansi": "Calibri",
+      "font_east_asia": "Microsoft YaHei",
+      "font_cs": null,
+      "size_pt": 9.0,
+      "bold": true,
+      "alignment": 1,
+      "space_before_pt": 4.0,
+      "space_after_pt": 4.0,
+      "line_spacing": 1.0,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Intense Quote",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": true,
+      "alignment": null,
+      "space_before_pt": 10.0,
+      "space_after_pt": 14.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "TOC Heading",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Table Title",
+      "font": "Calibri",
+      "font_ascii": "Calibri",
+      "font_hansi": "Calibri",
+      "font_east_asia": "Microsoft YaHei",
+      "font_cs": null,
+      "size_pt": 10.5,
+      "bold": true,
+      "alignment": 1,
+      "space_before_pt": 8.0,
+      "space_after_pt": 4.0,
+      "line_spacing": 1.0,
+      "first_line_indent_twips": null
+    }
+  ],
+  "blocks": [
+    {
+      "kind": "paragraph",
+      "style": "Heading 1",
+      "text": "3.X 本地音频采集与音乐识别功能设计",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "3.X 本地音频采集与音乐识别功能设计",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "3.X.1 模块定位与主要功能",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "3.X.1 模块定位与主要功能",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "本模块是智能乐谱辅助系统的本地听觉感知子模块，面向电子琴扬声器播放和近场演奏场景，通过双麦克风采集声音，在 ESP32-S3 上完成音频预处理、基频估计、频谱分析和稳定分类。模块不依赖云端音频服务，也不上传原始 PCM 数据，可在演奏过程中持续生成音高与常见复音识别结果，为后续跟谱、评分和练习分析提供输入。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "本模块是智能乐谱辅助系统的本地听觉感知子模块，面向电子琴扬声器播放和近场演奏场景，通过双麦克风采集声音，在 ESP32-S3 上完成音频预处理、基频估计、频谱分析和稳定分类。模块不依赖云端音频服务，也不上传原始 PCM 数据，可在演奏过程中持续生成音高与常见复音识别结果，为后续跟谱、评分和练习分析提供输入。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "模块主要完成四项功能：同步采集两路麦克风信号并验证硬件状态；依据各通道噪声底和信号质量进行预处理与通道处理；联合 YIN 与 FFT 判断单音、双音和常见大/小三和弦；通过时间投票、起音检测和异常抑制输出稳定结果。通信协议、外部主控命令以及识别结果的跨模块传输在总文档的系统集成部分统一说明。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "模块主要完成四项功能：同步采集两路麦克风信号并验证硬件状态；依据各通道噪声底和信号质量进行预处理与通道处理；联合 YIN 与 FFT 判断单音、双音和常见大/小三和弦；通过时间投票、起音检测和异常抑制输出稳定结果。通信协议、外部主控命令以及识别结果的跨模块传输在总文档的系统集成部分统一说明。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "3.X.2 功能组成与数据流程",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "3.X.2 功能组成与数据流程",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "音频链路按照“声音输入—数字化采集—双路预处理—特征分析—分类稳定”的顺序运行。两块 IM68A130 分别连接 ES7210 的 MIC1、MIC2 模拟输入，ES7210 将两路信号转换为标准双槽 I2S 数据。采集层从同一帧中同步拆分两个时隙，避免把未对齐的采样直接进行时域叠加。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "音频链路按照“声音输入—数字化采集—双路预处理—特征分析—分类稳定”的顺序运行。两块 IM68A130 分别连接 ES7210 的 MIC1、MIC2 模拟输入，ES7210 将两路信号转换为标准双槽 I2S 数据。采集层从同一帧中同步拆分两个时隙，避免把未对齐的采样直接进行时域叠加。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "两路信号独立完成启动校准、去均值、高通滤波、噪声门和削波检查。单音基频分析使用质量较高的通道，复音频谱分析综合两路频谱证据；随后分类器依据周期性、谐波解释率、独立音级数量和模板置信度形成候选结果，并通过时间稳定机制输出最终类型。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "两路信号独立完成启动校准、去均值、高通滤波、噪声门和削波检查。单音基频分析使用质量较高的通道，复音频谱分析综合两路频谱证据；随后分类器依据周期性、谐波解释率、独立音级数量和模板置信度形成候选结果，并通过时间稳定机制输出最终类型。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Caption",
+      "text": "图 3.X-1  本地音频采集与音乐识别模块功能流程",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": [
+        {
+          "text": "图 3.X-1  本地音频采集与音乐识别模块功能流程",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "3.X.3 单音、双音及和弦识别逻辑",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "3.X.3 单音、双音及和弦识别逻辑",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "单音识别以 YIN 周期检测为主。算法在时域中计算差分函数和累积均值归一化差分函数，搜索首个满足阈值的局部最小值，并通过抛物线插值提高周期估计精度。所得频率统一按 A4=440 Hz 转换为 MIDI、音名、八度和音分偏差。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "单音识别以 YIN 周期检测为主。算法在时域中计算差分函数和累积均值归一化差分函数，搜索首个满足阈值的局部最小值，并通过抛物线插值提高周期估计精度。所得频率统一按 A4=440 Hz 转换为 MIDI、音名、八度和音分偏差。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "为了兼顾电子琴音色和实际扬声器频响，单音候选采用多路径准入。周期置信度和谐波解释率同时达标时走严格路径；当频谱峰与 YIN 音高或音级一致时，可由频谱支持路径确认；在信号高于噪声门、未削波且音域合理的前提下，高置信度 YIN 还可作为旋律单音补充路径。该设计避免仅凭某一个频谱比例否决稳定的周期音，同时保留对噪声和错误八度的约束。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "为了兼顾电子琴音色和实际扬声器频响，单音候选采用多路径准入。周期置信度和谐波解释率同时达标时走严格路径；当频谱峰与 YIN 音高或音级一致时，可由频谱支持路径确认；在信号高于噪声门、未削波且音域合理的前提下，高置信度 YIN 还可作为旋律单音补充路径。该设计避免仅凭某一个频谱比例否决稳定的周期音，同时保留对噪声和错误八度的约束。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "双音与和弦识别以 FFT 频谱为依据。系统先提取真实物理局部峰，再将峰值映射到 MIDI 音高并归属其 2～5 次谐波，避免把同一主瓣或单音谐波重复当作独立音符。两个占主导且能量相对均衡的独立音级形成 INTERVAL；至少三个稳定音级满足模板时，识别为常见大三或小三和弦。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "双音与和弦识别以 FFT 频谱为依据。系统先提取真实物理局部峰，再将峰值映射到 MIDI 音高并归属其 2～5 次谐波，避免把同一主瓣或单音谐波重复当作独立音符。两个占主导且能量相对均衡的独立音级形成 INTERVAL；至少三个稳定音级满足模板时，识别为常见大三或小三和弦。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "3.X.4 稳定判定与异常处理",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "3.X.4 稳定判定与异常处理",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "瞬时候选不会直接作为最终结果。分类器保存最近 5 次候选，单音、双音或和弦至少获得 3 票后才判为稳定；音量出现满足条件的快速上升时记录新的起音，用于区分同音连续弹奏。静音会清除历史状态，短时频谱泄漏或衰减阶段则允许已经稳定的结果在满足连续性条件时短暂保持。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "瞬时候选不会直接作为最终结果。分类器保存最近 5 次候选，单音、双音或和弦至少获得 3 票后才判为稳定；音量出现满足条件的快速上升时记录新的起音，用于区分同音连续弹奏。静音会清除历史状态，短时频谱泄漏或衰减阶段则允许已经稳定的结果在满足连续性条件时短暂保持。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "当两路信号均低于各自噪声门时输出 SILENCE；输入削波、周期估计不可信、音级相互冲突或频谱持续不稳定时输出 UNKNOWN。双麦模式下，某一路信号过弱或削波时，质量比较会使另一通道承担主要的基频判断，避免单路异常直接中断识别。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "当两路信号均低于各自噪声门时输出 SILENCE；输入削波、周期估计不可信、音级相互冲突或频谱持续不稳定时输出 UNKNOWN。双麦模式下，某一路信号过弱或削波时，质量比较会使另一通道承担主要的基频判断，避免单路异常直接中断识别。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Table Title",
+      "text": "表 3.X-1  内部识别结果及含义",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": [
+        {
+          "text": "表 3.X-1  内部识别结果及含义",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "table",
+      "style": "Normal Table",
+      "rows": [
+        [
+          "结果类型",
+          "判定含义",
+          "后续用途"
+        ],
+        [
+          "SINGLE",
+          "识别到一个稳定音高，给出频率、MIDI、音名、音分偏差和置信度",
+          "旋律跟随与单音评价"
+        ],
+        [
+          "INTERVAL",
+          "识别到两个占主导且相对独立的音级",
+          "双音练习分析"
+        ],
+        [
+          "CHORD",
+          "识别到满足模板的常见大三或小三和弦",
+          "和弦练习分析"
+        ],
+        [
+          "SILENCE",
+          "两路输入均低于各自噪声门，未检测到可信声音活动",
+          "静音复位与无演奏判定"
+        ],
+        [
+          "UNKNOWN",
+          "输入存在活动，但发生削波、置信度不足或频谱不稳定",
+          "抑制误识别并等待稳定结果"
+        ]
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 1",
+      "text": "4.X 本地音频采集与音乐识别模块实现",
+      "alignment": null,
+      "page_break_before": true,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "4.X 本地音频采集与音乐识别模块实现",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "4.X.1 硬件接口与音频采集",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "4.X.1 硬件接口与音频采集",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "模块主控采用 ESP32-S3，两块 IM68A130 模拟麦克风分别通过板上交流耦合网络接入 ES7210 的 MIC1 与 MIC2。ES7210 使用 I2C 完成配置，使用 I2S0 向 ESP32-S3 输出两路同步采样。当前工程采样率为 24 kHz，每个时隙包含 16 位有效样本，共两个标准 I2S 时隙；固定输入增益为 30 dB，运行期间不启用软件自动增益。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "模块主控采用 ESP32-S3，两块 IM68A130 模拟麦克风分别通过板上交流耦合网络接入 ES7210 的 MIC1 与 MIC2。ES7210 使用 I2C 完成配置，使用 I2S0 向 ESP32-S3 输出两路同步采样。当前工程采样率为 24 kHz，每个时隙包含 16 位有效样本，共两个标准 I2S 时隙；固定输入增益为 30 dB，运行期间不启用软件自动增益。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "启动时程序扫描 I2C 地址 0x40，读取芯片 ID 与版本寄存器，并校验芯片标识 0x7210。随后回读输入使能、增益、工作模式和串行数据格式，关闭不用于外部模拟麦克风供电的 MICBIAS12。双麦模式还会短暂隔离两个输入并比较时隙活动度；若硬件身份、关键寄存器回读或输入恢复失败，则不启动识别任务。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "启动时程序扫描 I2C 地址 0x40，读取芯片 ID 与版本寄存器，并校验芯片标识 0x7210。随后回读输入使能、增益、工作模式和串行数据格式，关闭不用于外部模拟麦克风供电的 MICBIAS12。双麦模式还会短暂隔离两个输入并比较时隙活动度；若硬件身份、关键寄存器回读或输入恢复失败，则不启动识别任务。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Table Title",
+      "text": "表 4.X-1  音频模块硬件接口与关键配置",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": [
+        {
+          "text": "表 4.X-1  音频模块硬件接口与关键配置",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "table",
+      "style": "Normal Table",
+      "rows": [
+        [
+          "对象/信号",
+          "ESP32-S3连接或参数",
+          "实现说明"
+        ],
+        [
+          "主控",
+          "ESP32-S3",
+          "双核 240 MHz；当前工程不启用 PSRAM"
+        ],
+        [
+          "模拟麦克风",
+          "CN1/MIC1、CN2/MIC2",
+          "两块 IM68A130 单端模拟输出，经板上交流耦合接入 ES7210"
+        ],
+        [
+          "ES7210 I2C",
+          "SDA=GPIO4，SCL=GPIO5",
+          "400 kHz；7 位地址 0x40；启动时校验 0x7210 芯片标识"
+        ],
+        [
+          "I2S 时钟",
+          "MCLK=GPIO9，BCLK=GPIO10，WS=GPIO11",
+          "24 kHz、16 位有效采样、双槽标准 I2S；MCLK=6.144 MHz"
+        ],
+        [
+          "I2S 数据",
+          "DIN=GPIO12",
+          "同步接收 MIC1 与 MIC2 两个时隙"
+        ],
+        [
+          "ES7210 INT",
+          "GPIO42",
+          "仅配置为输入，当前识别链路不启用中断"
+        ],
+        [
+          "输入增益",
+          "30 dB 固定增益",
+          "保留削波检测；运行期间不执行软件 AGC"
+        ]
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "4.X.2 双麦预处理与通道处理",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "4.X.2 双麦预处理与通道处理",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "AudioCaptureTask 每次读取 1024 个双槽采样帧，将同一 I2S 帧中的 MIC1、MIC2 数据分别写入固定采集块。DSP 端把 int16_t 样本转换为浮点数，逐帧去除均值，并为每路维护两级约 50 Hz 的一阶高通滤波状态，以减小直流漂移和低频机械扰动。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "AudioCaptureTask 每次读取 1024 个双槽采样帧，将同一 I2S 帧中的 MIC1、MIC2 数据分别写入固定采集块。DSP 端把 int16_t 样本转换为浮点数，逐帧去除均值，并为每路维护两级约 50 Hz 的一阶高通滤波状态，以减小直流漂移和低频机械扰动。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "上电后约 1 s 内，两路分别估计 RMS 噪声底。实际噪声门取 max(0.0008, noise_rms×2.5)，并只在后续较安静的帧中向较低噪声水平缓慢恢复，避免把持续琴音吸收到噪声模型。每帧同时计算 RMS、峰值、削波率和直流偏置；峰值接近满量程或超过阈值的样本比例过高时，当前帧被标记为削波。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "上电后约 1 s 内，两路分别估计 RMS 噪声底。实际噪声门取 max(0.0008, noise_rms×2.5)，并只在后续较安静的帧中向较低噪声水平缓慢恢复，避免把持续琴音吸收到噪声模型。每帧同时计算 RMS、峰值、削波率和直流偏置；峰值接近满量程或超过阈值的样本比例过高时，当前帧被标记为削波。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "当前实现采用混合双麦策略：YIN 从质量评分较高的一路取得连续时域窗口；挑战通道的评分连续 3 帧高出当前通道至少 0.15 后才切换，以减少来回跳变。FFT 支路分别计算两路频谱，再依据两路 RMS 比例进行加权融合。这样既能为周期检测保留连续、清晰的单路波形，又能在复音判断时利用两处麦克风的频谱覆盖。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "当前实现采用混合双麦策略：YIN 从质量评分较高的一路取得连续时域窗口；挑战通道的评分连续 3 帧高出当前通道至少 0.15 后才切换，以减少来回跳变。FFT 支路分别计算两路频谱，再依据两路 RMS 比例进行加权融合。这样既能为周期检测保留连续、清晰的单路波形，又能在复音判断时利用两处麦克风的频谱覆盖。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "4.X.3 YIN、FFT及分类算法实现",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "4.X.3 YIN、FFT及分类算法实现",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "YIN 使用 2048 点窗口，分析频率范围为 65～2000 Hz，累积均值归一化差分阈值为 0.20。程序按标准 YIN 规则选择首个达标局部最小值，不再偏好两倍周期，从而降低把 A4 等音高误判低一个八度的概率。周期结果的有效性、置信度和 MIDI 音域共同作为单音准入条件。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "YIN 使用 2048 点窗口，分析频率范围为 65～2000 Hz，累积均值归一化差分阈值为 0.20。程序按标准 YIN 规则选择首个达标局部最小值，不再偏好两倍周期，从而降低把 A4 等音高误判低一个八度的概率。周期结果的有效性、置信度和 MIDI 音域共同作为单音准入条件。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "频谱分析使用 ESP-DSP 的 4096 点浮点 FFT 和 Hann 窗，hop 与采集块一致，均为 1024 点。程序只在 65～2000 Hz 有效频段内提取局部峰，通过抛物线插值得到更精确的峰值频率，并根据噪声底、相对得分和峰值突出度过滤弱候选。对每个候选基频继续检查 2～5 次谐波，以形成谐波解释率并清除重复音级。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "频谱分析使用 ESP-DSP 的 4096 点浮点 FFT 和 Hann 窗，hop 与采集块一致，均为 1024 点。程序只在 65～2000 Hz 有效频段内提取局部峰，通过抛物线插值得到更精确的峰值频率，并根据噪声底、相对得分和峰值突出度过滤弱候选。对每个候选基频继续检查 2～5 次谐波，以形成谐波解释率并清除重复音级。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "分类器首先判断有效和弦或双音，再判断单音多路径准入。严格单音路径要求 YIN 置信度不低于 0.70 且谐波解释率不低于 0.74；频谱精确支持路径使用 0.88 的 YIN 置信度；旋律补充路径仅在 MIDI 48～84、信号高于噪声门且未削波时启用，其中强 YIN 阈值为 0.90，频谱同音级支持路径阈值为 0.80。有效复音与强单音发生冲突时，高置信度周期性和频谱证据共同决定是否由单音覆盖。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "分类器首先判断有效和弦或双音，再判断单音多路径准入。严格单音路径要求 YIN 置信度不低于 0.70 且谐波解释率不低于 0.74；频谱精确支持路径使用 0.88 的 YIN 置信度；旋律补充路径仅在 MIDI 48～84、信号高于噪声门且未削波时启用，其中强 YIN 阈值为 0.90，频谱同音级支持路径阈值为 0.80。有效复音与强单音发生冲突时，高置信度周期性和频谱证据共同决定是否由单音覆盖。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "稳定投票窗口长度为 5，至少 3 次相同类型和身份才输出单音、双音或和弦。起音检测要求当前 RMS 相对上一帧至少上升 1.45 倍，且绝对增量不低于 0.0006；相邻起音之间至少间隔 180 ms。以上阈值均集中在 music_detector_config.h，便于依据目标硬件日志统一调整。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "稳定投票窗口长度为 5，至少 3 次相同类型和身份才输出单音、双音或和弦。起音检测要求当前 RMS 相对上一帧至少上升 1.45 倍，且绝对增量不低于 0.0006；相邻起音之间至少间隔 180 ms。以上阈值均集中在 music_detector_config.h，便于依据目标硬件日志统一调整。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "4.X.4 FreeRTOS任务与资源组织",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "4.X.4 FreeRTOS任务与资源组织",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "实时软件将高优先级采集与计算量较大的 DSP 分离。AudioCaptureTask 固定在 Core 0，只负责 I2S 接收、双槽拆分和采集块投递；MusicDspTask 固定在 Core 1，完成预处理、YIN、FFT、分类与诊断统计。采集队列使用三个固定块，队列暂时耗尽时记录丢块而不在中断或采集路径等待复杂处理。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "实时软件将高优先级采集与计算量较大的 DSP 分离。AudioCaptureTask 固定在 Core 0，只负责 I2S 接收、双槽拆分和采集块投递；MusicDspTask 固定在 Core 1，完成预处理、YIN、FFT、分类与诊断统计。采集队列使用三个固定块，队列暂时耗尽时记录丢块而不在中断或采集路径等待复杂处理。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "工程当前不依赖 PSRAM。双路 PCM 帧、4096 点环形历史、YIN 工作窗口和 FFT 工作区均采用静态或启动阶段分配，DSP 循环不执行逐帧大块 malloc/free。诊断计数器记录 I2S 读取错误、队列深度、缓冲耗尽、DSP 平均/最大耗时、截止期丢失和任务栈余量，为后续实机调参提供依据。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "工程当前不依赖 PSRAM。双路 PCM 帧、4096 点环形历史、YIN 工作窗口和 FFT 工作区均采用静态或启动阶段分配，DSP 循环不执行逐帧大块 malloc/free。诊断计数器记录 I2S 读取错误、队列深度、缓冲耗尽、DSP 平均/最大耗时、截止期丢失和任务栈余量，为后续实机调参提供依据。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Table Title",
+      "text": "表 4.X-2  识别模块任务与资源组织",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": [
+        {
+          "text": "表 4.X-2  识别模块任务与资源组织",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "table",
+      "style": "Normal Table",
+      "rows": [
+        [
+          "执行单元",
+          "核心/优先级/栈",
+          "主要职责",
+          "资源约束"
+        ],
+        [
+          "AudioCaptureTask",
+          "Core 0 / 22 / 4096 B",
+          "读取 I2S 双槽数据、拆分两路采样并投递采集块",
+          "3 个固定采集块；队列满时记录丢块，不在采集路径做频谱运算"
+        ],
+        [
+          "MusicDspTask",
+          "Core 1 / 12 / 6144 B",
+          "校准、预处理、通道选择、YIN、FFT、分类与稳定投票",
+          "使用静态环形缓冲和 FFT 工作区；循环内避免逐帧大块动态分配"
+        ]
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "4.X.5 构建验证、实机测试方法与能力边界",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "4.X.5 构建验证、实机测试方法与能力边界",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "当前工程面向 ESP32-S3，依赖 esp_codec_dev 与 esp-dsp，已生成可烧录应用镜像。软件构建能够验证组件依赖、内存链接和算法代码的完整性；项目同时提供单音准入门控测试用例，用于覆盖严格路径、高置信度 YIN、频谱支持以及低于噪声门、削波和越界音高拒绝等条件。构建与主机侧逻辑用例不能替代真实麦克风、扬声器、房间反射和演奏动态下的板端验证。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "当前工程面向 ESP32-S3，依赖 esp_codec_dev 与 esp-dsp，已生成可烧录应用镜像。软件构建能够验证组件依赖、内存链接和算法代码的完整性；项目同时提供单音准入门控测试用例，用于覆盖严格路径、高置信度 YIN、频谱支持以及低于噪声门、削波和越界音高拒绝等条件。构建与主机侧逻辑用例不能替代真实麦克风、扬声器、房间反射和演奏动态下的板端验证。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "建议在目标 PCB 上按以下顺序验收：",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "建议在目标 PCB 上按以下顺序验收：",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "List Number",
+      "text": "静音上电并完成双路校准，检查 ES7210 身份、时隙映射、增益回读、两路噪声底和噪声门。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "静音上电并完成双路校准，检查 ES7210 身份、时隙映射、增益回读、两路噪声底和噪声门。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "List Number",
+      "text": "分别测试 C4、E4、G4、A4、C5 等单音，核对 MIDI、音名、八度与音分偏差，并连续演奏简单旋律。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "分别测试 C4、E4、G4、A4、C5 等单音，核对 MIDI、音名、八度与音分偏差，并连续演奏简单旋律。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "List Number",
+      "text": "测试 C4+B4 等双音及 C-E-G、D-F-A、G-B-D 等常见大/小三和弦，检查音级集合和稳定投票。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "测试 C4+B4 等双音及 C-E-G、D-F-A、G-B-D 等常见大/小三和弦，检查音级集合和稳定投票。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "List Number",
+      "text": "以拍手、人声、背景音乐、弱音和削波输入检查 UNKNOWN 与 SILENCE，统计静音误触和错误音符。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "以拍手、人声、背景音乐、弱音和削波输入检查 UNKNOWN 与 SILENCE，统计静音误触和错误音符。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "List Number",
+      "text": "分别遮挡或断开 CN1、CN2，确认另一麦克风仍可承担主要分析，并检查通道切换是否稳定。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "分别遮挡或断开 CN1、CN2，确认另一麦克风仍可承担主要分析，并检查通道切换是否稳定。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "验收应记录正确音符率、静音误触次数、八度错误次数、起音延迟、双麦切换次数和 DSP 截止期丢失。当前模块适合初学者单音旋律、双音和常见三和弦识别；双音的音级通常比具体八度更可靠，三和弦以常见大/小模板为主。四音以上复杂复音、延音踏板造成的长时间重叠、强混响、多声源分离及未经统计的实机准确率不属于当前版本承诺。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "验收应记录正确音符率、静音误触次数、八度错误次数、起音延迟、双麦切换次数和 DSP 截止期丢失。当前模块适合初学者单音旋律、双音和常见三和弦识别；双音的音级通常比具体八度更可靠，三和弦以常见大/小模板为主。四音以上复杂复音、延音踏板造成的长时间重叠、强混响、多声源分离及未经统计的实机准确率不属于当前版本承诺。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    }
+  ]
+}

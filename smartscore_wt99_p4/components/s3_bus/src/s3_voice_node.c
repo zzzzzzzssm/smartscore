@@ -1,5 +1,6 @@
 #include "s3_devices.h"
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,310 +8,342 @@
 #include "board_wt99_pins.h"
 #include "driver/uart.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
-#include "s3_voice_adpcm.h"
 #include "s3_voice_link_protocol.h"
+#include "speaker_service.h"
 
-#define VOICE_RX_BUFFER_BYTES 2048
-#define VOICE_LINE_BUFFER_BYTES 64
-#define VOICE_RX_TASK_STACK_BYTES 4096
-#define VOICE_RX_TASK_PRIORITY 5
-#define VOICE_COMMAND_ID_MIN 1
-#define VOICE_COMMAND_ID_MAX 7
-#define VOICE_PCM_FRAME_SAMPLES 320
-#define VOICE_IDLE_RESYNC_INTERVAL_MS 1000
+#define VOICE_RX_BUFFER_BYTES (16U * 1024U)
+#define VOICE_TX_BUFFER_BYTES 4096U
+#define VOICE_RX_TASK_STACK_BYTES 10240U
+#define VOICE_PCM_TASK_STACK_BYTES 6144U
+#define VOICE_RX_TASK_PRIORITY 7U
+#define VOICE_PCM_TASK_PRIORITY 6U
+#define VOICE_COMMAND_ID_MIN 1U
+#define VOICE_COMMAND_ID_MAX 7U
+#define VOICE_PCM_QUEUE_LENGTH 48U
+#define VOICE_FLOW_HIGH_BYTES (224U * 1024U)
+#define VOICE_FLOW_LOW_BYTES (112U * 1024U)
+#define VOICE_SUMMARY_INTERVAL_US 1000000ULL
+#define VOICE_FINISH_RETRY_INTERVAL_US 100000ULL
+
+typedef struct {
+    uint16_t length;
+    uint8_t data[S3_VOICE_LINK_PCM_PAYLOAD_BYTES];
+} voice_pcm_frame_t;
 
 static const char *TAG = "S3_VOICE";
 static bool s_initialized;
 static s3_voice_event_handler_t s_handler;
 static void *s_handler_context;
 static SemaphoreHandle_t s_tx_lock;
-static s3_voice_audio_handler_t s_audio_handler;
-static void *s_audio_context;
-static uint16_t s_expected_audio_sequence;
-static bool s_expect_audio;
-static bool s_drop_audio_until_stop;
-static uint32_t s_idle_discarded_frames;
-static TickType_t s_idle_last_resync_tick;
-
-static void reset_idle_audio_resync(void)
-{
-    s_idle_discarded_frames = 0;
-    s_idle_last_resync_tick = 0;
-}
+static QueueHandle_t s_pcm_queue;
+static volatile bool s_stream_active;
+static volatile bool s_stream_done;
+static volatile bool s_stream_finish_queued;
+static volatile bool s_flow_off;
+static volatile uint32_t s_expected_sequence;
+static volatile bool s_have_sequence;
+static uint32_t s_tx_sequence;
+static uint64_t s_uart_pcm_received;
+static uint32_t s_crc_errors;
+static uint32_t s_seq_gaps;
+static uint32_t s_uart_overflows;
+static uint32_t s_queue_overflows;
+static uint64_t s_next_summary_us;
+static char s_text_buffer[S3_VOICE_LINK_MAX_PAYLOAD_BYTES + 1U];
+static uint8_t *s_tx_wire;
 
 static esp_err_t write_locked(const void *data, size_t length)
 {
     if (!s_initialized || s_tx_lock == NULL) return ESP_ERR_INVALID_STATE;
     if (data == NULL || length == 0U) return ESP_ERR_INVALID_ARG;
-    xSemaphoreTake(s_tx_lock, portMAX_DELAY);
-    int written = uart_write_bytes(
-        (uart_port_t)BOARD_WT99_VOICE_UART_PORT, data, length);
+    if (xSemaphoreTake(s_tx_lock, pdMS_TO_TICKS(250)) != pdTRUE)
+        return ESP_ERR_TIMEOUT;
+    int written = uart_write_bytes((uart_port_t)BOARD_WT99_VOICE_UART_PORT,
+                                   data, length);
     xSemaphoreGive(s_tx_lock);
     return written == (int)length ? ESP_OK : ESP_FAIL;
 }
 
-static esp_err_t send_audio_feedback(uint8_t type, uint16_t sequence)
+static esp_err_t send_message(uint8_t type,
+                              const void *payload,
+                              uint16_t payload_length)
 {
-    uint8_t wire[S3_VOICE_LINK_WIRE_OVERHEAD_BYTES];
-    size_t wire_length = 0;
+    if ((payload_length > 0U && payload == NULL) ||
+        payload_length > S3_VOICE_LINK_MAX_PAYLOAD_BYTES)
+        return ESP_ERR_INVALID_ARG;
+    if (s_tx_wire == NULL) return ESP_ERR_INVALID_STATE;
+    if (xSemaphoreTake(s_tx_lock, pdMS_TO_TICKS(250)) != pdTRUE)
+        return ESP_ERR_TIMEOUT;
+    size_t wire_length = 0U;
     esp_err_t err = s3_voice_link_encode_packet(
-        type, 0, sequence, NULL, 0, wire, sizeof(wire), &wire_length);
-    return err == ESP_OK ? write_locked(wire, wire_length) : err;
+        type, 0U, s_tx_sequence, payload, payload_length,
+        s_tx_wire,
+        S3_VOICE_LINK_WIRE_OVERHEAD_BYTES + S3_VOICE_LINK_MAX_PAYLOAD_BYTES,
+        &wire_length);
+    if (err == ESP_OK) {
+        int written = uart_write_bytes(
+            (uart_port_t)BOARD_WT99_VOICE_UART_PORT,
+            s_tx_wire, wire_length);
+        err = written == (int)wire_length ? ESP_OK : ESP_FAIL;
+        if (err == ESP_OK) ++s_tx_sequence;
+    }
+    xSemaphoreGive(s_tx_lock);
+    return err;
 }
 
-static void dispatch_event(s3_voice_event_type_t type, uint8_t command_id)
+static void dispatch_event(s3_voice_event_type_t type,
+                           uint8_t command_id,
+                           uint8_t ai_state,
+                           uint32_t sample_rate,
+                           const char *text)
 {
     if (s_handler == NULL) return;
     const s3_voice_event_t event = {
         .type = type,
         .command_id = command_id,
+        .ai_state = ai_state,
+        .sample_rate_hz = sample_rate,
+        .text = text,
     };
     s_handler(&event, s_handler_context);
 }
 
-static void handle_line(char *line)
+static void reset_pcm_queue(void)
 {
-    if (strcmp(line, "V1,WAKE") == 0) {
-        s_expected_audio_sequence = 0;
-        s_expect_audio = true;
-        s_drop_audio_until_stop = false;
-        reset_idle_audio_resync();
-        dispatch_event(S3_VOICE_EVENT_WAKE, 0);
-        return;
+    voice_pcm_frame_t frame;
+    while (xQueueReceive(s_pcm_queue, &frame, 0) == pdTRUE) {
     }
-    if (strcmp(line, "V1,TIMEOUT") == 0) {
-        dispatch_event(S3_VOICE_EVENT_TIMEOUT, 0);
-        return;
-    }
-    if (strcmp(line, "V2,AI,BEGIN") == 0) {
-        dispatch_event(S3_VOICE_EVENT_AI_BEGIN, 0);
-        return;
-    }
-    if (strcmp(line, "V2,AI,SPEECH_END") == 0) {
-        /* This marker is queued behind the last S3 PCM frame. Keep ACKing
-         * duplicate tail frames, but never forward more PCM to the cloud. */
-        s_drop_audio_until_stop = true;
-        dispatch_event(S3_VOICE_EVENT_SPEECH_END, 0);
-        return;
-    }
-    if (strcmp(line, "V2,AI,CANCEL") == 0) {
-        s_expect_audio = false;
-        s_drop_audio_until_stop = false;
-        dispatch_event(S3_VOICE_EVENT_AI_CANCEL, 0);
-        return;
-    }
-
-    static const char command_prefix[] = "V1,CMD,";
-    if (strncmp(line, command_prefix, sizeof(command_prefix) - 1U) != 0) {
-        ESP_LOGW(TAG, "ignored malformed frame: %s", line);
-        return;
-    }
-
-    char *end = NULL;
-    long command_id = strtol(line + sizeof(command_prefix) - 1U, &end, 10);
-    if (end == NULL || *end != '\0' ||
-        command_id < VOICE_COMMAND_ID_MIN ||
-        command_id > VOICE_COMMAND_ID_MAX) {
-        ESP_LOGW(TAG, "ignored invalid command frame: %s", line);
-        return;
-    }
-    s_expect_audio = false;
-    s_drop_audio_until_stop = false;
-    dispatch_event(S3_VOICE_EVENT_COMMAND, (uint8_t)command_id);
 }
 
-static bool sequence_before(uint16_t left, uint16_t right)
+static void handle_packet(const s3_voice_link_packet_t *packet)
 {
-    return (int16_t)(left - right) < 0;
+    if (packet == NULL) return;
+    if (s_have_sequence && packet->sequence != s_expected_sequence) {
+        ++s_seq_gaps;
+        ESP_LOGW(TAG, "UART seq gap expected=%" PRIu32 " got=%" PRIu32,
+                 s_expected_sequence, packet->sequence);
+    }
+    s_expected_sequence = packet->sequence + 1U;
+    s_have_sequence = true;
+
+    switch (packet->type) {
+    case S3_VOICE_MSG_WAKE:
+        dispatch_event(S3_VOICE_EVENT_WAKE, 0U, 0U, 0U, NULL);
+        break;
+    case S3_VOICE_MSG_TIMEOUT:
+        dispatch_event(S3_VOICE_EVENT_TIMEOUT, 0U, 0U, 0U, NULL);
+        break;
+    case S3_VOICE_MSG_LOCAL_COMMAND:
+        if (packet->payload_length == 1U &&
+            packet->payload[0] >= VOICE_COMMAND_ID_MIN &&
+            packet->payload[0] <= VOICE_COMMAND_ID_MAX)
+            dispatch_event(S3_VOICE_EVENT_COMMAND, packet->payload[0],
+                           0U, 0U, NULL);
+        break;
+    case S3_VOICE_MSG_AI_STATE:
+        if (packet->payload_length >= 1U)
+            dispatch_event(S3_VOICE_EVENT_AI_STATE, 0U,
+                           packet->payload[0], 0U, NULL);
+        break;
+    case S3_VOICE_MSG_AI_AUDIO_START: {
+        uint32_t rate = 24000U;
+        if (packet->payload_length >= 4U)
+            rate = (uint32_t)packet->payload[0] |
+                   ((uint32_t)packet->payload[1] << 8U) |
+                   ((uint32_t)packet->payload[2] << 16U) |
+                   ((uint32_t)packet->payload[3] << 24U);
+        reset_pcm_queue();
+        s_uart_pcm_received = 0U;
+        s_stream_done = false;
+        s_stream_finish_queued = false;
+        s_stream_active = true;
+        dispatch_event(S3_VOICE_EVENT_AI_AUDIO_START, 0U, 0U, rate, NULL);
+        break;
+    }
+    case S3_VOICE_MSG_AI_AUDIO_PCM:
+        if (s_stream_active && packet->payload_length > 0U &&
+            (packet->payload_length & 1U) == 0U) {
+            voice_pcm_frame_t frame = {.length = packet->payload_length};
+            memcpy(frame.data, packet->payload, packet->payload_length);
+            if (xQueueSend(s_pcm_queue, &frame, 0) != pdTRUE) {
+                ++s_queue_overflows;
+                if (!s_flow_off) {
+                    s_flow_off = true;
+                    (void)send_message(S3_VOICE_MSG_FLOW_OFF, NULL, 0U);
+                }
+            } else {
+                s_uart_pcm_received += packet->payload_length;
+            }
+        }
+        break;
+    case S3_VOICE_MSG_AI_AUDIO_DONE:
+        s_stream_done = true;
+        dispatch_event(S3_VOICE_EVENT_AI_AUDIO_DONE, 0U, 0U, 0U, NULL);
+        break;
+    case S3_VOICE_MSG_AI_TEXT:
+        if (packet->payload_length > 0U) {
+            memcpy(s_text_buffer, packet->payload, packet->payload_length);
+            s_text_buffer[packet->payload_length] = '\0';
+            dispatch_event(S3_VOICE_EVENT_AI_TEXT, 0U, 0U, 0U,
+                           s_text_buffer);
+        }
+        break;
+    case S3_VOICE_MSG_AI_ERROR:
+        dispatch_event(S3_VOICE_EVENT_AI_ERROR, 0U, 0U, 0U, NULL);
+        break;
+    case S3_VOICE_MSG_STOP_ACK:
+        s_stream_active = false;
+        s_stream_done = false;
+        s_stream_finish_queued = false;
+        reset_pcm_queue();
+        break;
+    default:
+        break;
+    }
 }
 
-static void handle_binary_packet(const s3_voice_link_packet_t *packet)
+static void voice_pcm_task(void *argument)
 {
-    if (packet == NULL || packet->type != S3_VOICE_LINK_PACKET_AUDIO) {
-        ESP_LOGW(TAG, "ignored unexpected binary packet type=%u",
-                 packet != NULL ? packet->type : 0U);
-        return;
-    }
-    if (!s_expect_audio) {
-        /* P4 may restart while S3 still owns an old streaming session. ACK
-         * every stale packet so the S3 replay/tail window can drain, and
-         * periodically repeat STOP until both ends agree that the route is
-         * idle. Never log each frame: that flood can starve the UART RX and
-         * voice tasks and makes a recoverable desynchronisation look like a
-         * crash. */
-        (void)send_audio_feedback(S3_VOICE_LINK_PACKET_ACK,
-                                  packet->sequence);
-        ++s_idle_discarded_frames;
+    (void)argument;
+    uint64_t next_finish_retry_us = 0U;
+    uint64_t next_drain_ack_retry_us = 0U;
+    while (true) {
+        voice_pcm_frame_t frame;
+        if (xQueueReceive(s_pcm_queue, &frame, pdMS_TO_TICKS(20)) == pdTRUE) {
+            size_t offset_samples = 0U;
+            size_t samples = frame.length / sizeof(int16_t);
+            while (offset_samples < samples && s_stream_active) {
+                size_t accepted = 0U;
+                esp_err_t err = speaker_service_stream_write(
+                    ((const int16_t *)frame.data) + offset_samples,
+                    samples - offset_samples, &accepted);
+                offset_samples += accepted;
+                if (offset_samples < samples) {
+                    if (err != ESP_OK && err != ESP_ERR_TIMEOUT)
+                        ESP_LOGW(TAG, "speaker PCM write failed: %s",
+                                 esp_err_to_name(err));
+                    vTaskDelay(pdMS_TO_TICKS(2));
+                }
+            }
+        }
 
-        const TickType_t now = xTaskGetTickCount();
-        const TickType_t interval =
-            pdMS_TO_TICKS(VOICE_IDLE_RESYNC_INTERVAL_MS);
-        if (s_idle_last_resync_tick == 0 ||
-            (now - s_idle_last_resync_tick) >= interval) {
-            esp_err_t stop_error = s3_voice_node_send_ai_stop("IDLE_RESYNC");
-            if (stop_error == ESP_OK) {
-                ESP_LOGW(TAG,
-                         "idle UART audio resync: discarded=%u last_seq=%u; STOP re-sent",
-                         (unsigned)s_idle_discarded_frames,
-                         (unsigned)packet->sequence);
+        speaker_stream_metrics_t metrics;
+        speaker_service_stream_get_metrics(&metrics);
+        const uint64_t now = (uint64_t)esp_timer_get_time();
+        if (!s_flow_off &&
+            metrics.buffered_bytes >= VOICE_FLOW_HIGH_BYTES) {
+            s_flow_off = true;
+            (void)send_message(S3_VOICE_MSG_FLOW_OFF, NULL, 0U);
+        } else if (s_flow_off &&
+                   metrics.buffered_bytes <= VOICE_FLOW_LOW_BYTES &&
+                   uxQueueSpacesAvailable(s_pcm_queue) >
+                       VOICE_PCM_QUEUE_LENGTH / 2U) {
+            s_flow_off = false;
+            (void)send_message(S3_VOICE_MSG_FLOW_ON, NULL, 0U);
+        }
+
+        if (s_stream_active && s_stream_done && !s_stream_finish_queued &&
+            uxQueueMessagesWaiting(s_pcm_queue) == 0U &&
+            now >= next_finish_retry_us) {
+            next_finish_retry_us = now + VOICE_FINISH_RETRY_INTERVAL_US;
+            esp_err_t err = speaker_service_stream_finish();
+            if (err == ESP_OK) {
+                s_stream_done = false;
+                s_stream_finish_queued = true;
+                next_drain_ack_retry_us = now;
+                ESP_LOGI(TAG, "AI PCM producer done; draining speaker ring");
+                /* metrics was sampled before FINISH was queued.  Re-enter the
+                 * loop so completion is decided from a fresh speaker state. */
+                continue;
+            } else {
+                ESP_LOGW(TAG, "speaker finish request failed: %s; retrying",
+                         esp_err_to_name(err));
+            }
+        }
+        /* speaker_service clears its transient finish_requested flag while
+         * stopping output, before metrics can expose active=false.  Track the
+         * accepted FINISH command locally so the drained state is observable. */
+        if (s_stream_active && s_stream_finish_queued &&
+            !metrics.active && metrics.buffered_bytes == 0U &&
+            now >= next_drain_ack_retry_us) {
+            next_drain_ack_retry_us =
+                now + VOICE_FINISH_RETRY_INTERVAL_US;
+            esp_err_t err = send_message(S3_VOICE_MSG_AI_AUDIO_DRAINED,
+                                         NULL, 0U);
+            if (err == ESP_OK) {
+                s_stream_active = false;
+                s_stream_finish_queued = false;
+                ESP_LOGI(TAG,
+                         "AI PCM drained; P4 completion acknowledged");
             } else {
                 ESP_LOGW(TAG,
-                         "idle UART audio resync failed: discarded=%u last_seq=%u error=%s",
-                         (unsigned)s_idle_discarded_frames,
-                         (unsigned)packet->sequence,
-                         esp_err_to_name(stop_error));
+                         "AI PCM drained ACK failed: %s; retrying",
+                         esp_err_to_name(err));
             }
-            s_idle_discarded_frames = 0;
-            s_idle_last_resync_tick = now;
         }
-        return;
-    }
-    if (packet->sequence != s_expected_audio_sequence) {
-        if (sequence_before(packet->sequence, s_expected_audio_sequence)) {
-            (void)send_audio_feedback(S3_VOICE_LINK_PACKET_ACK,
-                                      (uint16_t)(s_expected_audio_sequence - 1U));
-        } else {
-            ESP_LOGW(TAG, "UART audio gap: expected=%u received=%u",
-                     (unsigned)s_expected_audio_sequence,
-                     (unsigned)packet->sequence);
-            (void)send_audio_feedback(S3_VOICE_LINK_PACKET_NACK,
-                                      s_expected_audio_sequence);
+
+        if (now >= s_next_summary_us) {
+            s_next_summary_us = now + VOICE_SUMMARY_INTERVAL_US;
+            ESP_LOGI("VOICE_P4",
+                     "state=%s uart_pcm_received=%" PRIu64
+                     " speaker_buffered=%u played=%" PRIu64
+                     " underrun=%u crc_error=%u seq_gap=%u queue=%u",
+                     s_stream_active ? "SPEAKING" : "IDLE",
+                     s_uart_pcm_received, (unsigned)metrics.buffered_bytes,
+                     metrics.played_bytes, (unsigned)metrics.underruns,
+                     (unsigned)s_crc_errors, (unsigned)s_seq_gaps,
+                     (unsigned)uxQueueMessagesWaiting(s_pcm_queue));
         }
-        return;
-    }
-
-    if (s_drop_audio_until_stop) {
-        ++s_expected_audio_sequence;
-        (void)send_audio_feedback(S3_VOICE_LINK_PACKET_ACK,
-                                  packet->sequence);
-        return;
-    }
-
-    int16_t pcm[VOICE_PCM_FRAME_SAMPLES];
-    size_t sample_count = 0;
-    esp_err_t err = s3_voice_adpcm_decode(
-        packet->payload, packet->payload_length,
-        pcm, sizeof(pcm) / sizeof(pcm[0]), &sample_count);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "invalid ADPCM seq=%u: %s",
-                 (unsigned)packet->sequence, esp_err_to_name(err));
-        (void)send_audio_feedback(S3_VOICE_LINK_PACKET_NACK,
-                                  s_expected_audio_sequence);
-        return;
-    }
-
-    if (s_audio_handler != NULL) {
-        err = s_audio_handler(pcm, sample_count, packet->sequence,
-                              s_audio_context);
-        if (err != ESP_OK) {
-            if (err == ESP_ERR_INVALID_STATE) {
-                /* The AI route has just closed.  ACK and discard queued tail
-                 * frames until AI_STOP arrives; a NACK here creates a replay
-                 * storm that can delay the higher-priority stop control line. */
-                s_drop_audio_until_stop = true;
-                ++s_expected_audio_sequence;
-                (void)send_audio_feedback(S3_VOICE_LINK_PACKET_ACK,
-                                          packet->sequence);
-                ESP_LOGI(TAG,
-                         "AI audio route closed at seq=%u; draining UART tail",
-                         (unsigned)packet->sequence);
-                return;
-            }
-            ESP_LOGW(TAG, "audio consumer rejected seq=%u: %s",
-                     (unsigned)packet->sequence, esp_err_to_name(err));
-            (void)send_audio_feedback(S3_VOICE_LINK_PACKET_NACK,
-                                      s_expected_audio_sequence);
-            return;
-        }
-    }
-    ++s_expected_audio_sequence;
-    (void)send_audio_feedback(S3_VOICE_LINK_PACKET_ACK,
-                              packet->sequence);
-    if ((packet->sequence % 50U) == 49U) {
-        ESP_LOGI(TAG, "UART audio received: seq=%u samples=%u",
-                 (unsigned)packet->sequence, (unsigned)sample_count);
     }
 }
 
 static void voice_rx_task(void *argument)
 {
     (void)argument;
-    uint8_t rx[64];
-    char line[VOICE_LINE_BUFFER_BYTES];
-    size_t line_length = 0;
-    bool discarding = false;
-    bool possible_binary = false;
+    uint8_t rx[512];
+    bool possible_magic = false;
     bool binary = false;
     s3_voice_link_parser_t parser;
-
     while (true) {
         int received = uart_read_bytes(
             (uart_port_t)BOARD_WT99_VOICE_UART_PORT, rx, sizeof(rx),
             pdMS_TO_TICKS(100));
         if (received <= 0) continue;
-
-        for (int index = 0; index < received; ++index) {
-            const uint8_t raw = rx[index];
+        for (int i = 0; i < received; ++i) {
+            const uint8_t byte = rx[i];
             if (binary) {
                 s3_voice_link_packet_t packet;
-                s3_voice_link_parse_result_t parse =
-                    s3_voice_link_parser_feed(&parser, raw, &packet);
-                if (parse == S3_VOICE_LINK_PARSE_COMPLETE) {
-                    handle_binary_packet(&packet);
+                s3_voice_link_parse_result_t result =
+                    s3_voice_link_parser_feed(&parser, byte, &packet);
+                if (result == S3_VOICE_LINK_PARSE_COMPLETE) {
+                    handle_packet(&packet);
                     binary = false;
-                } else if (parse == S3_VOICE_LINK_PARSE_ERROR) {
-                    ESP_LOGW(TAG, "corrupt UART audio frame; requesting seq=%u",
-                             (unsigned)s_expected_audio_sequence);
-                    if (s_expect_audio) {
-                        (void)send_audio_feedback(
-                            S3_VOICE_LINK_PACKET_NACK,
-                            s_expected_audio_sequence);
-                    }
+                } else if (result == S3_VOICE_LINK_PARSE_ERROR) {
+                    ++s_crc_errors;
                     binary = false;
                 }
                 continue;
             }
-            if (possible_binary) {
-                possible_binary = false;
-                if (raw == S3_VOICE_LINK_MAGIC_1) {
+            if (possible_magic) {
+                possible_magic = false;
+                if (byte == S3_VOICE_LINK_MAGIC_1) {
                     s3_voice_link_parser_begin(&parser);
                     binary = true;
-                    line_length = 0;
-                    discarding = false;
                     continue;
                 }
-                if (!discarding && line_length + 1U < sizeof(line)) {
-                    line[line_length++] = (char)S3_VOICE_LINK_MAGIC_0;
-                }
             }
-            if (raw == S3_VOICE_LINK_MAGIC_0) {
-                possible_binary = true;
-                continue;
-            }
-
-            char byte = (char)raw;
-            if (byte == '\r') continue;
-            if (byte == '\n') {
-                if (!discarding && line_length > 0) {
-                    line[line_length] = '\0';
-                    handle_line(line);
-                }
-                line_length = 0;
-                discarding = false;
-                continue;
-            }
-            if (discarding) continue;
-            if (line_length + 1U < sizeof(line)) {
-                line[line_length++] = byte;
-            } else {
-                ESP_LOGW(TAG, "oversized voice frame discarded");
-                discarding = true;
-                line_length = 0;
-            }
+            if (byte == S3_VOICE_LINK_MAGIC_0) possible_magic = true;
         }
+        size_t buffered = 0U;
+        uart_get_buffered_data_len(
+            (uart_port_t)BOARD_WT99_VOICE_UART_PORT, &buffered);
+        if (buffered >= VOICE_RX_BUFFER_BYTES - 512U) ++s_uart_overflows;
     }
 }
 
@@ -322,7 +355,6 @@ esp_err_t s3_voice_node_init(s3_voice_event_handler_t handler, void *context)
         return ESP_OK;
     }
     if (handler == NULL) return ESP_ERR_INVALID_ARG;
-
     const uart_config_t config = {
         .baud_rate = BOARD_WT99_VOICE_UART_BAUD_RATE,
         .data_bits = UART_DATA_8_BITS,
@@ -333,89 +365,89 @@ esp_err_t s3_voice_node_init(s3_voice_event_handler_t handler, void *context)
     };
     esp_err_t err = uart_driver_install(
         (uart_port_t)BOARD_WT99_VOICE_UART_PORT,
-        VOICE_RX_BUFFER_BYTES, 0, 0, NULL, 0);
-    if (err == ESP_OK) {
-        err = uart_param_config(
-            (uart_port_t)BOARD_WT99_VOICE_UART_PORT, &config);
-    }
-    if (err == ESP_OK) {
-        err = uart_set_pin(
-            (uart_port_t)BOARD_WT99_VOICE_UART_PORT,
-            BOARD_WT99_VOICE_UART_TX_GPIO,
-            BOARD_WT99_VOICE_UART_RX_GPIO,
-            UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
-    }
-    if (err != ESP_OK) {
-        uart_driver_delete((uart_port_t)BOARD_WT99_VOICE_UART_PORT);
-        return err;
-    }
-
+        VOICE_RX_BUFFER_BYTES, VOICE_TX_BUFFER_BYTES, 0, NULL, 0);
+    if (err == ESP_OK)
+        err = uart_param_config((uart_port_t)BOARD_WT99_VOICE_UART_PORT,
+                                &config);
+    if (err == ESP_OK)
+        err = uart_set_pin((uart_port_t)BOARD_WT99_VOICE_UART_PORT,
+                           BOARD_WT99_VOICE_UART_TX_GPIO,
+                           BOARD_WT99_VOICE_UART_RX_GPIO,
+                           UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    if (err != ESP_OK) return err;
     s_tx_lock = xSemaphoreCreateMutex();
-    if (s_tx_lock == NULL) {
-        uart_driver_delete((uart_port_t)BOARD_WT99_VOICE_UART_PORT);
+    s_pcm_queue = xQueueCreate(VOICE_PCM_QUEUE_LENGTH,
+                               sizeof(voice_pcm_frame_t));
+    s_tx_wire = heap_caps_malloc(
+        S3_VOICE_LINK_WIRE_OVERHEAD_BYTES +
+            S3_VOICE_LINK_MAX_PAYLOAD_BYTES,
+        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (s_tx_lock == NULL || s_pcm_queue == NULL || s_tx_wire == NULL)
         return ESP_ERR_NO_MEM;
-    }
     s_handler = handler;
     s_handler_context = context;
-    uart_flush_input((uart_port_t)BOARD_WT99_VOICE_UART_PORT);
     s_initialized = true;
-    if (xTaskCreate(voice_rx_task, "voice_s3_rx",
-                    VOICE_RX_TASK_STACK_BYTES, NULL,
-                    VOICE_RX_TASK_PRIORITY, NULL) != pdPASS) {
-        s_initialized = false;
-        vSemaphoreDelete(s_tx_lock);
-        s_tx_lock = NULL;
-        s_handler = NULL;
-        s_handler_context = NULL;
-        uart_driver_delete((uart_port_t)BOARD_WT99_VOICE_UART_PORT);
+    if (xTaskCreate(voice_rx_task, "voice_s3_rx", VOICE_RX_TASK_STACK_BYTES,
+                    NULL, VOICE_RX_TASK_PRIORITY, NULL) != pdPASS ||
+        xTaskCreate(voice_pcm_task, "voice_p4_pcm", VOICE_PCM_TASK_STACK_BYTES,
+                    NULL, VOICE_PCM_TASK_PRIORITY, NULL) != pdPASS)
         return ESP_ERR_NO_MEM;
-    }
-
-    ESP_LOGI(TAG, "UART%d TX=GPIO%d RX=GPIO%d at %d baud",
+    ESP_LOGI(TAG, "UART%d TX=GPIO%d RX=GPIO%d baud=%d protocol=v3 pcm=%u",
              BOARD_WT99_VOICE_UART_PORT,
              BOARD_WT99_VOICE_UART_TX_GPIO,
              BOARD_WT99_VOICE_UART_RX_GPIO,
-             BOARD_WT99_VOICE_UART_BAUD_RATE);
+             BOARD_WT99_VOICE_UART_BAUD_RATE,
+             (unsigned)S3_VOICE_LINK_PCM_PAYLOAD_BYTES);
     return ESP_OK;
 }
 
 esp_err_t s3_voice_node_send_ack(uint8_t command_id, bool handled)
 {
-    if (!s_initialized || s_tx_lock == NULL) return ESP_ERR_INVALID_STATE;
-    if (command_id < VOICE_COMMAND_ID_MIN ||
-        command_id > VOICE_COMMAND_ID_MAX) return ESP_ERR_INVALID_ARG;
-
-    char line[32];
-    int length = snprintf(line, sizeof(line), "V1,ACK,%u,%s\n",
-                          (unsigned)command_id,
-                          handled ? "OK" : "IGNORED");
-    if (length <= 0 || length >= (int)sizeof(line)) return ESP_FAIL;
-
-    return write_locked(line, (size_t)length);
+    uint8_t payload[2] = {command_id, handled ? 1U : 0U};
+    return send_message(S3_VOICE_MSG_LOCAL_COMMAND_ACK,
+                        payload, sizeof(payload));
 }
 
 void s3_voice_node_set_audio_handler(s3_voice_audio_handler_t handler,
                                      void *context)
 {
-    s_audio_handler = handler;
-    s_audio_context = context;
+    (void)handler;
+    (void)context;
+    ESP_LOGI(TAG, "legacy P4 microphone uplink handler ignored (runtime disabled)");
 }
 
 esp_err_t s3_voice_node_send_ai_stop(const char *reason)
 {
-    const char *safe_reason = reason != NULL ? reason : "DONE";
-    char line[48];
-    int length = snprintf(line, sizeof(line), "V2,AI,STOP,%.24s\n",
-                          safe_reason);
-    if (length <= 0 || length >= (int)sizeof(line)) return ESP_FAIL;
-    s_expect_audio = false;
-    s_drop_audio_until_stop = false;
-    return write_locked(line, (size_t)length);
+    (void)reason;
+    s_stream_active = false;
+    s_stream_done = false;
+    s_stream_finish_queued = false;
+    reset_pcm_queue();
+    if (speaker_service_is_ready()) (void)speaker_service_stream_abort();
+    return send_message(S3_VOICE_MSG_STOP, NULL, 0U);
 }
 
 esp_err_t s3_voice_node_send_ai_input_done(void)
 {
-    s_drop_audio_until_stop = true;
-    return write_locked("V2,AI,INPUT_DONE\n",
-                        sizeof("V2,AI,INPUT_DONE\n") - 1U);
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+esp_err_t s3_voice_node_send_wifi_credentials(const char *ssid,
+                                               const char *password)
+{
+    if (ssid == NULL || password == NULL || ssid[0] == '\0')
+        return ESP_ERR_INVALID_ARG;
+    size_t ssid_length = strlen(ssid);
+    size_t password_length = strlen(password);
+    if (ssid_length > 32U || password_length > 64U)
+        return ESP_ERR_INVALID_SIZE;
+    uint8_t payload[2U + 32U + 64U];
+    payload[0] = (uint8_t)ssid_length;
+    payload[1] = (uint8_t)password_length;
+    memcpy(payload + 2U, ssid, ssid_length);
+    memcpy(payload + 2U + ssid_length, password, password_length);
+    esp_err_t err = send_message(S3_VOICE_MSG_WIFI_CREDENTIALS, payload,
+                                 (uint16_t)(2U + ssid_length + password_length));
+    memset(payload + 2U + ssid_length, 0, password_length);
+    return err;
 }

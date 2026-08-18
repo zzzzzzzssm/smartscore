@@ -9,10 +9,25 @@
 extern "C" {
 #endif
 
+#define S3_MUSIC_POLY_MAX_NOTES 4
+#define S3_MUSIC_POLY_NAME_MAX 16
+
 typedef enum {
     S3_MUSIC_EVENT_NOTE_ON = 0,
     S3_MUSIC_EVENT_NOTE_OFF,
+    S3_MUSIC_EVENT_POLY,
 } s3_music_event_type_t;
+
+typedef enum {
+    S3_MUSIC_POLY_NONE = 0,
+    S3_MUSIC_POLY_INTERVAL,
+    S3_MUSIC_POLY_CHORD,
+} s3_music_poly_kind_t;
+
+typedef enum {
+    S3_MUSIC_STREAM_PROFILE_STRICT = 0,
+    S3_MUSIC_STREAM_PROFILE_DEMO,
+} s3_music_stream_profile_t;
 
 typedef struct {
     s3_music_event_type_t type;
@@ -27,6 +42,10 @@ typedef struct {
     bool has_duration;
     bool has_frequency;
     bool has_confidence;
+    s3_music_poly_kind_t poly_kind;
+    uint8_t note_count;
+    uint8_t notes[S3_MUSIC_POLY_MAX_NOTES];
+    char poly_name[S3_MUSIC_POLY_NAME_MAX];
 } s3_music_event_t;
 
 typedef void (*s3_music_event_handler_t)(const s3_music_event_t *event,
@@ -68,6 +87,10 @@ esp_err_t s3_bus_ping(void);
 
 /** Start a new S3 recognition stream session. */
 esp_err_t s3_bus_start_stream(uint32_t sid);
+
+/** Start a stream with an explicit detector profile. */
+esp_err_t s3_bus_start_stream_with_profile(uint32_t sid,
+                                           s3_music_stream_profile_t profile);
 
 /** Stop S3 recognition events while leaving heartbeat/status online. */
 esp_err_t s3_bus_stop_stream(void);

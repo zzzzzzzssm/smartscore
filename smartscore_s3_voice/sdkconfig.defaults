@@ -10,6 +10,11 @@ CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_USE_MALLOC=y
 
+# Keep TLS/RSA working memory in PSRAM so certificate verification does not
+# compete with ESP-SR, Wi-Fi and the cache-safe Qwen control-task stack for
+# scarce internal DRAM.
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
 CONFIG_ESP32S3_DATA_CACHE_64KB=y

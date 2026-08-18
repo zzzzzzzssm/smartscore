@@ -21,6 +21,10 @@ bool leland_score_view_set_midi(leland_score_view_t *view,
                                 char *error, size_t error_size);
 bool leland_score_view_set_note_color(leland_score_view_t *view,
                                       int note_index, uint32_t color_rgb);
+/* Highlight the next score-following group without changing result colors. */
+void leland_score_view_set_note_guide(leland_score_view_t *view,
+                                      int first_note_index,
+                                      int last_note_index);
 int leland_score_view_page_count(const leland_score_view_t *view);
 bool leland_score_view_show_page(leland_score_view_t *view, int page,
                                  bool animated);

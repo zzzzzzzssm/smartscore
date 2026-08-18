@@ -24,13 +24,22 @@
 /* Single-turn AI routing keeps the original MultiNet timeout as a fallback. */
 #define VOICE_AI_POST_WAKE_GUARD_MS       80U
 #define VOICE_AI_MIN_QUERY_SPEECH_MS     256U
-#define VOICE_AI_END_SILENCE_MS          500U
+#define VOICE_AI_END_SILENCE_MS          320U
+
+/*
+ * The AFE has no playback-reference channel, so a short tail of the P4
+ * speaker can remain in the one-microphone pipeline after an AI answer.
+ * Drain exactly six 512-sample fetch frames (192 ms at 16 kHz) before
+ * WakeNet is re-enabled.  This is long enough to discard the acoustic tail
+ * without imposing the multi-second fixed cooldown that users notice.
+ */
+#define VOICE_WAKE_REARM_GUARD_MS         192U
 
 /* H7 voice link: GPIO1/TX -> VOICE_TX_MS, GPIO2/RX <- VOICE_RX_MS. */
 #define VOICE_LINK_UART_PORT            UART_NUM_1
 #define VOICE_LINK_TX_GPIO              GPIO_NUM_1
 #define VOICE_LINK_RX_GPIO              GPIO_NUM_2
-#define VOICE_LINK_BAUD_RATE            115200
+#define VOICE_LINK_BAUD_RATE            921600
 
 #define VOICE_TASK_PRIORITY             5
 #define VOICE_FEED_TASK_STACK_SIZE      (6U * 1024U)

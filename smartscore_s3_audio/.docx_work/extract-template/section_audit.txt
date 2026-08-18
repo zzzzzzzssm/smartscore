@@ -1,0 +1,59 @@
+﻿SECTIONS: 9
+
+[Section 1] start_type=NEW_PAGE (2) orientation=PORTRAIT (0)
+  page_size(in): 8.27 x 11.69
+  margins(in): L=0.98 R=0.98 T=1.54 B=1.50
+  header_linked_to_previous=True footer_linked_to_previous=False
+  different_first_page=False odd_even_headers=None
+
+[Section 2] start_type=CONTINUOUS (0) orientation=PORTRAIT (0)
+  page_size(in): 8.27 x 11.69
+  margins(in): L=0.98 R=0.98 T=1.54 B=1.50
+  header_linked_to_previous=False footer_linked_to_previous=False
+  different_first_page=False odd_even_headers=None
+
+[Section 3] start_type=NEW_PAGE (2) orientation=PORTRAIT (0)
+  page_size(in): 8.27 x 11.69
+  margins(in): L=0.98 R=0.98 T=1.54 B=1.50
+  header_linked_to_previous=False footer_linked_to_previous=False
+  different_first_page=False odd_even_headers=None
+
+[Section 4] start_type=CONTINUOUS (0) orientation=PORTRAIT (0)
+  page_size(in): 8.27 x 11.69
+  margins(in): L=0.98 R=0.98 T=1.54 B=1.50
+  header_linked_to_previous=False footer_linked_to_previous=False
+  different_first_page=False odd_even_headers=None
+
+[Section 5] start_type=NEW_PAGE (2) orientation=PORTRAIT (0)
+  page_size(in): 8.27 x 11.69
+  margins(in): L=0.98 R=0.98 T=1.54 B=1.50
+  header_linked_to_previous=False footer_linked_to_previous=False
+  different_first_page=False odd_even_headers=None
+
+[Section 6] start_type=NEW_PAGE (2) orientation=PORTRAIT (0)
+  page_size(in): 8.27 x 11.69
+  margins(in): L=0.98 R=0.98 T=1.54 B=1.50
+  header_linked_to_previous=False footer_linked_to_previous=False
+  different_first_page=False odd_even_headers=None
+
+[Section 7] start_type=NEW_PAGE (2) orientation=PORTRAIT (0)
+  page_size(in): 8.27 x 11.69
+  margins(in): L=0.98 R=0.98 T=1.54 B=1.50
+  header_linked_to_previous=False footer_linked_to_previous=False
+  different_first_page=False odd_even_headers=None
+
+[Section 8] start_type=NEW_PAGE (2) orientation=PORTRAIT (0)
+  page_size(in): 8.27 x 11.69
+  margins(in): L=0.98 R=0.98 T=1.54 B=1.50
+  header_linked_to_previous=False footer_linked_to_previous=False
+  different_first_page=False odd_even_headers=None
+
+[Section 9] start_type=NEW_PAGE (2) orientation=PORTRAIT (0)
+  page_size(in): 8.27 x 11.69
+  margins(in): L=0.98 R=0.98 T=1.54 B=1.50
+  header_linked_to_previous=False footer_linked_to_previous=False
+  different_first_page=False odd_even_headers=None
+
+REMINDER
+- If you change orientation mid-document, Word typically creates a new section.
+- If headers/footers look wrong, check 'Link to Previous' per section.

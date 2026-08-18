@@ -14,6 +14,10 @@ typedef struct {
     bool onset_history[MUSIC_STABLE_HISTORY_SIZE];
     int history_count;
     int history_position;
+    music_result_type_t consecutive_type;
+    int consecutive_identity;
+    bool consecutive_minor;
+    int consecutive_count;
     music_result_t last_emitted;
     bool has_last_emitted;
     uint32_t last_emit_ms;
@@ -28,5 +32,7 @@ bool music_classifier_update(music_classifier_t *classifier,
                              const audio_frame_metrics_t *mic2_metrics,
                              float mic1_gate, float mic2_gate, int selected_mic,
                              const yin_result_t *yin, float harmonic_ratio,
-                             const chord_result_t *chord, uint32_t timestamp_ms,
+                             const chord_result_t *chord, bool demo_profile,
+                             int poly_stable_votes,
+                             uint32_t timestamp_ms,
                              music_result_t *result, const char **unknown_reason);

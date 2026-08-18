@@ -5,6 +5,7 @@ idf_component_register(
     INCLUDE_DIRS "include"
     REQUIRES
         app_font
+        audio_s3_adapter
         common
         display_board_adapter
         esp_hw_support

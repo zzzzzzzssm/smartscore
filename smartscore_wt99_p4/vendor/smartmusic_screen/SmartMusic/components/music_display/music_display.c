@@ -68,6 +68,8 @@ static music_note_span_ref_t s_page_note_spans[MUSIC_MAX_NOTE_SPANS_PER_PAGE];
 static int s_page_note_span_count;
 static int s_page_first_slot = -1;
 static int s_page_last_slot = -1;
+static int s_expected_first_slot = -1;
+static int s_expected_last_slot = -1;
 
 /* ── 动态乐谱行 spangroup（创建在 music_screen_cont_1 内）── */
 static lv_obj_t *s_line_groups[MUSIC_LINES_PER_PAGE];
@@ -374,14 +376,27 @@ static bool current_page_may_contain_slot(int slot_index)
     return s_page_first_slot >= 0 && slot_index >= s_page_first_slot && slot_index <= s_page_last_slot;
 }
 
+static void apply_note_span_style(music_note_span_ref_t *ref,
+                                  uint8_t status)
+{
+    if (!ref || !ref->span) return;
+    const bool guided = status == MUSIC_STATUS_UNKNOWN &&
+                        ref->slot_index >= s_expected_first_slot &&
+                        ref->slot_index <= s_expected_last_slot;
+    lv_style_t *style = lv_span_get_style(ref->span);
+    lv_style_set_text_color(style, guided ? lv_color_hex(0x0284C7)
+                                          : color_for_status(status));
+    lv_style_set_text_decor(style, guided ? LV_TEXT_DECOR_UNDERLINE
+                                          : LV_TEXT_DECOR_NONE);
+}
+
 static bool update_note_span_color(int slot_index, uint8_t status)
 {
     bool updated = false;
-    lv_color_t color = color_for_status(status);
     for (int i = 0; i < s_page_note_span_count; ++i) {
         music_note_span_ref_t *ref = &s_page_note_spans[i];
         if (ref->slot_index != slot_index || !ref->span) continue;
-        lv_style_set_text_color(lv_span_get_style(ref->span), color);
+        apply_note_span_style(ref, status);
         if (ref->group) { lv_spangroup_refr_mode(ref->group); lv_obj_invalidate(ref->group); }
         updated = true;
     }
@@ -435,8 +450,16 @@ static void render_colored_line(lv_obj_t *group, const char *line,
                              s_note_status[note_idx] :
                              MUSIC_STATUS_UNKNOWN;
             lv_span_t *span = add_text_span(group, token, color_for_status(status));
-            if (span && note_idx >= 0)
+            if (span && note_idx >= 0) {
+                if (status == MUSIC_STATUS_UNKNOWN &&
+                    note_idx >= s_expected_first_slot &&
+                    note_idx <= s_expected_last_slot) {
+                    lv_style_t *style = lv_span_get_style(span);
+                    lv_style_set_text_color(style, lv_color_hex(0x0284C7));
+                    lv_style_set_text_decor(style, LV_TEXT_DECOR_UNDERLINE);
+                }
                 remember_page_note_span(group, span, note_idx);
+            }
         } else {
             /* 小节线 | 或其他分隔符 */
             add_text_span(group, token, lv_color_hex(0x000000));
@@ -881,6 +904,44 @@ void music_display_apply_note_result(int target_index, int expected_midi,
              current_page_may_contain_slot(idx0))
         update_note_span_color(idx0, status);
 
+    bsp_display_unlock();
+}
+
+void music_display_set_expected_note_group(int first_target_index,
+                                           int last_target_index)
+{
+    int first = first_target_index - 1;
+    int last = last_target_index - 1;
+    if (first_target_index <= 0 || last_target_index < first_target_index) {
+        first = -1;
+        last = -1;
+    }
+
+    bsp_display_lock(portMAX_DELAY);
+    if (s_expected_first_slot == first &&
+        s_expected_last_slot == last) {
+        bsp_display_unlock();
+        return;
+    }
+    s_expected_first_slot = first;
+    s_expected_last_slot = last;
+    if (s_staff_view) {
+        leland_score_view_set_note_guide(s_staff_view, first, last);
+    }
+    for (int i = 0; i < s_page_note_span_count; ++i) {
+        music_note_span_ref_t *ref = &s_page_note_spans[i];
+        if (!ref->span || ref->slot_index < 0 ||
+            ref->slot_index >= MUSIC_MAX_RESULT_SLOTS) {
+            continue;
+        }
+        apply_note_span_style(ref, s_note_status[ref->slot_index]);
+    }
+    for (int line = 0; line < MUSIC_LINES_PER_PAGE; ++line) {
+        if (s_line_groups[line] && lv_obj_is_valid(s_line_groups[line])) {
+            lv_spangroup_refr_mode(s_line_groups[line]);
+            lv_obj_invalidate(s_line_groups[line]);
+        }
+    }
     bsp_display_unlock();
 }
 

@@ -21,8 +21,8 @@
 #include "esp_mn_speech_commands.h"
 #include "esp_wn_models.h"
 #include "model_path.h"
+#include "qwen_realtime.h"
 #include "voice_config.h"
-#include "voice_ai_stream.h"
 #include "voice_uart_link.h"
 
 static const char *TAG = "voice_recognition";
@@ -32,6 +32,7 @@ typedef enum {
     RECOGNITION_WAIT_COMMAND,
     RECOGNITION_AI_STREAMING,
     RECOGNITION_AI_WAIT_RESPONSE,
+    RECOGNITION_WAKE_REARM_GUARD,
 } recognition_state_t;
 
 typedef struct {
@@ -46,6 +47,12 @@ typedef struct {
 } command_alias_t;
 
 #define ARRAY_SIZE(array) (sizeof(array) / sizeof((array)[0]))
+
+static void yield_to_idle_during_model_init(void)
+{
+    /* ESP-SR constructors are synchronous and can occupy CPU0 for seconds. */
+    vTaskDelay(pdMS_TO_TICKS(20));
+}
 
 static const canonical_command_t s_canonical_commands[] = {
     {VOICE_COMMAND_START_PRACTICE, "开始练习"},
@@ -313,6 +320,8 @@ esp_err_t voice_recognition_init(void)
         return ESP_ERR_NOT_FOUND;
     }
 
+    yield_to_idle_during_model_init();
+
     char *wake_name = NULL;
     char *multinet_name = NULL;
     esp_err_t err = validate_loaded_models(&wake_name, &multinet_name);
@@ -320,6 +329,7 @@ esp_err_t voice_recognition_init(void)
         cleanup_partial_init();
         return err;
     }
+    yield_to_idle_during_model_init();
 
     afe_config_t *afe_config = afe_config_init("M", s_models, AFE_TYPE_SR, AFE_MODE_HIGH_PERF);
     if (afe_config == NULL) {
@@ -374,6 +384,8 @@ esp_err_t voice_recognition_init(void)
         return ESP_ERR_NO_MEM;
     }
 
+    yield_to_idle_during_model_init();
+
     const int feed_chunk = s_afe_handle->get_feed_chunksize(s_afe_data);
     const int fetch_chunk = s_afe_handle->get_fetch_chunksize(s_afe_data);
     const int feed_channels = s_afe_handle->get_feed_channel_num(s_afe_data);
@@ -402,6 +414,8 @@ esp_err_t voice_recognition_init(void)
         return ESP_ERR_NO_MEM;
     }
 
+    yield_to_idle_during_model_init();
+
     const int multinet_chunk = s_multinet->get_samp_chunksize(s_multinet_data);
     const int multinet_rate = s_multinet->get_samp_rate(s_multinet_data);
     const char *multinet_language = s_multinet->get_language(s_multinet_data);
@@ -418,6 +432,7 @@ esp_err_t voice_recognition_init(void)
         cleanup_partial_init();
         return err;
     }
+    yield_to_idle_during_model_init();
 
     s_afe_handle->print_pipeline(s_afe_data);
     s_running = true;
@@ -481,6 +496,39 @@ static bool finish_command_session(void)
     return true;
 }
 
+static bool prepare_wake_rearm_guard(void)
+{
+    s_multinet->clean(s_multinet_data);
+
+    /* WakeNet normally disables itself after detection.  Keep it explicitly
+     * disabled while the final speaker tail is removed from the AFE. */
+    if (s_afe_handle->disable_wakenet != NULL) {
+        const int disable_result =
+            s_afe_handle->disable_wakenet(s_afe_data);
+        if (disable_result < 0) {
+            ESP_LOGE(TAG, "failed to hold WakeNet disabled: %d",
+                     disable_result);
+            return false;
+        }
+    }
+    if (s_afe_handle->reset_vad != NULL) {
+        const int reset_vad_result = s_afe_handle->reset_vad(s_afe_data);
+        if (reset_vad_result < 0) {
+            ESP_LOGW(TAG, "VAD reset before wake rearm failed: %d",
+                     reset_vad_result);
+        }
+    }
+    if (s_afe_handle->reset_buffer != NULL) {
+        const int reset_result = s_afe_handle->reset_buffer(s_afe_data);
+        if (reset_result < 1) {
+            ESP_LOGE(TAG, "AFE buffer reset before wake rearm failed: %d",
+                     reset_result);
+            return false;
+        }
+    }
+    return true;
+}
+
 static uint32_t recognition_frames_for_ms(uint32_t duration_ms)
 {
     const uint64_t denominator =
@@ -504,24 +552,20 @@ static bool begin_ai_conversation(const char *trigger,
                      esp_err_to_name(link_error));
         }
     }
-    if (!voice_ai_stream_is_active()) {
-        ESP_LOGW(TAG, "AI audio bridge unavailable; restoring local wake mode");
-        return false;
-    }
-    link_error = voice_uart_link_send_ai_begin();
+    link_error = qwen_realtime_begin();
     if (link_error != ESP_OK) {
-        ESP_LOGW(TAG, "failed to send AI conversation start: %s",
+        ESP_LOGW(TAG, "failed to confirm Qwen conversation: %s",
                  esp_err_to_name(link_error));
         return false;
     }
-    link_error = voice_ai_stream_finish_utterance();
+    link_error = qwen_realtime_speech_end();
     if (link_error != ESP_OK) {
-        ESP_LOGW(TAG, "failed to queue ordered AI speech end: %s",
+        ESP_LOGW(TAG, "failed to queue Qwen speech end: %s",
                  esp_err_to_name(link_error));
-        (void)voice_uart_link_send_ai_cancel();
+        qwen_realtime_cancel_local();
         return false;
     }
-    ESP_LOGI(TAG, "entering one-turn Doubao AI conversation: %s",
+    ESP_LOGI(TAG, "entering one-turn Qwen AI conversation: %s",
              trigger != NULL ? trigger : "local-command-not-matched");
     return true;
 }
@@ -540,6 +584,9 @@ void voice_recognition_detect_task(void *arg)
         recognition_frames_for_ms(VOICE_AI_MIN_QUERY_SPEECH_MS);
     const uint32_t end_silence_frames =
         recognition_frames_for_ms(VOICE_AI_END_SILENCE_MS);
+    const uint32_t wake_rearm_guard_frames =
+        recognition_frames_for_ms(VOICE_WAKE_REARM_GUARD_MS);
+    uint32_t wake_rearm_frames_remaining = 0U;
 
     while (s_running) {
         afe_fetch_result_t *result = s_afe_handle->fetch(s_afe_data);
@@ -555,37 +602,31 @@ void voice_recognition_detect_task(void *arg)
             break;
         }
 
-        if (state == RECOGNITION_AI_STREAMING) {
-            if (voice_uart_link_take_ai_stop_request()) {
-                ESP_LOGI(TAG, "AI conversation stopped; local wake mode restored");
-                voice_ai_stream_stop_session();
-                if (!finish_command_session()) break;
-                state = RECOGNITION_WAIT_WAKE;
-            } else if (voice_uart_link_take_ai_input_done_request()) {
-                ESP_LOGI(TAG, "AI heard one utterance; microphone upload paused");
-                voice_ai_stream_stop_session();
-                state = RECOGNITION_AI_WAIT_RESPONSE;
-            } else {
-                esp_err_t stream_error = voice_ai_stream_push_pcm(
-                    result->data, s_fetch_chunk_samples);
-                if (stream_error != ESP_OK &&
-                    stream_error != ESP_ERR_INVALID_STATE &&
-                    stream_error != ESP_ERR_TIMEOUT) {
-                    ESP_LOGW(TAG, "AI audio enqueue failed: %s",
-                             esp_err_to_name(stream_error));
+        if (state == RECOGNITION_AI_WAIT_RESPONSE) {
+            if (qwen_realtime_state() == QWEN_VOICE_IDLE) {
+                if (!prepare_wake_rearm_guard()) {
+                    s_running = false;
+                    break;
                 }
+                wake_rearm_frames_remaining = wake_rearm_guard_frames;
+                state = RECOGNITION_WAKE_REARM_GUARD;
+                ESP_LOGI(TAG,
+                         "Qwen answer completed; clearing speaker tail for "
+                         "%u ms before WakeNet rearm",
+                         (unsigned)VOICE_WAKE_REARM_GUARD_MS);
             }
             continue;
         }
 
-        if (state == RECOGNITION_AI_WAIT_RESPONSE) {
-            (void)voice_uart_link_take_ai_input_done_request();
-            if (voice_uart_link_take_ai_stop_request()) {
-                ESP_LOGI(TAG, "single-turn answer completed; local wake mode restored");
-                voice_ai_stream_stop_session();
-                if (!finish_command_session()) break;
-                state = RECOGNITION_WAIT_WAKE;
+        if (state == RECOGNITION_WAKE_REARM_GUARD) {
+            if (wake_rearm_frames_remaining > 0U) {
+                --wake_rearm_frames_remaining;
+                continue;
             }
+            if (!finish_command_session()) break;
+            state = RECOGNITION_WAIT_WAKE;
+            ESP_LOGI(TAG,
+                     "wake path re-armed; explicit wake word is required");
             continue;
         }
 
@@ -595,9 +636,7 @@ void voice_recognition_detect_task(void *arg)
             printf("唤醒成功，请说出命令\n");
             fflush(stdout);
             esp_err_t link_error = voice_uart_link_send_wake();
-            (void)voice_uart_link_take_ai_stop_request();
-            (void)voice_uart_link_take_ai_input_done_request();
-            voice_ai_stream_start_session();
+            esp_err_t arm_error = qwen_realtime_arm();
             wait_command_frames = 0;
             query_speech_frames = 0;
             query_silence_frames = 0;
@@ -605,6 +644,10 @@ void voice_recognition_detect_task(void *arg)
             if (link_error != ESP_OK) {
                 ESP_LOGW(TAG, "发送唤醒事件失败: %s",
                          esp_err_to_name(link_error));
+            }
+            if (arm_error != ESP_OK) {
+                ESP_LOGW(TAG, "Qwen candidate arm failed: %s",
+                         esp_err_to_name(arm_error));
             }
         }
 
@@ -622,7 +665,7 @@ void voice_recognition_detect_task(void *arg)
             }
         }
         if (query_gate_open) {
-            esp_err_t stream_error = voice_ai_stream_push_pcm(
+            esp_err_t stream_error = qwen_realtime_push_pcm(
                 result->data, s_fetch_chunk_samples);
             if (stream_error != ESP_OK &&
                 stream_error != ESP_ERR_INVALID_STATE &&
@@ -647,7 +690,7 @@ void voice_recognition_detect_task(void *arg)
                 if (begin_ai_conversation("VAD end-of-utterance", true)) {
                     state = RECOGNITION_AI_WAIT_RESPONSE;
                 } else {
-                    voice_ai_stream_stop_session();
+                    qwen_realtime_cancel_local();
                     if (!finish_command_session()) break;
                     state = RECOGNITION_WAIT_WAKE;
                 }
@@ -669,14 +712,13 @@ void voice_recognition_detect_task(void *arg)
             }
             if (query_speech_frames < min_query_speech_frames) {
                 ESP_LOGI(TAG, "no post-wake utterance; returning to WakeNet");
-                (void)voice_uart_link_send_ai_cancel();
-                voice_ai_stream_stop_session();
+                qwen_realtime_cancel_local();
                 if (!finish_command_session()) break;
                 state = RECOGNITION_WAIT_WAKE;
                 continue;
             }
-            if (!voice_ai_stream_is_active()) {
-                ESP_LOGW(TAG, "AI audio bridge unavailable; restoring local wake mode");
+            if (qwen_realtime_state() == QWEN_VOICE_IDLE) {
+                ESP_LOGW(TAG, "Qwen candidate unavailable; restoring local wake mode");
                 if (!finish_command_session()) break;
                 state = RECOGNITION_WAIT_WAKE;
                 continue;
@@ -686,7 +728,7 @@ void voice_recognition_detect_task(void *arg)
                 link_error = ESP_FAIL;
                 ESP_LOGW(TAG, "发送 AI 对话开始事件失败: %s",
                          esp_err_to_name(link_error));
-                voice_ai_stream_stop_session();
+                qwen_realtime_cancel_local();
                 if (!finish_command_session()) break;
                 state = RECOGNITION_WAIT_WAKE;
                 continue;
@@ -709,7 +751,7 @@ void voice_recognition_detect_task(void *arg)
                          command_text != NULL ? command_text : "未知", command_id);
                 printf("%d\n", command_id);
                 fflush(stdout);
-                voice_ai_stream_stop_session();
+                qwen_realtime_cancel_local();
                 esp_err_t link_error = voice_uart_link_send_command(
                     (uint8_t)command_id);
                 if (link_error != ESP_OK) {
@@ -718,7 +760,7 @@ void voice_recognition_detect_task(void *arg)
                 }
             } else {
                 ESP_LOGW(TAG, "忽略无效命令结果: ID=%d", command_id);
-                voice_ai_stream_stop_session();
+                qwen_realtime_cancel_local();
             }
 
             if (!finish_command_session()) {

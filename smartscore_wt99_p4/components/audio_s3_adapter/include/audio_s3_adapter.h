@@ -19,6 +19,9 @@ esp_err_t audio_s3_adapter_init(void);
 /** Start a fresh recognition session on the audio S3. */
 esp_err_t audio_s3_adapter_start_session(void);
 
+/** Start the relaxed recognition profile used only by the note monitor. */
+esp_err_t audio_s3_adapter_start_demo_session(void);
+
 /** Stop recognition events while keeping the S3 link alive. */
 esp_err_t audio_s3_adapter_stop_session(void);
 

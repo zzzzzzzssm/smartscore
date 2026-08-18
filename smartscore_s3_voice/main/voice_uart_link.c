@@ -9,13 +9,14 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
-#include "voice_ai_stream.h"
+#include "qwen_realtime.h"
 #include "voice_config.h"
 #include "voice_link_protocol.h"
 
-#define VOICE_LINK_RX_BUFFER_BYTES 512
+#define VOICE_LINK_RX_BUFFER_BYTES 4096
+#define VOICE_LINK_TX_BUFFER_BYTES 8192
 #define VOICE_LINK_LINE_BYTES 64
-#define VOICE_LINK_RX_TASK_STACK_BYTES 3072
+#define VOICE_LINK_RX_TASK_STACK_BYTES 8192
 #define VOICE_LINK_RX_TASK_PRIORITY 4
 
 static const char *TAG = "voice_uart_link";
@@ -24,6 +25,9 @@ static SemaphoreHandle_t s_tx_lock;
 static portMUX_TYPE s_state_lock = portMUX_INITIALIZER_UNLOCKED;
 static bool s_ai_input_done_requested;
 static bool s_ai_stop_requested;
+static uint32_t s_tx_sequence;
+static uint8_t s_tx_wire[VOICE_LINK_WIRE_OVERHEAD_BYTES +
+                         VOICE_LINK_MAX_PAYLOAD_BYTES];
 
 static esp_err_t write_locked(const void *data, size_t length)
 {
@@ -34,6 +38,30 @@ static esp_err_t write_locked(const void *data, size_t length)
     int written = uart_write_bytes(VOICE_LINK_UART_PORT, data, length);
     xSemaphoreGive(s_tx_lock);
     return written == (int)length ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t voice_uart_link_send_message(uint8_t type,
+                                       const void *payload,
+                                       uint16_t payload_length)
+{
+    if (!s_initialized || s_tx_lock == NULL) return ESP_ERR_INVALID_STATE;
+    if ((payload_length > 0U && payload == NULL) ||
+        payload_length > VOICE_LINK_MAX_PAYLOAD_BYTES)
+        return ESP_ERR_INVALID_ARG;
+    if (xSemaphoreTake(s_tx_lock, pdMS_TO_TICKS(250)) != pdTRUE)
+        return ESP_ERR_TIMEOUT;
+    size_t wire_length = 0U;
+    esp_err_t err = voice_link_encode_packet(
+        type, 0U, s_tx_sequence, payload, payload_length,
+        s_tx_wire, sizeof(s_tx_wire), &wire_length);
+    if (err == ESP_OK) {
+        const int written = uart_write_bytes(VOICE_LINK_UART_PORT,
+                                             s_tx_wire, wire_length);
+        err = written == (int)wire_length ? ESP_OK : ESP_FAIL;
+        if (err == ESP_OK) ++s_tx_sequence;
+    }
+    xSemaphoreGive(s_tx_lock);
+    return err;
 }
 
 static esp_err_t send_frame(const char *frame)
@@ -73,6 +101,61 @@ static void handle_ack_line(const char *line)
     }
 }
 
+static void handle_binary_message(const voice_link_packet_t *packet)
+{
+    if (packet == NULL) return;
+    switch (packet->type) {
+    case VOICE_MSG_LOCAL_COMMAND_ACK:
+        if (packet->payload_length >= 2U) {
+            ESP_LOGI(TAG, "P4 command %u: %s",
+                     (unsigned)packet->payload[0],
+                     packet->payload[1] != 0U ? "OK" : "IGNORED");
+        }
+        break;
+    case VOICE_MSG_STOP:
+        qwen_realtime_request_stop();
+        break;
+    case VOICE_MSG_FLOW_OFF:
+        qwen_realtime_set_uart_flow(false);
+        break;
+    case VOICE_MSG_FLOW_ON:
+        qwen_realtime_set_uart_flow(true);
+        break;
+    case VOICE_MSG_AI_AUDIO_DRAINED:
+        qwen_realtime_notify_p4_drained();
+        break;
+    case VOICE_MSG_WIFI_CREDENTIALS:
+        if (packet->payload_length >= 2U) {
+            const size_t ssid_length = packet->payload[0];
+            const size_t password_length = packet->payload[1];
+            if (ssid_length > 0U && ssid_length <= 32U &&
+                password_length <= 64U &&
+                2U + ssid_length + password_length ==
+                    packet->payload_length) {
+                char ssid[33] = {0};
+                char password[65] = {0};
+                memcpy(ssid, packet->payload + 2U, ssid_length);
+                memcpy(password, packet->payload + 2U + ssid_length,
+                       password_length);
+                esp_err_t err = qwen_realtime_set_wifi_credentials(
+                    ssid, password);
+                memset(password, 0, sizeof(password));
+                if (err != ESP_OK) {
+                    ESP_LOGW(TAG, "Wi-Fi credential handoff failed: %s",
+                             esp_err_to_name(err));
+                }
+            } else {
+                ESP_LOGW(TAG, "invalid Wi-Fi credential message");
+            }
+        }
+        break;
+    default:
+        ESP_LOGW(TAG, "ignored P4 binary message type=%u",
+                 (unsigned)packet->type);
+        break;
+    }
+}
+
 static void voice_link_rx_task(void *argument)
 {
     (void)argument;
@@ -96,8 +179,7 @@ static void voice_link_rx_task(void *argument)
                 voice_link_parse_result_t parse =
                     voice_link_parser_feed(&parser, raw, &packet);
                 if (parse == VOICE_LINK_PARSE_COMPLETE) {
-                    voice_ai_stream_handle_feedback(packet.type,
-                                                    packet.sequence);
+                    handle_binary_message(&packet);
                     binary = false;
                 } else if (parse == VOICE_LINK_PARSE_ERROR) {
                     ESP_LOGW(TAG, "invalid binary feedback frame discarded");
@@ -158,7 +240,8 @@ esp_err_t voice_uart_link_init(void)
         .source_clk = UART_SCLK_DEFAULT,
     };
     esp_err_t err = uart_driver_install(
-        VOICE_LINK_UART_PORT, VOICE_LINK_RX_BUFFER_BYTES, 0, 0, NULL, 0);
+        VOICE_LINK_UART_PORT, VOICE_LINK_RX_BUFFER_BYTES,
+        VOICE_LINK_TX_BUFFER_BYTES, 0, NULL, 0);
     if (err == ESP_OK) err = uart_param_config(VOICE_LINK_UART_PORT, &config);
     if (err == ESP_OK) {
         err = uart_set_pin(VOICE_LINK_UART_PORT,
@@ -194,12 +277,12 @@ esp_err_t voice_uart_link_init(void)
 
 esp_err_t voice_uart_link_send_wake(void)
 {
-    return send_frame("V1,WAKE\n");
+    return voice_uart_link_send_message(VOICE_MSG_WAKE, NULL, 0U);
 }
 
 esp_err_t voice_uart_link_send_timeout(void)
 {
-    return send_frame("V1,TIMEOUT\n");
+    return voice_uart_link_send_message(VOICE_MSG_TIMEOUT, NULL, 0U);
 }
 
 esp_err_t voice_uart_link_send_command(uint8_t command_id)
@@ -207,26 +290,29 @@ esp_err_t voice_uart_link_send_command(uint8_t command_id)
     if (command_id < VOICE_COMMAND_ID_MIN ||
         command_id > VOICE_COMMAND_ID_MAX) return ESP_ERR_INVALID_ARG;
 
-    char frame[24];
-    int length = snprintf(frame, sizeof(frame), "V1,CMD,%u\n",
-                          (unsigned)command_id);
-    if (length <= 0 || length >= (int)sizeof(frame)) return ESP_FAIL;
-    return send_frame(frame);
+    return voice_uart_link_send_message(VOICE_MSG_LOCAL_COMMAND,
+                                        &command_id, sizeof(command_id));
 }
 
 esp_err_t voice_uart_link_send_ai_begin(void)
 {
-    return send_frame("V2,AI,BEGIN\n");
+    const uint8_t state = VOICE_AI_STATE_LISTENING;
+    return voice_uart_link_send_message(VOICE_MSG_AI_STATE,
+                                        &state, sizeof(state));
 }
 
 esp_err_t voice_uart_link_send_ai_speech_end(void)
 {
-    return send_frame("V2,AI,SPEECH_END\n");
+    const uint8_t state = VOICE_AI_STATE_THINKING;
+    return voice_uart_link_send_message(VOICE_MSG_AI_STATE,
+                                        &state, sizeof(state));
 }
 
 esp_err_t voice_uart_link_send_ai_cancel(void)
 {
-    return send_frame("V2,AI,CANCEL\n");
+    const uint8_t state = VOICE_AI_STATE_IDLE;
+    return voice_uart_link_send_message(VOICE_MSG_AI_STATE,
+                                        &state, sizeof(state));
 }
 
 esp_err_t voice_uart_link_write_binary(const void *data, size_t length)

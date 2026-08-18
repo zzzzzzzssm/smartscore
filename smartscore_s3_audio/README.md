@@ -31,21 +31,21 @@ ES7210 MICBIAS12 不给模块供电。`esp_codec_dev` 同时选择 MIC1 与 MIC2
 
 ## 最新网表连接
 
-本工程按 `Netlist_PCB1_2026-07-21.tel` 使用以下引脚：
+本工程按当前 V2 网表使用以下引脚。表内数字全部是 ESP32-S3 GPIO 编号，不是模组焊盘编号：
 
 | 信号 | ESP32-S3 GPIO |
 |---|---:|
-| ES7210 CDAT/SDA | 4 |
-| ES7210 CCLK/SCL | 5 |
+| ES7210 CDAT/SDA | 21 |
+| ES7210 CCLK/SCL | 14 |
 | ES7210 MCLK | 9 |
-| ES7210 SCLK/BCLK | 10 |
-| ES7210 LRCK/WS | 11 |
-| ES7210 SDOUT1/I2S DIN | 12 |
-| ES7210 INT（仅输入，不启用中断） | 42 |
+| ES7210 SCLK/BCLK | 13 |
+| ES7210 LRCK/WS | 12 |
+| ES7210 SDOUT1/I2S DIN | 11 |
+| ES7210 INT（仅输入，不启用中断） | 10 |
 | 音乐链路 UART1 TX（S3 → 外部主控） | 1 |
 | 音乐链路 UART1 RX（外部主控 → S3） | 2 |
 
-注意：网表写的是 `ES7210_INT ; R15.2 U2.35 U3.13`。`U2.35` 是 ESP32-S3-WROOM-1 的模组焊盘 35，对应 **GPIO42**，不是 GPIO35。提示文字中的 GPIO35 与最新网表的模组管脚映射冲突，因此本工程以网表为准使用 GPIO42。其余音频/I2C 管脚与提示文字一致。
+GPIO11 是 S3 的音频数据输入，因为 ES7210 通过 SDOUT1 向 S3 输出采集到的音频数据。主控通信使用 UART1 的 GPIO1 TX、GPIO2 RX；GPIO43 TX、GPIO44 RX 保留给 UART0 烧录和日志。所有 UART 均为 3.3 V TTL 电平。
 
 ES7210 AD0、AD1 均接地，7 位地址是 `0x40`。启动时扫描完整 I2C 总线，必须发现 `0x40`，并读取 `0x3D/0x3E/0x3F`。芯片 ID 必须为 `0x72/0x10`；不匹配时音频任务不会启动。
 

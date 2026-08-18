@@ -615,6 +615,14 @@ esp_err_t network_provisioning_submit_credentials(int request_id,
     return queued == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
+esp_err_t network_provisioning_get_saved_credentials(char *ssid,
+                                                      size_t ssid_size,
+                                                      char *password,
+                                                      size_t password_size)
+{
+    return network_credentials_load(ssid, ssid_size, password, password_size);
+}
+
 esp_err_t network_provisioning_submit_reset(int request_id)
 {
     if (!s_started) {

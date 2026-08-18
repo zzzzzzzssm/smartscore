@@ -29,3 +29,7 @@ void audio_preprocess_frame(audio_preprocess_state_t *state, const int16_t *inpu
 void audio_preprocess_finish_calibration(audio_preprocess_state_t *state);
 bool audio_preprocess_above_gate(const audio_preprocess_state_t *state,
                                  const audio_frame_metrics_t *metrics);
+void audio_preprocess_rescale_gain(audio_preprocess_state_t *state,
+                                   float linear_scale);
+void audio_preprocess_track_ambient(audio_preprocess_state_t *state,
+                                    const audio_frame_metrics_t *metrics);

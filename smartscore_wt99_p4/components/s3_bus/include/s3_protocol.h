@@ -4,6 +4,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define S3_PROTOCOL_POLY_MAX_NOTES 4
+#define S3_PROTOCOL_POLY_NAME_MAX 16
+
 typedef enum {
     S3_MUSIC_MESSAGE_HELLO = 0,
     S3_MUSIC_MESSAGE_STATUS,
@@ -14,6 +17,12 @@ typedef enum {
     S3_MUSIC_MESSAGE_NOTE_OFF,
     S3_MUSIC_MESSAGE_POLY,
 } s3_music_message_type_t;
+
+typedef enum {
+    S3_PROTOCOL_POLY_NONE = 0,
+    S3_PROTOCOL_POLY_INTERVAL,
+    S3_PROTOCOL_POLY_CHORD,
+} s3_protocol_poly_kind_t;
 
 typedef struct {
     s3_music_message_type_t type;
@@ -30,6 +39,10 @@ typedef struct {
     bool has_confidence;
     bool ready;
     bool stream_enabled;
+    s3_protocol_poly_kind_t poly_kind;
+    uint8_t note_count;
+    uint8_t notes[S3_PROTOCOL_POLY_MAX_NOTES];
+    char poly_name[S3_PROTOCOL_POLY_NAME_MAX];
 } s3_music_message_t;
 
 typedef enum {

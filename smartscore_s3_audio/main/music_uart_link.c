@@ -487,6 +487,37 @@ static bool extract_sid(const char *line, uint32_t *sid)
     return true;
 }
 
+static bool extract_recognition_profile(
+    const char *line, music_recognition_profile_t *profile)
+{
+    *profile = MUSIC_RECOGNITION_PROFILE_STRICT;
+    const char *cursor = strstr(line, "\"profile\"");
+    if (cursor == NULL) return true;
+    cursor += strlen("\"profile\"");
+    while (isspace((unsigned char)*cursor)) ++cursor;
+    if (*cursor++ != ':') return false;
+    while (isspace((unsigned char)*cursor)) ++cursor;
+    if (*cursor++ != '"') return false;
+
+    char value[12];
+    size_t used = 0;
+    while (*cursor != '\0' && *cursor != '"') {
+        if (*cursor == '\\' || (unsigned char)*cursor < 0x20 ||
+            used + 1 >= sizeof(value)) {
+            return false;
+        }
+        value[used++] = *cursor++;
+    }
+    if (*cursor != '"') return false;
+    value[used] = '\0';
+    if (strcmp(value, "demo") == 0) {
+        *profile = MUSIC_RECOGNITION_PROFILE_DEMO;
+        return true;
+    }
+    if (strcmp(value, "strict") == 0) return true;
+    return false;
+}
+
 static void reset_poly_state(music_link_state_t *state)
 {
     state->poly_active = false;
@@ -557,26 +588,35 @@ static void process_command(music_link_state_t *state, const char *line)
             send_status(state, timestamp_ms, "invalid_sid");
             return;
         }
+        music_recognition_profile_t profile;
+        if (!extract_recognition_profile(line, &profile)) {
+            profile = MUSIC_RECOGNITION_PROFILE_STRICT;
+            ESP_LOGW(TAG, "unknown recognition profile; using strict");
+        }
         close_active_note(state, timestamp_ms, "restart");
         state->sid = new_sid;
         state->stream_enabled = true;
         state->unknown_since_ms = 0;
         reset_poly_state(state);
+        music_detector_set_recognition_profile(profile);
         send_status(state, timestamp_ms, "started");
     } else if (strcmp(command, "stop") == 0) {
         close_active_note(state, timestamp_ms, "stop");
         state->stream_enabled = false;
         reset_poly_state(state);
+        music_detector_set_recognition_profile(MUSIC_RECOGNITION_PROFILE_STRICT);
         send_status(state, timestamp_ms, "stopped");
     } else if (strcmp(command, "stream_on") == 0) {
         state->stream_enabled = true;
         state->unknown_since_ms = 0;
         reset_poly_state(state);
+        music_detector_set_recognition_profile(MUSIC_RECOGNITION_PROFILE_STRICT);
         send_status(state, timestamp_ms, "stream_on");
     } else if (strcmp(command, "stream_off") == 0) {
         close_active_note(state, timestamp_ms, "stream_off");
         state->stream_enabled = false;
         reset_poly_state(state);
+        music_detector_set_recognition_profile(MUSIC_RECOGNITION_PROFILE_STRICT);
         send_status(state, timestamp_ms, "stream_off");
     } else {
         ++state->invalid_commands;

@@ -5,20 +5,19 @@
 #include "driver/i2s_std.h"
 #include "driver/uart.h"
 
-/* Latest schematic/netlist wiring: CN1 pin1=AGND, pin2=VDDA, pin3=MIC1 OUT. */
+/* V2 wiring. All pin values are ESP32-S3 GPIO numbers, not module pad numbers. */
 #define BOARD_I2C_PORT                 I2C_NUM_0
-#define BOARD_I2C_SDA_GPIO             GPIO_NUM_4
-#define BOARD_I2C_SCL_GPIO             GPIO_NUM_5
+#define BOARD_I2C_SDA_GPIO             GPIO_NUM_21
+#define BOARD_I2C_SCL_GPIO             GPIO_NUM_14
 #define BOARD_I2C_SPEED_HZ             400000
 #define BOARD_ES7210_I2C_ADDR_7BIT     0x40
 
 #define BOARD_I2S_PORT                 I2S_NUM_0
 #define BOARD_I2S_MCLK_GPIO            GPIO_NUM_9
-#define BOARD_I2S_BCLK_GPIO            GPIO_NUM_10
-#define BOARD_I2S_WS_GPIO              GPIO_NUM_11
-#define BOARD_I2S_DIN_GPIO             GPIO_NUM_12
-/* Netlist U2.35 is WROOM module pad 35, whose signal is GPIO42. */
-#define BOARD_ES7210_INT_GPIO          GPIO_NUM_42
+#define BOARD_I2S_BCLK_GPIO            GPIO_NUM_13
+#define BOARD_I2S_WS_GPIO              GPIO_NUM_12
+#define BOARD_I2S_DIN_GPIO             GPIO_NUM_11
+#define BOARD_ES7210_INT_GPIO          GPIO_NUM_10
 
 /* Dedicated S3 <-> external main-controller music link.
  * PCB netlist: H7.8/U2 module pad 38 = GPIO2 (MUSIC_RX_MS, S3 RX),

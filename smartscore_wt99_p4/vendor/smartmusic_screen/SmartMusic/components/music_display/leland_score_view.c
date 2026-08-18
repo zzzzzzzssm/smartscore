@@ -1,5 +1,6 @@
 #include "leland_score_view.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +19,10 @@ LV_FONT_DECLARE(lv_font_LelandBrace_252);
 #define VIEW_AUTO_BEAM_MAX_RUN 32
 #define VIEW_CURVE_SEGMENTS 20
 #define VIEW_MAX_NOTES      MAX_NOTES
+#define VIEW_GUIDE_HEIGHT_PX 128
+#define VIEW_GUIDE_MIN_WIDTH_PX 48
+#define VIEW_GUIDE_X_PADDING_PX 8
+#define VIEW_GUIDE_MAX_SHORT_LINE_PX 54
 
 struct leland_score_view {
     lv_obj_t *parent;
@@ -32,6 +37,8 @@ struct leland_score_view {
     int origin_y_px;
     int page_count;
     int current_page;
+    int guide_first_note;
+    int guide_last_note;
 };
 
 static int sp_to_px(music_sp_t value)
@@ -70,6 +77,154 @@ static void draw_line(lv_layer_t *layer, int x1, int y1, int x2, int y2,
     lv_draw_line(layer, &dsc);
 }
 
+static bool event_is_guided(const leland_score_view_t *view, int event_index)
+{
+    if (!view || event_index < 0 || view->guide_first_note < 0 ||
+        view->guide_last_note < view->guide_first_note) {
+        return false;
+    }
+    int last = view->guide_last_note;
+    if (last >= view->note_count) last = view->note_count - 1;
+    for (int note = view->guide_first_note; note <= last; ++note) {
+        if (view->note_event_indices[note] == event_index) return true;
+    }
+    return false;
+}
+
+static void extend_bounds(int x1, int y1, int x2, int y2,
+                          int *minimum_x, int *minimum_y,
+                          int *maximum_x, int *maximum_y)
+{
+    if (x2 < x1) {
+        const int swap = x1;
+        x1 = x2;
+        x2 = swap;
+    }
+    if (y2 < y1) {
+        const int swap = y1;
+        y1 = y2;
+        y2 = swap;
+    }
+    if (x1 < *minimum_x) *minimum_x = x1;
+    if (y1 < *minimum_y) *minimum_y = y1;
+    if (x2 > *maximum_x) *maximum_x = x2;
+    if (y2 > *maximum_y) *maximum_y = y2;
+}
+
+static bool guided_event_area(const leland_score_view_t *view,
+                              int event_index,
+                              int canvas_x, int canvas_y,
+                              lv_area_t *area)
+{
+    if (!view || !view->scene || !area || event_index < 0) return false;
+    int minimum_x = INT_MAX;
+    int minimum_y = INT_MAX;
+    int maximum_x = INT_MIN;
+    int maximum_y = INT_MIN;
+
+    for (int index = 0; index < view->scene->item_count; ++index) {
+        const music_scene_item_t *item = &view->scene->items[index];
+        if (item->source_event_index != event_index) continue;
+
+        if (item->kind == MUSIC_SCENE_LINE) {
+            const int x1 = canvas_x + sp_to_px(item->data.line.x1);
+            const int x2 = canvas_x + sp_to_px(item->data.line.x2);
+            /* Long horizontal/diagonal lines are beams shared with later
+             * notes. Keep stems and ledger lines, but do not stretch one
+             * note's guide across an entire beamed phrase. */
+            if (abs(x2 - x1) > VIEW_GUIDE_MAX_SHORT_LINE_PX) continue;
+            const int y1 = canvas_y + view->origin_y_px +
+                           sp_to_px(item->data.line.y1);
+            const int y2 = canvas_y + view->origin_y_px +
+                           sp_to_px(item->data.line.y2);
+            const int half_width =
+                (sp_to_px(item->data.line.thickness) + 1) / 2;
+            extend_bounds(x1 - half_width, y1 - half_width,
+                          x2 + half_width, y2 + half_width,
+                          &minimum_x, &minimum_y, &maximum_x, &maximum_y);
+        } else if (item->kind == MUSIC_SCENE_GLYPH) {
+            const smufl_glyph_info_t *glyph =
+                smufl_glyph_info(item->data.glyph.glyph);
+            if (!glyph) continue;
+            const lv_font_t *font =
+                scene_glyph_font(item->data.glyph.glyph);
+            lv_font_glyph_dsc_t glyph_dsc;
+            if (!lv_font_get_glyph_dsc(font, &glyph_dsc,
+                                       glyph->codepoint, 0)) {
+                continue;
+            }
+            const int font_origin_y = font->line_height - font->base_line;
+            const int point_x = canvas_x + sp_to_px(item->data.glyph.x);
+            const int point_y = canvas_y + view->origin_y_px +
+                                sp_to_px(item->data.glyph.y) - font_origin_y;
+            const lv_font_t *resolved = glyph_dsc.resolved_font
+                                            ? glyph_dsc.resolved_font
+                                            : font;
+            const int glyph_x1 = point_x + glyph_dsc.ofs_x;
+            const int glyph_y1 =
+                point_y + (resolved->line_height - resolved->base_line) -
+                glyph_dsc.box_h - glyph_dsc.ofs_y;
+            extend_bounds(glyph_x1, glyph_y1,
+                          glyph_x1 + glyph_dsc.box_w - 1,
+                          glyph_y1 + glyph_dsc.box_h - 1,
+                          &minimum_x, &minimum_y, &maximum_x, &maximum_y);
+        }
+    }
+    if (minimum_x == INT_MAX || minimum_y == INT_MAX) return false;
+
+    int left = minimum_x - VIEW_GUIDE_X_PADDING_PX;
+    int right = maximum_x + VIEW_GUIDE_X_PADDING_PX;
+    if (right - left + 1 < VIEW_GUIDE_MIN_WIDTH_PX) {
+        const int center_x = (minimum_x + maximum_x) / 2;
+        left = center_x - VIEW_GUIDE_MIN_WIDTH_PX / 2;
+        right = left + VIEW_GUIDE_MIN_WIDTH_PX - 1;
+    }
+    const int center_y = (minimum_y + maximum_y) / 2;
+    area->x1 = left;
+    area->x2 = right;
+    area->y1 = center_y - VIEW_GUIDE_HEIGHT_PX / 2;
+    area->y2 = area->y1 + VIEW_GUIDE_HEIGHT_PX - 1;
+    return true;
+}
+
+static void draw_note_guides(lv_layer_t *layer,
+                             const leland_score_view_t *view,
+                             int canvas_x, int canvas_y)
+{
+    if (!view || view->guide_first_note < 0 ||
+        view->guide_last_note < view->guide_first_note) {
+        return;
+    }
+
+    lv_draw_rect_dsc_t dsc;
+    lv_draw_rect_dsc_init(&dsc);
+    dsc.bg_color = lv_color_hex(0xBAE6FD);
+    dsc.bg_opa = LV_OPA_60;
+    dsc.border_color = lv_color_hex(0x0284C7);
+    dsc.border_opa = LV_OPA_COVER;
+    dsc.border_width = 2;
+    dsc.radius = 9;
+
+    int last = view->guide_last_note;
+    if (last >= view->note_count) last = view->note_count - 1;
+    for (int note = view->guide_first_note; note <= last; ++note) {
+        const int event_index = view->note_event_indices[note];
+        bool already_drawn = false;
+        for (int previous = view->guide_first_note;
+             previous < note; ++previous) {
+            if (view->note_event_indices[previous] == event_index) {
+                already_drawn = true;
+                break;
+            }
+        }
+        if (already_drawn || !event_is_guided(view, event_index)) continue;
+        lv_area_t area;
+        if (guided_event_area(view, event_index, canvas_x, canvas_y, &area)) {
+            lv_draw_rect(layer, &dsc, &area);
+        }
+    }
+}
+
 static float cubic(float p0, float p1, float p2, float p3, float t)
 {
     float u = 1.0f - t;
@@ -92,6 +247,10 @@ static void draw_scene_cb(lv_event_t *event)
     lv_obj_get_coords(view->canvas, &canvas_area);
     const int canvas_x = canvas_area.x1;
     const int canvas_y = canvas_area.y1;
+
+    /* Guides are rendered first so staff lines and the complete note symbol
+     * remain crisp above the translucent block. */
+    draw_note_guides(layer, view, canvas_x, canvas_y);
 
     for (int i = 0; i < view->scene->item_count; ++i) {
         const music_scene_item_t *item = &view->scene->items[i];
@@ -522,6 +681,8 @@ leland_score_view_t *leland_score_view_create(lv_obj_t *parent)
     if (!parent) return NULL;
     leland_score_view_t *view = calloc(1, sizeof(*view));
     if (!view) return NULL;
+    view->guide_first_note = -1;
+    view->guide_last_note = -1;
     view->score = heap_caps_calloc(1, sizeof(*view->score),
                                    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     view->scene = heap_caps_calloc(1, sizeof(*view->scene),
@@ -632,6 +793,29 @@ bool leland_score_view_set_note_color(leland_score_view_t *view,
     }
     lv_obj_invalidate(view->canvas);
     return true;
+}
+
+void leland_score_view_set_note_guide(leland_score_view_t *view,
+                                      int first_note_index,
+                                      int last_note_index)
+{
+    if (!view) return;
+    if (first_note_index < 0 || last_note_index < first_note_index ||
+        first_note_index >= view->note_count) {
+        first_note_index = -1;
+        last_note_index = -1;
+    } else if (last_note_index >= view->note_count) {
+        last_note_index = view->note_count - 1;
+    }
+    if (view->guide_first_note == first_note_index &&
+        view->guide_last_note == last_note_index) {
+        return;
+    }
+    view->guide_first_note = first_note_index;
+    view->guide_last_note = last_note_index;
+    if (view->canvas && lv_obj_is_valid(view->canvas)) {
+        lv_obj_invalidate(view->canvas);
+    }
 }
 
 int leland_score_view_page_count(const leland_score_view_t *view)

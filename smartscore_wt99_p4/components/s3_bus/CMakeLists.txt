@@ -12,4 +12,5 @@ idf_component_register(
         driver
         esp_timer
         json
+        speaker_service
 )

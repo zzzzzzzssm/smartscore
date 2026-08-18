@@ -6,8 +6,12 @@
 #include <string.h>
 
 #include "app_font.h"
+#include "audio_s3_adapter.h"
 #include "creator_mode.h"
+#include "creator_mode_integration.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
 #include "score_ui_flow.h"
 #include "speaker_service.h"
 
@@ -24,6 +28,9 @@
 #define WAV_PAGE_SIZE 8
 #define WAV_ROW_WIDTH 936
 #define WAV_ROW_HEIGHT 86
+#define NOTE_MONITOR_CAPACITY 8
+#define NOTE_MONITOR_CHORD_WINDOW_US 300000LL
+#define NOTE_MONITOR_HOLD_US 2200000LL
 
 LV_FONT_DECLARE(lv_font_gudianChinese_42);
 LV_FONT_DECLARE(lv_font_montserratMedium_34);
@@ -34,10 +41,28 @@ typedef struct {
 } tone_preset_t;
 
 typedef struct {
+    bool valid;
+    uint8_t midi[NOTE_MONITOR_CAPACITY];
+    size_t note_count;
+    uint32_t sid;
+    uint32_t seq;
+    uint32_t sender_ts_ms;
+    int64_t last_note_on_us;
+    float latest_frequency_hz;
+    float latest_confidence;
+    bool has_frequency;
+    bool has_confidence;
+    bool native_poly;
+    s3_music_poly_kind_t poly_kind;
+    char poly_name[S3_MUSIC_POLY_NAME_MAX];
+} note_monitor_snapshot_t;
+
+typedef struct {
     lv_ui *ui;
     lv_obj_t *hub;
     lv_obj_t *metronome;
     lv_obj_t *calibration;
+    lv_obj_t *note_monitor;
     lv_obj_t *metronome_bpm_label;
     lv_obj_t *metronome_status_label;
     lv_obj_t *meter_buttons[4];
@@ -45,6 +70,10 @@ typedef struct {
     lv_obj_t *calibration_status_label;
     lv_obj_t *tone_buttons[TONE_PRESET_COUNT];
     lv_obj_t *playback_status_label;
+    lv_obj_t *note_monitor_value_label;
+    lv_obj_t *note_monitor_kind_label;
+    lv_obj_t *note_monitor_detail_label;
+    lv_obj_t *note_monitor_link_label;
     lv_timer_t *status_timer;
     uint16_t metronome_bpm;
     uint8_t metronome_num;
@@ -52,15 +81,22 @@ typedef struct {
     float calibration_frequency_hz;
     size_t wav_page;
     size_t wav_total;
+    esp_err_t note_monitor_error;
     char wav_names[WAV_PAGE_SIZE][SPEAKER_FILE_NAME_MAX];
     bool metronome_visible;
     bool calibration_visible;
     bool playback_visible;
+    bool note_monitor_visible;
 } screen_modes_context_t;
 
 static const char *TAG = "screen_modes";
 static lv_font_t s_choose_title_font;
+static lv_font_t s_note_monitor_font;
 static screen_modes_context_t s_modes;
+static portMUX_TYPE s_note_monitor_lock = portMUX_INITIALIZER_UNLOCKED;
+static note_monitor_snapshot_t s_note_monitor_snapshot;
+static bool s_note_monitor_capture_enabled;
+static void hide_mode_status(void);
 
 static const tone_preset_t s_tone_presets[] = {
     {"C3  130.81 Hz", 130.81f},
@@ -135,11 +171,84 @@ static void load_screen(lv_obj_t *screen, lv_screen_load_anim_t animation)
     }
 }
 
+bool screen_modes_voice_go_home(void)
+{
+    if (!s_modes.ui || !s_modes.ui->screen ||
+        !lv_obj_is_valid(s_modes.ui->screen)) {
+        return false;
+    }
+    if (creator_mode_voice_go_home(s_modes.ui->screen)) {
+        hide_mode_status();
+        return true;
+    }
+
+    lv_obj_t *active_screen = lv_screen_active();
+    bool on_hub = s_modes.hub && lv_obj_is_valid(s_modes.hub) &&
+                  active_screen == s_modes.hub;
+    bool on_metronome =
+        s_modes.metronome && lv_obj_is_valid(s_modes.metronome) &&
+        active_screen == s_modes.metronome;
+    bool on_calibration =
+        s_modes.calibration && lv_obj_is_valid(s_modes.calibration) &&
+        active_screen == s_modes.calibration;
+    bool on_playback =
+        s_modes.playback_visible && s_modes.ui->choose_screen &&
+        lv_obj_is_valid(s_modes.ui->choose_screen) &&
+        active_screen == s_modes.ui->choose_screen;
+    bool on_note_monitor =
+        s_modes.note_monitor && lv_obj_is_valid(s_modes.note_monitor) &&
+        active_screen == s_modes.note_monitor;
+    if (!on_hub && !on_metronome && !on_calibration &&
+        !on_playback && !on_note_monitor) {
+        return false;
+    }
+
+    if (on_metronome)
+        (void)speaker_service_metronome_stop();
+    if (on_calibration)
+        (void)speaker_service_stop();
+    if (on_playback) {
+        (void)speaker_service_stop_file();
+        score_ui_flow_set_choose_back_override(NULL, NULL);
+    }
+    hide_mode_status();
+    load_screen(s_modes.ui->screen, LV_SCREEN_LOAD_ANIM_MOVE_RIGHT);
+    return true;
+}
+
+static void reset_note_monitor_capture(bool enabled)
+{
+    portENTER_CRITICAL(&s_note_monitor_lock);
+    memset(&s_note_monitor_snapshot, 0, sizeof(s_note_monitor_snapshot));
+    s_note_monitor_capture_enabled = enabled;
+    portEXIT_CRITICAL(&s_note_monitor_lock);
+}
+
+static void stop_note_monitor(void)
+{
+    bool was_enabled;
+    portENTER_CRITICAL(&s_note_monitor_lock);
+    was_enabled = s_note_monitor_capture_enabled;
+    s_note_monitor_capture_enabled = false;
+    memset(&s_note_monitor_snapshot, 0, sizeof(s_note_monitor_snapshot));
+    portEXIT_CRITICAL(&s_note_monitor_lock);
+    if (was_enabled) {
+        esp_err_t err = audio_s3_adapter_stop_session();
+        if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+            ESP_LOGW(TAG, "unable to stop Audio S3 note monitor: %s",
+                     esp_err_to_name(err));
+        }
+    }
+    s_modes.note_monitor_error = ESP_OK;
+}
+
 static void hide_mode_status(void)
 {
+    if (s_modes.note_monitor_visible) stop_note_monitor();
     s_modes.metronome_visible = false;
     s_modes.calibration_visible = false;
     s_modes.playback_visible = false;
+    s_modes.note_monitor_visible = false;
 }
 
 static void hub_back_cb(lv_event_t *event)
@@ -669,6 +778,129 @@ static void sync_tone_controls(const speaker_status_t *status)
     refresh_tone_selection();
 }
 
+static void midi_note_name(uint8_t midi, char *buffer, size_t buffer_size)
+{
+    static const char *names[] = {
+        "C", "C#", "D", "D#", "E", "F",
+        "F#", "G", "G#", "A", "A#", "B",
+    };
+    snprintf(buffer, buffer_size, "%s%d", names[midi % 12],
+             (int)midi / 12 - 1);
+}
+
+static void sort_midi_notes(uint8_t *notes, size_t count)
+{
+    for (size_t i = 1; i < count; ++i) {
+        uint8_t value = notes[i];
+        size_t j = i;
+        while (j > 0 && notes[j - 1] > value) {
+            notes[j] = notes[j - 1];
+            --j;
+        }
+        notes[j] = value;
+    }
+}
+
+static void update_note_monitor(void)
+{
+    if (!s_modes.note_monitor_visible ||
+        s_modes.note_monitor_value_label == NULL ||
+        !lv_obj_is_valid(s_modes.note_monitor_value_label)) {
+        return;
+    }
+
+    note_monitor_snapshot_t snapshot;
+    portENTER_CRITICAL(&s_note_monitor_lock);
+    snapshot = s_note_monitor_snapshot;
+    portEXIT_CRITICAL(&s_note_monitor_lock);
+
+    audio_s3_adapter_status_t adapter = {0};
+    audio_s3_adapter_get_status(&adapter);
+    if (s_modes.note_monitor_link_label != NULL) {
+        char link[128];
+        if (s_modes.note_monitor_error != ESP_OK) {
+            snprintf(link, sizeof(link), "Audio S3 启动失败：%s",
+                     esp_err_to_name(s_modes.note_monitor_error));
+        } else if (adapter.connected) {
+            snprintf(link, sizeof(link),
+                     "Audio S3 已连接 · SID %lu · 序号 %lu",
+                     (unsigned long)snapshot.sid,
+                     (unsigned long)snapshot.seq);
+        } else {
+            snprintf(link, sizeof(link), "正在等待 Audio S3 连接…");
+        }
+        lv_label_set_text(s_modes.note_monitor_link_label, link);
+    }
+
+    const int64_t now_us = esp_timer_get_time();
+    if (!snapshot.valid || snapshot.note_count == 0 ||
+        now_us - snapshot.last_note_on_us > NOTE_MONITOR_HOLD_US) {
+        lv_label_set_text(s_modes.note_monitor_value_label, "—");
+        lv_label_set_text(s_modes.note_monitor_kind_label, "等待演奏");
+        lv_label_set_text(s_modes.note_monitor_detail_label,
+                          "请在 Audio S3 麦克风前弹奏单音或和弦");
+        return;
+    }
+
+    sort_midi_notes(snapshot.midi, snapshot.note_count);
+    char value[192] = {0};
+    size_t used = 0;
+    for (size_t i = 0; i < snapshot.note_count; ++i) {
+        char name[12];
+        midi_note_name(snapshot.midi[i], name, sizeof(name));
+        int written = snprintf(value + used, sizeof(value) - used,
+                               "%s%s", i == 0 ? "" : " · ", name);
+        if (written < 0 || (size_t)written >= sizeof(value) - used) break;
+        used += (size_t)written;
+    }
+    lv_label_set_text(s_modes.note_monitor_value_label, value);
+
+    char kind[96];
+    if (snapshot.native_poly &&
+        snapshot.poly_kind == S3_MUSIC_POLY_CHORD &&
+        snapshot.poly_name[0] != '\0') {
+        snprintf(kind, sizeof(kind), "和弦 · %s", snapshot.poly_name);
+    } else if (snapshot.native_poly &&
+               snapshot.poly_kind == S3_MUSIC_POLY_INTERVAL) {
+        snprintf(kind, sizeof(kind), "双音");
+    } else if (snapshot.note_count > 1) {
+        snprintf(kind, sizeof(kind), "%u 音和弦",
+                 (unsigned)snapshot.note_count);
+    } else {
+        snprintf(kind, sizeof(kind), "单音");
+    }
+    lv_label_set_text(s_modes.note_monitor_kind_label, kind);
+
+    char midi_list[96] = {0};
+    used = 0;
+    for (size_t i = 0; i < snapshot.note_count; ++i) {
+        int written = snprintf(midi_list + used, sizeof(midi_list) - used,
+                               "%s%u", i == 0 ? "" : ", ",
+                               (unsigned)snapshot.midi[i]);
+        if (written < 0 || (size_t)written >= sizeof(midi_list) - used) break;
+        used += (size_t)written;
+    }
+    char detail[192];
+    if (snapshot.has_frequency && snapshot.has_confidence) {
+        snprintf(detail, sizeof(detail),
+                 "MIDI: %s   最新频率: %.1f Hz   置信度: %.0f%%",
+                 midi_list, (double)snapshot.latest_frequency_hz,
+                 (double)(snapshot.latest_confidence * 100.0f));
+    } else if (snapshot.has_frequency) {
+        snprintf(detail, sizeof(detail),
+                 "MIDI: %s   最新频率: %.1f Hz",
+                 midi_list, (double)snapshot.latest_frequency_hz);
+    } else if (snapshot.has_confidence) {
+        snprintf(detail, sizeof(detail),
+                 "MIDI: %s   置信度: %.0f%%",
+                 midi_list,
+                 (double)(snapshot.latest_confidence * 100.0f));
+    } else {
+        snprintf(detail, sizeof(detail), "MIDI: %s", midi_list);
+    }
+    lv_label_set_text(s_modes.note_monitor_detail_label, detail);
+}
+
 static void status_timer_cb(lv_timer_t *timer)
 {
     (void)timer;
@@ -712,6 +944,93 @@ static void status_timer_cb(lv_timer_t *timer)
     if (s_modes.playback_visible) {
         update_playback_status();
     }
+    if (s_modes.note_monitor_visible) {
+        update_note_monitor();
+    }
+}
+
+static void note_monitor_back_cb(lv_event_t *event)
+{
+    (void)event;
+    stop_note_monitor();
+    s_modes.note_monitor_visible = false;
+    load_hub();
+}
+
+static void create_note_monitor_screen(void)
+{
+    s_modes.note_monitor = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_modes.note_monitor, lv_color_hex(COLOR_BG), 0);
+    lv_obj_set_style_bg_opa(s_modes.note_monitor, LV_OPA_COVER, 0);
+    lv_obj_set_scrollbar_mode(s_modes.note_monitor, LV_SCROLLBAR_MODE_OFF);
+
+    make_button(s_modes.note_monitor, "返回", 24, 20, 130, 50,
+                note_monitor_back_cb, NULL);
+    make_label(s_modes.note_monitor, "音符识别测试", 332, 24, 360, 48,
+               LV_TEXT_ALIGN_CENTER);
+    make_label(s_modes.note_monitor,
+               "实时显示 Audio S3 串口识别到的演奏音符",
+               232, 82, 560, 36, LV_TEXT_ALIGN_CENTER);
+
+    lv_obj_t *panel = lv_obj_create(s_modes.note_monitor);
+    lv_obj_set_pos(panel, 90, 135);
+    lv_obj_set_size(panel, 844, 330);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(0xFFFDF8), 0);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(panel, 2, 0);
+    lv_obj_set_style_border_color(panel, lv_color_hex(0x7DD3FC), 0);
+    lv_obj_set_style_radius(panel, 18, 0);
+
+    s_modes.note_monitor_value_label = make_label(
+        panel, "—", 35, 45, 774, 82, LV_TEXT_ALIGN_CENTER);
+    s_note_monitor_font = lv_font_montserratMedium_34;
+    s_note_monitor_font.fallback = ui_font();
+    lv_obj_set_style_text_font(s_modes.note_monitor_value_label,
+                               &s_note_monitor_font, 0);
+    lv_obj_set_style_text_color(s_modes.note_monitor_value_label,
+                                lv_color_hex(0x0369A1), 0);
+    lv_label_set_long_mode(s_modes.note_monitor_value_label,
+                           LV_LABEL_LONG_DOT);
+
+    s_modes.note_monitor_kind_label = make_label(
+        panel, "等待演奏", 235, 145, 374, 42, LV_TEXT_ALIGN_CENTER);
+    lv_obj_set_style_text_color(s_modes.note_monitor_kind_label,
+                                lv_color_hex(COLOR_ACCENT), 0);
+    s_modes.note_monitor_detail_label = make_label(
+        panel, "请在 Audio S3 麦克风前弹奏单音或和弦",
+        55, 210, 734, 55, LV_TEXT_ALIGN_CENTER);
+    lv_label_set_long_mode(s_modes.note_monitor_detail_label,
+                           LV_LABEL_LONG_WRAP);
+
+    s_modes.note_monitor_link_label = make_label(
+        s_modes.note_monitor, "正在等待 Audio S3 连接…",
+        160, 500, 704, 40, LV_TEXT_ALIGN_CENTER);
+    lv_obj_set_style_text_color(s_modes.note_monitor_link_label,
+                                lv_color_hex(COLOR_MUTED), 0);
+}
+
+static void open_note_monitor_cb(lv_event_t *event)
+{
+    (void)event;
+    if (s_modes.note_monitor == NULL ||
+        !lv_obj_is_valid(s_modes.note_monitor)) {
+        create_note_monitor_screen();
+    }
+    hide_mode_status();
+    reset_note_monitor_capture(true);
+    esp_err_t err = audio_s3_adapter_start_demo_session();
+    s_modes.note_monitor_error = err;
+    if (err != ESP_OK) {
+        reset_note_monitor_capture(false);
+        char text[128];
+        snprintf(text, sizeof(text), "Audio S3 启动失败：%s",
+                 esp_err_to_name(err));
+        lv_label_set_text(s_modes.note_monitor_link_label, text);
+        ESP_LOGW(TAG, "%s", text);
+    }
+    s_modes.note_monitor_visible = true;
+    load_screen(s_modes.note_monitor, LV_SCREEN_LOAD_ANIM_MOVE_LEFT);
 }
 
 static lv_obj_t *make_mode_card(lv_obj_t *parent, const char *title,
@@ -776,6 +1095,12 @@ static void create_hub_screen(void)
     make_mode_card(cards, "播放模式",
                    "读取 SD 卡 WAV\n控制本地歌曲",
                    open_playback_cb);
+
+    lv_obj_t *monitor_button = make_button(
+        s_modes.hub, "音符识别测试", 780, 505, 220, 60,
+        open_note_monitor_cb, NULL);
+    lv_obj_set_style_bg_color(monitor_button, lv_color_hex(0xE0F2FE), 0);
+    lv_obj_set_style_border_color(monitor_button, lv_color_hex(0x38BDF8), 0);
 }
 
 static void other_modes_cb(lv_event_t *event)
@@ -808,4 +1133,91 @@ esp_err_t screen_modes_init(lv_ui *ui)
     }
     ESP_LOGI(TAG, "Other Modes hub connected");
     return ESP_OK;
+}
+
+void screen_modes_handle_audio_s3_event(const s3_music_event_t *event)
+{
+    if (event == NULL) {
+        return;
+    }
+    const int64_t now_us = esp_timer_get_time();
+    portENTER_CRITICAL(&s_note_monitor_lock);
+    if (!s_note_monitor_capture_enabled) {
+        portEXIT_CRITICAL(&s_note_monitor_lock);
+        return;
+    }
+
+    note_monitor_snapshot_t *snapshot = &s_note_monitor_snapshot;
+    if (event->type == S3_MUSIC_EVENT_POLY) {
+        if (event->note_count < 2 ||
+            event->note_count > S3_MUSIC_POLY_MAX_NOTES) {
+            portEXIT_CRITICAL(&s_note_monitor_lock);
+            return;
+        }
+        memset(snapshot, 0, sizeof(*snapshot));
+        snapshot->valid = true;
+        snapshot->native_poly = true;
+        snapshot->poly_kind = event->poly_kind;
+        snapshot->note_count = event->note_count;
+        memcpy(snapshot->midi, event->notes, event->note_count);
+        memcpy(snapshot->poly_name, event->poly_name,
+               sizeof(snapshot->poly_name));
+        snapshot->sid = event->sid;
+        snapshot->seq = event->seq;
+        snapshot->sender_ts_ms = event->sender_ts_ms;
+        snapshot->last_note_on_us = now_us;
+        snapshot->latest_confidence = event->confidence;
+        snapshot->has_confidence = event->has_confidence;
+        portEXIT_CRITICAL(&s_note_monitor_lock);
+        return;
+    }
+    if (event->type != S3_MUSIC_EVENT_NOTE_ON || event->velocity == 0) {
+        portEXIT_CRITICAL(&s_note_monitor_lock);
+        return;
+    }
+    if (snapshot->native_poly && snapshot->valid &&
+        snapshot->sid == event->sid) {
+        uint32_t sender_delta =
+            event->sender_ts_ms - snapshot->sender_ts_ms;
+        if (sender_delta > UINT32_MAX / 2U) {
+            sender_delta = snapshot->sender_ts_ms - event->sender_ts_ms;
+        }
+        if (sender_delta <= 80) {
+            /* Audio S3 emits a selected melody NOTE_ON beside the same poly
+             * result. Do not let that compatibility event replace or append
+             * to the native chord snapshot. */
+            portEXIT_CRITICAL(&s_note_monitor_lock);
+            return;
+        }
+        /* This is a genuinely later melody result, not the compatibility
+         * NOTE_ON paired with the poly frame. Start a fresh fallback group. */
+        memset(snapshot, 0, sizeof(*snapshot));
+        snapshot->valid = true;
+    }
+    if (!snapshot->valid || snapshot->last_note_on_us <= 0 ||
+        now_us - snapshot->last_note_on_us >
+            NOTE_MONITOR_CHORD_WINDOW_US) {
+        memset(snapshot, 0, sizeof(*snapshot));
+        snapshot->valid = true;
+    }
+
+    bool duplicate = false;
+    for (size_t i = 0; i < snapshot->note_count; ++i) {
+        if (snapshot->midi[i] == event->midi) {
+            duplicate = true;
+            break;
+        }
+    }
+    if (!duplicate && snapshot->note_count < NOTE_MONITOR_CAPACITY) {
+        snapshot->midi[snapshot->note_count++] = event->midi;
+    }
+    snapshot->sid = event->sid;
+    snapshot->seq = event->seq;
+    snapshot->sender_ts_ms = event->sender_ts_ms;
+    snapshot->last_note_on_us = now_us;
+    snapshot->latest_frequency_hz = event->frequency_hz;
+    snapshot->latest_confidence = event->confidence;
+    snapshot->has_frequency = event->has_frequency;
+    snapshot->has_confidence = event->has_confidence;
+    portEXIT_CRITICAL(&s_note_monitor_lock);
 }

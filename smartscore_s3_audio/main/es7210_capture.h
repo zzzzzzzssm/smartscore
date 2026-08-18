@@ -14,6 +14,8 @@ typedef struct {
 
 esp_err_t es7210_capture_init(void);
 esp_err_t es7210_capture_start(void);
+esp_err_t es7210_capture_set_input_gain(float gain_db);
+float es7210_capture_get_input_gain(void);
 int es7210_capture_take_block(audio_capture_block_t **block, uint32_t timeout_ms);
 void es7210_capture_release_block(int index);
 unsigned es7210_capture_queue_depth(void);

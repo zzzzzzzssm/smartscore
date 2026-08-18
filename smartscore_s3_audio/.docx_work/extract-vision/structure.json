@@ -1,0 +1,1733 @@
+{
+  "path": "D:\\qianrushi\\智能乐谱辅助系统_本地视觉识别与演奏抓拍模块设计文档.docx",
+  "sha256": "1738fdb9045d125c5e86c54d653d7ab100a37957d8e1675a053c9886e1d3685c",
+  "paragraph_count": 64,
+  "table_count": 5,
+  "inline_shape_count": 5,
+  "section_count": 1,
+  "sections": [
+    {
+      "index": 1,
+      "width_twips": 11906,
+      "height_twips": 16838,
+      "top_margin_twips": 2211,
+      "bottom_margin_twips": 2155,
+      "left_margin_twips": 1418,
+      "right_margin_twips": 1418,
+      "header_distance_twips": 851,
+      "footer_distance_twips": 992,
+      "different_first_page": false,
+      "header": [
+        "智能乐谱辅助系统技术报告"
+      ],
+      "footer": [
+        "第 1 页"
+      ],
+      "first_page_header": [],
+      "first_page_footer": []
+    }
+  ],
+  "styles": [
+    {
+      "name": "Normal",
+      "font": "Calibri",
+      "font_ascii": "Calibri",
+      "font_hansi": "Calibri",
+      "font_east_asia": "Microsoft YaHei",
+      "font_cs": null,
+      "size_pt": 10.5,
+      "bold": null,
+      "alignment": 3,
+      "space_before_pt": null,
+      "space_after_pt": 5.0,
+      "line_spacing": 1.15,
+      "first_line_indent_twips": 420
+    },
+    {
+      "name": "Header",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": 1.0,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Footer",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": 1.0,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 1",
+      "font": "Calibri",
+      "font_ascii": "Calibri",
+      "font_hansi": "Calibri",
+      "font_east_asia": "Microsoft YaHei",
+      "font_cs": null,
+      "size_pt": 16.0,
+      "bold": true,
+      "alignment": 0,
+      "space_before_pt": 16.0,
+      "space_after_pt": 8.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 2",
+      "font": "Calibri",
+      "font_ascii": "Calibri",
+      "font_hansi": "Calibri",
+      "font_east_asia": "Microsoft YaHei",
+      "font_cs": null,
+      "size_pt": 13.0,
+      "bold": true,
+      "alignment": 0,
+      "space_before_pt": 12.0,
+      "space_after_pt": 6.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 3",
+      "font": "Calibri",
+      "font_ascii": "Calibri",
+      "font_hansi": "Calibri",
+      "font_east_asia": "Microsoft YaHei",
+      "font_cs": null,
+      "size_pt": 11.0,
+      "bold": true,
+      "alignment": 0,
+      "space_before_pt": 8.0,
+      "space_after_pt": 4.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 4",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": true,
+      "alignment": null,
+      "space_before_pt": 10.0,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 5",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": 10.0,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 6",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": 10.0,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 7",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": 10.0,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 8",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": 10.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": 10.0,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 9",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": 10.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": 10.0,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "No Spacing",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": 1.0,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Title",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": 26.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 15.0,
+      "line_spacing": 1.0,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Subtitle",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": 12.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Paragraph",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Body Text",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 6.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Body Text 2",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 6.0,
+      "line_spacing": 2.0,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Body Text 3",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": 8.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 6.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": -360
+    },
+    {
+      "name": "List 2",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": -360
+    },
+    {
+      "name": "List 3",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": -360
+    },
+    {
+      "name": "List Bullet",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Bullet 2",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Bullet 3",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Number",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Number 2",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Number 3",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Continue",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 6.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Continue 2",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 6.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Continue 3",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 6.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "macro",
+      "font": "Courier",
+      "font_ascii": "Courier",
+      "font_hansi": "Courier",
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": 10.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Quote",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Caption",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": 9.0,
+      "bold": true,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": 1.0,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Intense Quote",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": true,
+      "alignment": null,
+      "space_before_pt": 10.0,
+      "space_after_pt": 14.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "TOC Heading",
+      "font": null,
+      "font_ascii": null,
+      "font_hansi": null,
+      "font_east_asia": null,
+      "font_cs": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    }
+  ],
+  "blocks": [
+    {
+      "kind": "paragraph",
+      "style": "Heading 1",
+      "text": "3.X 本地视觉识别与演奏抓拍功能设计",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "3.X 本地视觉识别与演奏抓拍功能设计",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "本模块面向智能乐谱辅助系统的无接触控制与演奏过程留存需求，在 ESP32-S3 上完成摄像头采集、手部检测、手势分类、会话控制和照片写卡。全部视觉推理均在设备本地运行，不依赖 Wi-Fi、蓝牙或云端服务。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "本模块面向智能乐谱辅助系统的无接触控制与演奏过程留存需求，在 ESP32-S3 上完成摄像头采集、手部检测、手势分类、会话控制和照片写卡。全部视觉推理均在设备本地运行，不依赖 Wi-Fi、蓝牙或云端服务。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "3.X.1 模块定位与主要功能",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "3.X.1 模块定位与主要功能",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "模块使用 OV3660 获取演奏者画面，并先由乐鑫 Hand Detect 定位手部区域。OK、五指张开和竖大拇指由官方 Hand Gesture Recognition 模型识别；向右指、向左指则由项目自训练方向分类模型判断。识别成功后，系统以单独一行数字输出动作编号，供总系统的乐谱控制与评分流程使用。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "模块使用 OV3660 获取演奏者画面，并先由乐鑫 Hand Detect 定位手部区域。OK、五指张开和竖大拇指由官方 Hand Gesture Recognition 模型识别；向右指、向左指则由项目自训练方向分类模型判断。识别成功后，系统以单独一行数字输出动作编号，供总系统的乐谱控制与评分流程使用。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "照片记录与手势控制共享摄像头，但采用独立写卡任务。OK 动作进入录制状态后，系统按约 3 s 间隔复制当前 JPEG 至自主管理的 PSRAM 缓冲区，再异步写入 microSD；五指张开结束会话。SD 卡异常只关闭照片保存，不中断手势识别。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "照片记录与手势控制共享摄像头，但采用独立写卡任务。OK 动作进入录制状态后，系统按约 3 s 间隔复制当前 JPEG 至自主管理的 PSRAM 缓冲区，再异步写入 microSD；五指张开结束会话。SD 卡异常只关闭照片保存，不中断手势识别。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "3.X.2 功能组成",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "3.X.2 功能组成",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "视觉链路由“公共手部检测 + 双路分类 + 统一触发”构成。官方模型具有优先权，并通过 Top-3 保护候选阻止左右指模型抢判 OK、five 或 like；只有未命中官方控制手势时才进入方向分类。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "视觉链路由“公共手部检测 + 双路分类 + 统一触发”构成。官方模型具有优先权，并通过 Top-3 保护候选阻止左右指模型抢判 OK、five 或 like；只有未命中官方控制手势时才进入方向分类。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "图 3-X-1  本地视觉识别与演奏抓拍功能组成",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "图 3-X-1  本地视觉识别与演奏抓拍功能组成",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 9.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "3.X.3 手势识别与交互逻辑",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "3.X.3 手势识别与交互逻辑",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "Hand Detect 置信度达到 30% 后，检测框被限制在图像边界内，并以手掌中心是否位于画面上方 85% 范围判断控制区。官方手势 Top-1 置信度达到 55% 时直接触发 3～5 号动作；若官方 Top-3 中 OK、five 或 like 任一类别达到 25%，则暂缓方向分类。方向模型要求单手检测置信度不低于 35%，输出置信度不低于 55%，且第一、第二类别分差不低于 20%。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "Hand Detect 置信度达到 30% 后，检测框被限制在图像边界内，并以手掌中心是否位于画面上方 85% 范围判断控制区。官方手势 Top-1 置信度达到 55% 时直接触发 3～5 号动作；若官方 Top-3 中 OK、five 或 like 任一类别达到 25%，则暂缓方向分类。方向模型要求单手检测置信度不低于 35%，输出置信度不低于 55%，且第一、第二类别分差不低于 20%。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "当前版本采用一次合格推理立即触发，并设置 800 ms 冷却及动作锁存。相同手势持续停留不会重复输出；手离开控制区或改变动作后重新武装。手首次进入画面时预留一帧仅运行官方分类，使竖大拇指、OK 等动作先于方向模型获得判定机会。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "当前版本采用一次合格推理立即触发，并设置 800 ms 冷却及动作锁存。相同手势持续停留不会重复输出；手离开控制区或改变动作后重新武装。手首次进入画面时预留一帧仅运行官方分类，使竖大拇指、OK 等动作先于方向模型获得判定机会。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "表 3-X-1  手势动作、真实模型标签与输出编号",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": [
+        {
+          "text": "表 3-X-1  手势动作、真实模型标签与输出编号",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 9.0
+        }
+      ]
+    },
+    {
+      "kind": "table",
+      "style": "Normal Table",
+      "rows": [
+        [
+          "动作",
+          "模型标签",
+          "输出",
+          "系统功能"
+        ],
+        [
+          "向右指",
+          "point_right",
+          "1",
+          "下一页"
+        ],
+        [
+          "向左指",
+          "point_left",
+          "2",
+          "上一页"
+        ],
+        [
+          "OK",
+          "ok",
+          "3",
+          "开始演奏记录"
+        ],
+        [
+          "五指张开",
+          "five",
+          "4",
+          "结束演奏记录"
+        ],
+        [
+          "竖大拇指",
+          "like",
+          "5",
+          "查看评分"
+        ]
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "3.X.4 演奏会话与照片记录",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "3.X.4 演奏会话与照片记录",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "IDLE 状态接收到动作 3 后扫描 /sdcard/score 下已有目录并创建新的 S0001～S9999 会话，随后进入 RECORDING。录制期间每到 3000 ms 截止点才尝试保存当前 JPEG，文件命名为 I000001.JPG 等；动作 4 到达后停止创建新照片，等待写卡队列排空并更新 SESSION.TXT，最后进入 FINISHED。动作 5 将完成状态转为 SCORE_REQUESTED。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "IDLE 状态接收到动作 3 后扫描 /sdcard/score 下已有目录并创建新的 S0001～S9999 会话，随后进入 RECORDING。录制期间每到 3000 ms 截止点才尝试保存当前 JPEG，文件命名为 I000001.JPG 等；动作 4 到达后停止创建新照片，等待写卡队列排空并更新 SESSION.TXT，最后进入 FINISHED。动作 5 将完成状态转为 SCORE_REQUESTED。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "该阶段以稳定、可验证的定时留存为主，不将早期方案中的三帧择优、内容质量评分和会后精选表述为已实现功能。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "该阶段",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        },
+        {
+          "text": "以稳定、可验证的定时留存为主，不将早期方案中的三帧择优、内容质量评分和会后精选表述为已实现功能。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 1",
+      "text": "4.X 本地视觉识别与演奏抓拍模块实现",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "4.X 本地视觉识别与演奏抓拍模块实现",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "模块采用 ESP-IDF 与 C++ 实现，核心依赖均来自乐鑫官方组件管理器，包括 esp32-camera、esp-dl、hand_detect 和 hand_gesture_recognition。模型文件编译进 Flash，运行时不从 SD 卡加载。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "模块采用 ESP-IDF 与 C++ 实现，核心依赖均来自乐鑫官方组件管理器，包括 esp32-camera、esp-dl、hand_detect 和 hand_gesture_recognition。模型文件编译进 Flash，运行时不从 SD 卡加载。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "4.X.1 硬件接口与图像采集",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "4.X.1 硬件接口与图像采集",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "表 4-X-1  视觉模块硬件与存储配置",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": [
+        {
+          "text": "表 4-X-1  视觉模块硬件与存储配置",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 9.0
+        }
+      ]
+    },
+    {
+      "kind": "table",
+      "style": "Normal Table",
+      "rows": [
+        [
+          "对象",
+          "关键配置",
+          "实现说明"
+        ],
+        [
+          "主控",
+          "ESP32-S3-N16R8",
+          "16 MB Flash，8 MB PSRAM"
+        ],
+        [
+          "摄像头",
+          "OV3660，GPIO4～18",
+          "XCLK=15；JPEG；VGA 640×480"
+        ],
+        [
+          "摄像参数",
+          "quality=12，fb_count=2",
+          "帧缓冲位于 PSRAM，优先最新帧"
+        ],
+        [
+          "microSD",
+          "SDMMC 1-bit",
+          "CMD=38，CLK=39，D0=40；挂载 /sdcard"
+        ],
+        [
+          "存储目录",
+          "/sdcard/score/Sxxxx",
+          "JPEG 与 SESSION.TXT 按会话保存"
+        ]
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "摄像头配置为 PIXFORMAT_JPEG、VGA 640×480、双帧缓冲和 CAMERA_GRAB_LATEST。主循环获取 camera_fb_t 后，一路按需复制 JPEG 给 AI 任务，另一路在照片截止点复制到 PSRAM；完成后立即调用 esp_camera_fb_return()，队列中不长期保存摄像头帧指针。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "摄像头配置为 PIXFORMAT_JPEG、VGA 640×480、双帧缓冲和 CAMERA_GRAB_LATEST。主循环获取 camera_fb_t 后，一路按需复制 JPEG 给 AI 任务，另一路在照片截止点复制到 PSRAM；完成后立即调用 esp_camera_fb_return()，队列中不长期保存摄像头帧指针。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 3",
+      "text": "4.X.1.1 FreeRTOS 任务与内存组织",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "4.X.1.1 FreeRTOS 任务与内存组织",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "表 4-X-2  任务划分与资源约束",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": [
+        {
+          "text": "表 4-X-2  任务划分与资源约束",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 9.0
+        }
+      ]
+    },
+    {
+      "kind": "table",
+      "style": "Normal Table",
+      "rows": [
+        [
+          "执行单元",
+          "职责",
+          "资源控制"
+        ],
+        [
+          "主循环",
+          "采图、状态机、动作输出、定时触发",
+          "单帧失败直接跳过"
+        ],
+        [
+          "HandAiTask",
+          "JPEG 解码、Hand Detect、双路分类",
+          "固定 JPEG/RGB PSRAM 缓冲；队列深度 1"
+        ],
+        [
+          "SDWriterTask",
+          "异步写 JPEG、更新计数、释放缓冲",
+          "队列深度 2；失败后禁用后续保存"
+        ]
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "4.X.2 模型体系与模型选择",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "4.X.2 模型体系与模型选择",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "手部检测使用 HandDetect::ESPDET_PICO_224_224_HAND，静态手势使用官方 MobileNetV2-0.5 手势分类器。系统启动时遍历并打印官方模型真实类别：one、two、three、four、five、like、ok、no_gesture、call、dislike 和 no_hand，再将 ok、five、like 分别映射到动作 3、4、5；若实际模型缺少类别则只禁用对应动作。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "手部检测使用 HandDetect::ESPDET_PICO_224_224_HAND，静态手势使用官方 MobileNetV2-0.5 手势分类器。系统启动时遍历并打印官方模型真实类别：one、two、three、four、five、like、ok、no_gesture、call、dislike 和 no_hand，再将 ok、five、like 分别映射到动作 3、4、5；若实际模型缺少类别则只禁用对应动作。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "左右指不属于当前官方控制类别，因此项目训练 point_right、point_left、other 三分类模型。选型不只比较离线准确率，还同时考虑参数规模、最差人员表现、量化兼容性和 ESP32-S3 板端误触。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "左右指不属于当前官方控制类别，因此项目训练 point_right、point_left、other 三分类模型。选型不只比较离线准确率，还同时考虑参数规模、最差人员表现、量化兼容性和 ESP32-S3 板端误触。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "表 4-X-3  左右指候选模型比较",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": [
+        {
+          "text": "表 4-X-3  左右指候选模型比较",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 9.0
+        }
+      ]
+    },
+    {
+      "kind": "table",
+      "style": "Normal Table",
+      "rows": [
+        [
+          "候选模型",
+          "输入/量化",
+          "参数量",
+          "八折准确率",
+          "最差人员",
+          "实机结论"
+        ],
+        [
+          "MobileNetV3-Small 1.0",
+          "128×128 / 候选",
+          "1,520,931",
+          "93.42%",
+          "80.65%",
+          "离线优胜，但体积和板端综合稳定性不占优"
+        ],
+        [
+          "TinyPointNet",
+          "96×96 / INT8",
+          "50,263",
+          "93.40%",
+          "88.33%",
+          "离线门限通过，板端曾明显偏向输出 2，回退"
+        ],
+        [
+          "MobileNetV2-0.5",
+          "128×128 / INT16",
+          "691,523",
+          "89.39%",
+          "81.14%",
+          "板端方向较均衡，作为当前稳定版本"
+        ]
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "TinyPointNet 的离线交叉验证和 INT8 量化结果较高，但实机测试出现向左类别偏置，说明离线指标不能替代板端验证。MobileNetV3-Small 1.0 在交叉验证中排名第一，但参数量约为 MobileNetV2-0.5 的 2.2 倍。综合现有部署可用性，最终保留 MobileNetV2-0.5 INT16；模型大小 1,636,496 B，输入为 128×128 RGB。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "TinyPointNet 的离线交叉验证和 INT8 量化结果较高，但实机测试出现向左类别偏置，说明离线指标不能替代板端验证。MobileNetV3-Small 1.0 在交叉验证中排名第一，但参数量约为 MobileNetV2-0.5 的 2.2 倍。综合现有部署可用性，最终保留 MobileNetV2-0.5 INT16；模型大小 1,636,496 B，输入为 128×128 RGB。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "为降低方向模型把竖大拇指、OK 等动作误判为 1/2 的风险，推理顺序固定为“官方 Top-1 → 官方 Top-3 保护 → 一帧入口保护 → 自训练方向模型”。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "为降低",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        },
+        {
+          "text": "方向模型把竖大拇指、OK 等动作误判为 1/2 的风险，推理顺序固定为“官方 Top-1 → 官方 Top-3 保护 → 一帧入口保护 → 自训练方向模型”。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "4.X.3 数据集构建与预处理",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "4.X.3 数据集构建与预处理",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "训练数据由 8 名采集者在实际摄像头视角下完成，共保留 5609 张有效样本，其中向右指 1577 张、向左指 1546 张、其他动作 2486 张。其他动作包含竖指、握拳、V 字、竖大拇指及自然手部姿态，用于抑制非目标动作被误判为翻页。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "训练数据由 8 名采集者在实际摄像头视角下完成，共保留 5609 张有效样本，其中向右指 1577 张、向左指 1546 张、其他动作 2486 张。其他动作包含竖指、握拳、V 字、竖大拇指及自然手部姿态，用于抑制非目标动作被误判为翻页。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "图 4-X-1 展示全部 8 名采集者在三类数据中的代表样本，覆盖不同距离、角度、背景和遮挡情况，使模型学习指向方向而非记忆特定人员。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "图 4-X-1 展示全部 8 名采集者在三类数据中的代表样本，覆盖不同距离、角度、背景和遮挡情况，使模型学习指向方向而非记忆特定人员。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "图 4-X-1  八名采集者的左右指三分类真实训练样本",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "图 4-X-1  八名采集者的左右指三分类真实训练样本",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 9.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 3",
+      "text": "4.X.3.1 样本预处理与数据增强",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "4.X.3.1 样本预处理与数据增强",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "计算机侧先定位手部关键点，再生成带 28% 边界扩展的正方形裁剪并缩放为 128×128 RGB。解码失败、无手、多手、重复样本以及 52 张方向与标签明显冲突的图像被排除。亮度、对比度、轻微旋转、缩放和平移用于扩充姿态变化；水平翻转后必须交换 point_left 与 point_right 标签。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "计算机侧先定位手部关键点，再生成带 28% 边界扩展的正方形裁剪并缩放为 128×128 RGB。解码失败、无手、多手、重复样本以及 52 张方向与标签明显冲突的图像被排除。亮度、对比度、轻微旋转、缩放和平移用于扩充姿态变化；水平翻转后必须交换 point_left 与 point_right 标签。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "图 4-X-2  原始样本、手部裁剪与增强示例",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "图 4-X-2  原始样本、手部裁剪与增强示例",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 9.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "4.X.4 模型训练与验证",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "4.X.4 模型训练与验证",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "MobileNetV2-0.5 采用迁移学习：前 3 个 Epoch 冻结主干训练分类头，随后解冻网络微调 18 个 Epoch，并使用余弦退火降低学习率。验证按人员划分，每折完整留出 1 人，留出人员不参与训练和阈值选择。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "MobileNetV2-0.5 采用迁移学习：前 3 个 Epoch 冻结主干训练分类头，随后解冻网络微调 18 个 Epoch，并使用余弦退火降低学习率。验证按人员划分，每折完整留出 1 人，留出人员不参与训练和阈值选择。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "图 4-X-3  左右指模型训练、量化与板端验证流程",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "图 4-X-3  左右指模型训练、量化与板端验证流程",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 9.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 3",
+      "text": "4.X.4.1 训练与交叉验证结果",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "4.X.4.1 训练与交叉验证结果",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "最终训练损失由 1.1185 降至 0.2380，抽样训练宏平均 F1 上升至约 95.42%。八折留一人员交叉验证准确率为 89.39%，宏平均 F1 为 89.20%，最差人员准确率为 81.14%；向右指、向左指和其他动作召回率分别为 89.03%、91.33% 和 88.42%。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "最终训练损失由 1.1185 降至 0.2380，抽样训练宏平均 F1 上升至约 95.42%。八折留一人员交叉验证准确率为 89.39%，宏平均 F1 为 89.20%，最差人员准确率为 81.14%；向右指、向左指和其他动作召回率分别为 89.03%、91.33% 和 88.42%。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "图 4-X-4  MobileNetV2-0.5 训练曲线与交叉验证混淆矩阵",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "图 4-X-4  MobileNetV2-0.5 训练曲线与交叉验证混淆矩阵",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 9.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "在 1200 张平衡样本量化评估中，浮点模型准确率为 96.08%，INT16 模型为 95.75%，两者预测一致率为 99.50%。动作阈值 0.87 可将 other 误触动作率控制在 1.69%，但指向动作召回率为 49.79%，体现了误触控制与触发灵敏度之间的权衡。训练监控、交叉验证和量化评估分别反映不同阶段，不能直接等同于实机准确率。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "在 1200 张平衡样本量化评估中，浮点模型准确率为 96.08%，INT16 模型为 95.75%，两者预测一致率为 99.50%。动作阈值 0.87 可将 other 误触动作率控制在 1.69%，但指向动作召回率为 49.79%，体现了误触控制与触发灵敏度之间的权衡。训练监控、交叉验证和量化评估分别反映不同阶段，不能直接等同于实机准确率。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "4.X.5 INT16 量化与 ESP-DL 部署",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "4.X.5 INT16 量化与 ESP-DL 部署",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "训练模型依次转换为 ONNX，再通过 ESP-PPQ 按 ESP32-S3 目标量化为 ESP-DL INT16 模型。模型输入由手掌检测框扩展为正方形、缩放至 128×128，并按训练阶段使用的 RGB 均值和标准差归一化。point_direction.espdl 以二进制资源编译进 Flash，运行时由 dl::Model 从只读段加载，输出三类 logits 经 softmax 转为置信度和第一、第二名分差。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "训练模型依次转换为 ONNX，再通过 ESP-PPQ 按 ESP32-S3 目标量化为 ESP-DL INT16 模型。模型输入由手掌检测框扩展为正方形、缩放至 128×128，并按训练阶段使用的 RGB 均值和标准差归一化。point_direction.espdl 以二进制资源编译进 Flash，运行时由 dl::Model 从只读段加载，输出三类 logits 经 softmax 转为置信度和第一、第二名分差。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "量化评估集上的 INT16 准确率为 95.75%，与浮点模型预测一致率为 99.50%，说明量化本身没有造成显著退化。模型自检在板端仍出现参考值 632 与推理值 628 的轻微差异；该差异属于定点舍入敏感项，系统记录警告后继续通过真实图像验证，不据此伪造通过结果。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "量化评估集上的 INT16 准确率为 95.75%，与浮点模型预测一致率为 99.50%，说明量化本身没有造成显著退化。模型自检在板端仍出现参考值 632 与推理值 628 的轻微差异；该差异属于定点舍入敏感项，系统记录警告后继续通过真实图像验证，不据此伪造通过结果。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "4.X.6 实机验证结果与现存问题",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "4.X.6 实机验证结果与现存问题",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "表 4-X-4  板端验证观察与容错策略",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": [
+        {
+          "text": "表 4-X-4  板端验证观察与容错策略",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 9.0
+        }
+      ]
+    },
+    {
+      "kind": "table",
+      "style": "Normal Table",
+      "rows": [
+        [
+          "实测项目",
+          "当前观察",
+          "影响与处理"
+        ],
+        [
+          "官方 3/4/5 手势",
+          "单次官方分类约 0.64 s，可识别",
+          "保持官方优先和 Top-3 保护"
+        ],
+        [
+          "左右指方向模型",
+          "单次推理约 2.42 s，最近测试左右输出较均衡",
+          "精度可用但响应仍慢"
+        ],
+        [
+          "摄像头帧队列",
+          "慢推理期间出现 FB-OVF",
+          "丢弃中间帧并优先获取最新帧"
+        ],
+        [
+          "内存",
+          "内部可用约 248 KB，PSRAM 可用约 4.58 MB",
+          "固定大缓冲，避免逐帧大分配"
+        ],
+        [
+          "SD 写卡",
+          "曾出现 0x109 / errno 5",
+          "禁用后续保存、释放队列，手势继续运行"
+        ]
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "综上，当前版本已形成“官方手势 3～5 + 自训练方向 1～2 + 三秒定时拍照”的可运行闭环，但仍需使用新增人员进行独立实机测试，并重点优化方向推理时延和 SD 卡可靠性。报告中的 89.39% 与 95.75% 分别属于离线留一人员交叉验证和量化样本评估，不作为未经统计的实机准确率承诺。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "综上",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        },
+        {
+          "text": "，当前版本已形成“官方手势 3～5 + 自训练方向 1～2 + 三秒定时拍照”的可运行闭环，但仍需使用新增人员进行独立实机测试，并重点优化方向推理时延和 SD 卡可靠性。报告中的 89.39% 与 95.75% 分别属于离线留一人员交叉验证和量化样本评估，不作为未经统计的实机准确率承诺。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 10.5
+        }
+      ]
+    }
+  ]
+}

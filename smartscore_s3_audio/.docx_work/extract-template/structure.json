@@ -1,0 +1,3139 @@
+{
+  "path": "D:\\qianrushi\\物联网模版.docx",
+  "sha256": "4be6b1b43af93c9e12e964d22e90730cac8e9d01e85c025a7ec5ac9735242652",
+  "paragraph_count": 130,
+  "table_count": 2,
+  "inline_shape_count": 1,
+  "section_count": 9,
+  "sections": [
+    {
+      "index": 1,
+      "width_twips": 11906,
+      "height_twips": 16838,
+      "top_margin_twips": 2211,
+      "bottom_margin_twips": 2155,
+      "left_margin_twips": 1418,
+      "right_margin_twips": 1418,
+      "header_distance_twips": 851,
+      "footer_distance_twips": 992,
+      "different_first_page": false,
+      "header": [],
+      "footer": [],
+      "first_page_header": [],
+      "first_page_footer": []
+    },
+    {
+      "index": 2,
+      "width_twips": 11906,
+      "height_twips": 16838,
+      "top_margin_twips": 2211,
+      "bottom_margin_twips": 2155,
+      "left_margin_twips": 1418,
+      "right_margin_twips": 1418,
+      "header_distance_twips": 851,
+      "footer_distance_twips": 992,
+      "different_first_page": false,
+      "header": [
+        "全国大学生物联网设计竞赛设计文档                                                            摘要"
+      ],
+      "footer": [
+        "- I - "
+      ],
+      "first_page_header": [],
+      "first_page_footer": []
+    },
+    {
+      "index": 3,
+      "width_twips": 11906,
+      "height_twips": 16838,
+      "top_margin_twips": 2211,
+      "bottom_margin_twips": 2155,
+      "left_margin_twips": 1418,
+      "right_margin_twips": 1418,
+      "header_distance_twips": 851,
+      "footer_distance_twips": 992,
+      "different_first_page": false,
+      "header": [
+        "全国大学生物联网设计竞赛设计文档目录"
+      ],
+      "footer": [
+        "- II - "
+      ],
+      "first_page_header": [],
+      "first_page_footer": []
+    },
+    {
+      "index": 4,
+      "width_twips": 11906,
+      "height_twips": 16838,
+      "top_margin_twips": 2211,
+      "bottom_margin_twips": 2155,
+      "left_margin_twips": 1418,
+      "right_margin_twips": 1418,
+      "header_distance_twips": 851,
+      "footer_distance_twips": 992,
+      "different_first_page": false,
+      "header": [
+        "全国大学生物联网设计竞赛设计文档[作品名称]"
+      ],
+      "footer": [
+        "2"
+      ],
+      "first_page_header": [],
+      "first_page_footer": []
+    },
+    {
+      "index": 5,
+      "width_twips": 11906,
+      "height_twips": 16838,
+      "top_margin_twips": 2211,
+      "bottom_margin_twips": 2155,
+      "left_margin_twips": 1418,
+      "right_margin_twips": 1418,
+      "header_distance_twips": 851,
+      "footer_distance_twips": 992,
+      "different_first_page": false,
+      "header": [
+        "全国大学生物联网设计竞赛设计文档[作品名称]"
+      ],
+      "footer": [
+        "3"
+      ],
+      "first_page_header": [],
+      "first_page_footer": []
+    },
+    {
+      "index": 6,
+      "width_twips": 11906,
+      "height_twips": 16838,
+      "top_margin_twips": 2211,
+      "bottom_margin_twips": 2155,
+      "left_margin_twips": 1418,
+      "right_margin_twips": 1418,
+      "header_distance_twips": 851,
+      "footer_distance_twips": 992,
+      "different_first_page": false,
+      "header": [
+        "全国大学生物联网设计竞赛设计文档[作品名称]"
+      ],
+      "footer": [
+        "4"
+      ],
+      "first_page_header": [],
+      "first_page_footer": []
+    },
+    {
+      "index": 7,
+      "width_twips": 11906,
+      "height_twips": 16838,
+      "top_margin_twips": 2211,
+      "bottom_margin_twips": 2155,
+      "left_margin_twips": 1418,
+      "right_margin_twips": 1418,
+      "header_distance_twips": 851,
+      "footer_distance_twips": 992,
+      "different_first_page": false,
+      "header": [
+        "全国大学生物联网设计竞赛设计文档[作品名称]"
+      ],
+      "footer": [
+        "5"
+      ],
+      "first_page_header": [],
+      "first_page_footer": []
+    },
+    {
+      "index": 8,
+      "width_twips": 11906,
+      "height_twips": 16838,
+      "top_margin_twips": 2211,
+      "bottom_margin_twips": 2155,
+      "left_margin_twips": 1418,
+      "right_margin_twips": 1418,
+      "header_distance_twips": 851,
+      "footer_distance_twips": 992,
+      "different_first_page": false,
+      "header": [
+        "全国大学生物联网设计竞赛设计文档[作品名称]"
+      ],
+      "footer": [
+        "6"
+      ],
+      "first_page_header": [],
+      "first_page_footer": []
+    },
+    {
+      "index": 9,
+      "width_twips": 11906,
+      "height_twips": 16838,
+      "top_margin_twips": 2211,
+      "bottom_margin_twips": 2155,
+      "left_margin_twips": 1418,
+      "right_margin_twips": 1418,
+      "header_distance_twips": 851,
+      "footer_distance_twips": 992,
+      "different_first_page": false,
+      "header": [
+        "全国大学生物联网设计竞赛设计文档参考文献"
+      ],
+      "footer": [
+        "7"
+      ],
+      "first_page_header": [],
+      "first_page_footer": []
+    }
+  ],
+  "styles": [
+    {
+      "name": "Normal",
+      "font": null,
+      "size_pt": 12.0,
+      "bold": null,
+      "alignment": 3,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 1",
+      "font": null,
+      "size_pt": 16.0,
+      "bold": true,
+      "alignment": null,
+      "space_before_pt": 17.0,
+      "space_after_pt": 16.5,
+      "line_spacing": 2.408333333333333,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 2",
+      "font": "黑体",
+      "size_pt": null,
+      "bold": true,
+      "alignment": null,
+      "space_before_pt": 13.0,
+      "space_after_pt": 13.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 3",
+      "font": "Times New Roman",
+      "size_pt": null,
+      "bold": true,
+      "alignment": null,
+      "space_before_pt": 13.0,
+      "space_after_pt": 13.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 4",
+      "font": null,
+      "size_pt": 14.0,
+      "bold": true,
+      "alignment": null,
+      "space_before_pt": 14.0,
+      "space_after_pt": 14.5,
+      "line_spacing": 1.5666666666666667,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Title",
+      "font": null,
+      "size_pt": 16.0,
+      "bold": true,
+      "alignment": 1,
+      "space_before_pt": 12.0,
+      "space_after_pt": 3.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Paragraph",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": 420
+    },
+    {
+      "name": "Normal (Web)",
+      "font": "宋体",
+      "size_pt": null,
+      "bold": null,
+      "alignment": 0,
+      "space_before_pt": 5.0,
+      "space_after_pt": 5.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "TOC Heading",
+      "font": null,
+      "size_pt": null,
+      "bold": false,
+      "alignment": 0,
+      "space_before_pt": 12.0,
+      "space_after_pt": null,
+      "line_spacing": 1.0791666666666666,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "toc 1",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "toc 2",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "toc 3",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Balloon Text",
+      "font": null,
+      "size_pt": 8.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "references",
+      "font": "Times New Roman",
+      "size_pt": 9.0,
+      "bold": null,
+      "alignment": 3,
+      "space_before_pt": null,
+      "space_after_pt": 2.5,
+      "line_spacing": 114300.0,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "endnote text",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": 0,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Footer",
+      "font": null,
+      "size_pt": 9.0,
+      "bold": null,
+      "alignment": 0,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "annotation text",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": 0,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "annotation subject",
+      "font": null,
+      "size_pt": null,
+      "bold": true,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Subtitle",
+      "font": null,
+      "size_pt": 16.0,
+      "bold": true,
+      "alignment": 1,
+      "space_before_pt": 12.0,
+      "space_after_pt": 3.0,
+      "line_spacing": 1.3,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Normal Indent",
+      "font": "Times New Roman",
+      "size_pt": 14.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": 3.0,
+      "space_after_pt": 3.0,
+      "line_spacing": 1.25,
+      "first_line_indent_twips": 420
+    },
+    {
+      "name": "Body Text",
+      "font": "Times New Roman",
+      "size_pt": 14.0,
+      "bold": true,
+      "alignment": 1,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Body Text Indent 2",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 6.0,
+      "line_spacing": 2.0,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Header",
+      "font": null,
+      "size_pt": 9.0,
+      "bold": null,
+      "alignment": 1,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "footnote text",
+      "font": null,
+      "size_pt": 9.0,
+      "bold": null,
+      "alignment": 0,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Date",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    }
+  ],
+  "blocks": [
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "全国大学生物联网设计竞赛",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "全国大学生物联网",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 15.0
+        },
+        {
+          "text": "设计竞赛",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 15.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal Indent",
+      "text": "",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal Indent",
+      "text": "",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal Indent",
+      "text": "",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Title",
+      "text": "设计作品名称",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "设计",
+          "bold": null,
+          "italic": null,
+          "font": "黑体",
+          "size_pt": null
+        },
+        {
+          "text": "作品名称",
+          "bold": null,
+          "italic": null,
+          "font": "黑体",
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "table",
+      "style": "Normal Table",
+      "rows": [
+        [
+          "学校名称：",
+          "报名学校名"
+        ],
+        [
+          "团队名称：",
+          "报名的团队名"
+        ],
+        [
+          "",
+          ""
+        ],
+        [
+          "队长：",
+          "姓名"
+        ],
+        [
+          "队员1：",
+          "姓名"
+        ],
+        [
+          "队员2：",
+          "姓名"
+        ],
+        [
+          "队员3：",
+          "姓名"
+        ]
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal Indent",
+      "text": "",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal Indent",
+      "text": "",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal Indent",
+      "text": "全国大学生物联网设计竞赛组委会",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "全国",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "大学生物联网设计竞赛组委会",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "2020年7月",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "20",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "20",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "年",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "7",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "月",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "填写说明",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "填写",
+          "bold": true,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 16.0
+        },
+        {
+          "text": "说明",
+          "bold": true,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 16.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "（提交时请删除本页）",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "（提交",
+          "bold": true,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 16.0
+        },
+        {
+          "text": "时请删除本",
+          "bold": true,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 16.0
+        },
+        {
+          "text": "页）",
+          "bold": true,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 16.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "List Paragraph",
+      "text": "设计作品名称应与作品创意表上的作品名称一致，作品名称不超过20（含）字。",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "设计作品名称应",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "与作品创意表",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "上",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "的作品名称一致",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "，",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "作品名称",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "不超过",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "20",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "（含）",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "字",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "。",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "List Paragraph",
+      "text": "摘要为中文摘要，不超过1000字。",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "摘要为",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "中文摘要，不超过",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "1000",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "字。",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "List Paragraph",
+      "text": "正文主要包含以下部分，依次为：1.设计需求分析，2.特色与创新，3.功能设计，4.系统实现，5.其他内容，6.参考文献。每部分的内容要求见括号中说明。",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "正文",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "主要包含",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "以下",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "部分，依次为：",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "1.",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "设计",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "需求分析，",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "2.",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "特色",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "与创新，",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "3.",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "功能设计",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "，",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "4.",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "系统",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "实现，",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "5.",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "其他",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "内容，",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "6.",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "参考文献",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "。每",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "部分",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "的",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "内容要求见",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "括号",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "中说明。",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "List Paragraph",
+      "text": "正文采用三级编目，章、节、小节。格式参照本模板。",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "正文",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "采用三级编目，",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "章、节、小节。",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "格式",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "参照",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "本模板。",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "List Paragraph",
+      "text": "所有文字均需自己撰写，引用参考文献仅可引用文中的观点或结论，不能引用文字。所有引用请标明出处，并在参考文献中说明，严禁抄袭。",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "所有文字均需自己撰写，引用参考文献",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "仅可",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "引用文中的观点或结论，不能引用文字。",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "所有",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "引用请",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "标明出处，并在参考文献中说明",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "，严禁",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        },
+        {
+          "text": "抄袭。",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "设计作品名称",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "设计",
+          "bold": true,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 16.0
+        },
+        {
+          "text": "作品名称",
+          "bold": true,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 16.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 1",
+      "text": "摘要",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "摘要",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "关键词：",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "关键词：",
+          "bold": true,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 14.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "目  录",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "目  录",
+          "bold": true,
+          "italic": null,
+          "font": "黑体",
+          "size_pt": 16.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 1",
+      "text": "设计需求分析",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "设计需求",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "分析",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "（本章节主要描述面向什么需求设计了本作品，本作品主要解决了什么问题，或对什么现有产品或应用作出了改进等）",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "（",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "本章节主要描述面向",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "什么",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "需求设计了本作品，本作品主要解决了什么问题",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "，",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "或对什么现有产品",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "或",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "应用",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "作出",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "了改进等）",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "二级标题",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "二级",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "标题",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 3",
+      "text": "三级标题",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "三级",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "标题",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "图样例",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "图",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": null
+        },
+        {
+          "text": "样例",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "图1-1 云计算三种服务模式的服务对比",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "图1",
+          "bold": null,
+          "italic": null,
+          "font": "楷体",
+          "size_pt": 11.0
+        },
+        {
+          "text": "-1 ",
+          "bold": null,
+          "italic": null,
+          "font": "楷体",
+          "size_pt": 11.0
+        },
+        {
+          "text": "云计算",
+          "bold": null,
+          "italic": null,
+          "font": "楷体",
+          "size_pt": 11.0
+        },
+        {
+          "text": "三种",
+          "bold": null,
+          "italic": null,
+          "font": "楷体",
+          "size_pt": 11.0
+        },
+        {
+          "text": "服务模式的服务对比",
+          "bold": null,
+          "italic": null,
+          "font": "楷体",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "表样例：",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "表",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": null
+        },
+        {
+          "text": "样例",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": null
+        },
+        {
+          "text": "：",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "表1-1云计算同传统IT服务模式的区别",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "表",
+          "bold": null,
+          "italic": null,
+          "font": "楷体_GB2312",
+          "size_pt": null
+        },
+        {
+          "text": "1",
+          "bold": null,
+          "italic": null,
+          "font": "楷体_GB2312",
+          "size_pt": null
+        },
+        {
+          "text": "-1",
+          "bold": null,
+          "italic": null,
+          "font": "楷体_GB2312",
+          "size_pt": null
+        },
+        {
+          "text": "云计算",
+          "bold": null,
+          "italic": null,
+          "font": "楷体_GB2312",
+          "size_pt": null
+        },
+        {
+          "text": "同传统IT服务模式的区别",
+          "bold": null,
+          "italic": null,
+          "font": "楷体_GB2312",
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "Table1-1 Comparison between Cloud Computing and traditional IT Service Model",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "T",
+          "bold": null,
+          "italic": null,
+          "font": "宋体",
+          "size_pt": null
+        },
+        {
+          "text": "able",
+          "bold": null,
+          "italic": null,
+          "font": "宋体",
+          "size_pt": null
+        },
+        {
+          "text": "1",
+          "bold": null,
+          "italic": null,
+          "font": "宋体",
+          "size_pt": null
+        },
+        {
+          "text": "-1 ",
+          "bold": null,
+          "italic": null,
+          "font": "宋体",
+          "size_pt": null
+        },
+        {
+          "text": "Comparison between Cloud Computing and ",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "traditional IT ",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "S",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "ervice ",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "M",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "odel",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "table",
+      "style": "Normal Table",
+      "rows": [
+        [
+          "云计算模式",
+          "服务内容",
+          "服务对象",
+          "使用模式",
+          "同传统IT模式的区别"
+        ],
+        [
+          "IaaS",
+          "IT基础设施",
+          "需要硬件资源的用户",
+          "上传数据、程序代码和环境配置",
+          "无限和按需求获取计算资源；\n初始投入小；\n按需付费。\n（相比传统的服务器、存储设备等）"
+        ],
+        [
+          "PaaS",
+          "提供应用程序开发环境",
+          "程序开发者",
+          "上传数据、程序代码",
+          "无限和按需求获取计算资源；\n初始投入小；\n按需付费；\n兼容性；\n集成全生命周期的开发环境。\n（相比传统运营商系统、数据库、中间件、Web服务器和其他软件等）"
+        ],
+        [
+          "SaaS",
+          "提供基于互联网的应用服务",
+          "企业和个人用户",
+          "上传数据",
+          "无限和按需求获取计算资源；\n初始投入小；\n按需付费；\n灵活性；\n共享的应用和基础设施；\n稳定和可靠性。\n（相比传统的ASP模式）"
+        ]
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 1",
+      "text": "特色与创新",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "特色",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "与创新",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "（本章节主要描述作品与现有其他技术或应用相比所产生的优势和创新点）",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "（",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "本章节主要描述",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "作品",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "与",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "现有其他技术",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "或",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "应用相比所产生的优势和创新点",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "）",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "二级标题",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "二级",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "标题",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 3",
+      "text": "三级标题",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "三级",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "标题",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 2,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 1",
+      "text": "功能设计",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "功能",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "设计",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "（本章节主要描述作品根据需求分析所规划设计的各种功能，着重体现这些功能的作用）",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "（",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "本章节主要描述",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "作品",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "根据需求",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "分析所规划设计的各种功能，着重体现",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "这些",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "功能的作用",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "）",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "二级标题",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "二级",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "标题",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 3",
+      "text": "三级标题",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "三级",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "标题",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 1",
+      "text": "系统实现",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "系统实现",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "（本章节主要描述实现功能所采用物联网技术架构，包括感知层技术、传输层技术、控制层技术、软件开发技术、云应用、数据挖掘和可视化应用等。）",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "（",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "本章节主要描述",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "实现",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "功能所",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "采用物联网",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "技术",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "架构，包括",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "感知层技术、传输层技术、控制层技术、软件开发技术、云应用、数据挖掘和可视化应用等。",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "）",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "二级标题",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "二级",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "标题",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 3",
+      "text": "三级标题",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "三级",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "标题",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 1",
+      "text": "其他内容",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "其他",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "内容",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "（本章节主要描述前文未涉及的内容，如作品的工业设计、作品的成本计算等）",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "（",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "本章节主要描述",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "前文未涉及",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "的内容，如作品的工业设计、作品的",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "成本",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "计算",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "等）",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "二级标题",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "二级",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "标题",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 3",
+      "text": "三级标题",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "三级",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "标题",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 1",
+      "text": "参考文献",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "参考",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        },
+        {
+          "text": "文献",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "（请按规范列举参考文献，参考文献格式请按照GB/T 7714规范）",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "（",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        },
+        {
+          "text": "请",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        },
+        {
+          "text": "按",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        },
+        {
+          "text": "规范列举参考文献，",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        },
+        {
+          "text": "参考",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        },
+        {
+          "text": "文献",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        },
+        {
+          "text": "格式",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        },
+        {
+          "text": "请按照",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        },
+        {
+          "text": "GB/T 7714",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        },
+        {
+          "text": "规范",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        },
+        {
+          "text": "）",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "[1] 王智, 潘强, 邢涛. 面向物联网的实体实时搜索服务综述[D].中国科学院上海微系统与信息技术研究所. 2009. ",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "[",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        },
+        {
+          "text": "1",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        },
+        {
+          "text": "] ",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        },
+        {
+          "text": "王智",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        },
+        {
+          "text": ", ",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        },
+        {
+          "text": "潘强",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        },
+        {
+          "text": ", ",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        },
+        {
+          "text": "邢涛",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        },
+        {
+          "text": ". ",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        },
+        {
+          "text": "面向物联网的实体实时搜索服务综述",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        },
+        {
+          "text": "[D].",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        },
+        {
+          "text": "中国科学院上海微系统与信息技术研究所",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        },
+        {
+          "text": ". 2009. ",
+          "bold": null,
+          "italic": null,
+          "font": "Times New Roman",
+          "size_pt": 10.5
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    }
+  ]
+}

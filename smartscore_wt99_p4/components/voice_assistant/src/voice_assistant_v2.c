@@ -46,7 +46,7 @@
 #define VOICE_V2_OUTPUT_RATE_HZ 24000U
 #define VOICE_V2_PCM_BLOCK_SAMPLES 320U
 #define VOICE_V2_PCM_BLOCK_COUNT 192U
-#define VOICE_V2_SEND_BLOCKS 4U
+#define VOICE_V2_SEND_BLOCKS 8U
 #define VOICE_V2_SEND_PCM_BYTES \
     (VOICE_V2_PCM_BLOCK_SAMPLES * sizeof(int16_t) * VOICE_V2_SEND_BLOCKS)
 #define VOICE_V2_TX_JSON_BYTES 8192U
@@ -64,6 +64,7 @@
 #define VOICE_V2_WS_BUFFER_BYTES 4096U
 #define VOICE_V2_SEND_TIMEOUT_MS 1500U
 #define VOICE_V2_INPUT_SEND_GAP_US 20000ULL
+#define VOICE_V2_FAST_FLUSH_QUEUE_BLOCKS 4U
 #define VOICE_V2_INPUT_RETRY_GAP_US 100000ULL
 #define VOICE_V2_INPUT_SEND_RETRIES 2U
 #define VOICE_V2_INPUT_SLOW_WARN_US 200000ULL
@@ -197,6 +198,7 @@ static uint64_t s_business_events;
 static uint32_t s_audio_delta_index;
 static uint32_t s_candidate_speech_frames;
 static uint8_t s_input_send_retries;
+static uint32_t s_fast_flush_batches;
 static volatile uint32_t s_observed_speech_frames;
 static uint32_t s_pcm_pool_exhaustions;
 static char s_last_server_event[96];
@@ -333,7 +335,7 @@ static void get_ws_metrics(voice_v2_ws_metrics_t *metrics)
 static void log_latency(void)
 {
     ESP_LOGI(TAG,
-             "LATENCY wake=0 session_created=%lld ai_begin=%lld speech_end=%lld input_commit=%lld first_asr=%lld asr_done=%lld audio_started=%lld first_pcm=%lld speaker_started=%lld audio_done=%lld response_done=%lld playback_done=%lld ms",
+             "LATENCY wake=0 session_created=%lld ai_begin=%lld speech_end=%lld input_commit=%lld first_asr=%lld asr_done=%lld audio_started=%lld first_pcm=%lld speaker_started=%lld audio_done=%lld response_done=%lld playback_done=%lld post_speech_first_pcm=%lld post_speech_speaker=%lld ms",
              elapsed_ms(s_latency.wake_us, s_latency.session_created_us),
              elapsed_ms(s_latency.wake_us, s_latency.ai_begin_us),
              elapsed_ms(s_latency.wake_us, s_latency.speech_end_us),
@@ -345,7 +347,10 @@ static void log_latency(void)
              elapsed_ms(s_latency.wake_us, s_latency.speaker_started_us),
              elapsed_ms(s_latency.wake_us, s_latency.audio_done_us),
              elapsed_ms(s_latency.wake_us, s_latency.response_done_us),
-             elapsed_ms(s_latency.wake_us, s_latency.playback_done_us));
+             elapsed_ms(s_latency.wake_us, s_latency.playback_done_us),
+             elapsed_ms(s_latency.speech_end_us, s_latency.first_pcm_us),
+             elapsed_ms(s_latency.speech_end_us,
+                        s_latency.speaker_started_us));
 }
 
 static bool queue_command(voice_v2_command_type_t type,
@@ -652,6 +657,7 @@ static void reset_session_fields(void)
     s_audio_delta_index = 0U;
     s_candidate_speech_frames = 0U;
     s_input_send_retries = 0U;
+    s_fast_flush_batches = 0U;
     portENTER_CRITICAL(&s_pcm_pool_lock);
     s_observed_speech_frames = 0U;
     s_pcm_input_bytes = 0U;
@@ -848,11 +854,15 @@ static void handle_owner_command(const voice_v2_command_t *command)
         }
         s_accept_pcm = false;
         s_speech_end_received = true;
+        /* The S3 boundary is authoritative.  From this point latency matters
+         * more than real-time pacing: wake the owner immediately and flush
+         * all already-ordered tail PCM before commit. */
+        s_next_input_send_us = 0U;
         mark_once(&s_latency.speech_end_us);
         confirm_ai_route("SPEECH_END");
         ESP_LOGI(TAG,
                  "input upload stopped reason=s3-speech-end total_pcm=%" PRIu64
-                 " queued_frames=%u pending_frames=%u",
+                 " queued_frames=%u pending_frames=%u fast_flush=enabled",
                  pcm_input_total(),
                  (unsigned)uxQueueMessagesWaiting(s_pcm_ready_queue),
                  (unsigned)s_pending_input_block_count);
@@ -1325,8 +1335,27 @@ static void process_input(void)
         esp_err_t err = send_input_batch();
         if (err == ESP_OK) {
             s_input_send_retries = 0U;
-            s_next_input_send_us =
-                (uint64_t)esp_timer_get_time() + VOICE_V2_INPUT_SEND_GAP_US;
+            const UBaseType_t queued_after =
+                uxQueueMessagesWaiting(s_pcm_ready_queue);
+            const bool more_pcm =
+                s_pending_input_block_count > 0U ||
+                queued_after > 0U;
+            const bool fast_flush =
+                more_pcm &&
+                (s_speech_end_received ||
+                 queued_after >= VOICE_V2_FAST_FLUSH_QUEUE_BLOCKS);
+            if (fast_flush) {
+                ++s_fast_flush_batches;
+                s_next_input_send_us = 0U;
+                /* Avoid the normal 10 ms task wait between history batches;
+                 * websocket_send remains bounded and the RX callback remains
+                 * on its independent task. */
+                if (s_task != NULL) xTaskNotifyGive(s_task);
+            } else {
+                s_next_input_send_us =
+                    (uint64_t)esp_timer_get_time() +
+                    VOICE_V2_INPUT_SEND_GAP_US;
+            }
         } else if (err != ESP_ERR_NOT_FOUND && s_ws_client != NULL &&
                    esp_websocket_client_is_connected(s_ws_client) &&
                    s_input_send_retries < VOICE_V2_INPUT_SEND_RETRIES) {
@@ -1367,8 +1396,9 @@ static void process_input(void)
                       "input.commit+response.create");
         }
         ESP_LOGI(TAG,
-                 "input committed and response requested exactly once pcm_up=%" PRIu64,
-                 s_pcm_up_bytes);
+                 "input committed and response requested exactly once pcm_up=%" PRIu64
+                 " fast_flush_batches=%" PRIu32,
+                 s_pcm_up_bytes, s_fast_flush_batches);
     }
 }
 

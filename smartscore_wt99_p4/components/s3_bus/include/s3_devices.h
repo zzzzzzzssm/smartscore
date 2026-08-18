@@ -17,11 +17,19 @@ typedef enum {
     S3_VOICE_EVENT_AI_BEGIN,
     S3_VOICE_EVENT_SPEECH_END,
     S3_VOICE_EVENT_AI_CANCEL,
+    S3_VOICE_EVENT_AI_STATE,
+    S3_VOICE_EVENT_AI_AUDIO_START,
+    S3_VOICE_EVENT_AI_AUDIO_DONE,
+    S3_VOICE_EVENT_AI_ERROR,
+    S3_VOICE_EVENT_AI_TEXT,
 } s3_voice_event_type_t;
 
 typedef struct {
     s3_voice_event_type_t type;
     uint8_t command_id;
+    uint8_t ai_state;
+    uint32_t sample_rate_hz;
+    const char *text;
 } s3_voice_event_t;
 
 typedef void (*s3_voice_event_handler_t)(const s3_voice_event_t *event,
@@ -47,6 +55,10 @@ esp_err_t s3_voice_node_send_ai_stop(const char *reason);
 
 /** Stop S3 microphone upload after one utterance while the answer plays. */
 esp_err_t s3_voice_node_send_ai_input_done(void);
+
+/** Forward the existing provisioned Wi-Fi credentials to the voice S3. */
+esp_err_t s3_voice_node_send_wifi_credentials(const char *ssid,
+                                               const char *password);
 
 typedef struct {
     uint8_t command_id;

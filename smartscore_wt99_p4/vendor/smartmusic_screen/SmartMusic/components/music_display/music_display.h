@@ -56,6 +56,9 @@ void music_display_set_note_selection_callback(
 void music_display_apply_note_result(int target_index, int expected_midi,
                                       int played_midi, float confidence,
                                       bool pitch_ok, bool rhythm_ok);
+/* 1-based inclusive target range; pass 0, 0 to clear. */
+void music_display_set_expected_note_group(int first_target_index,
+                                           int last_target_index);
 void music_display_show_score(const char *result_json);
 /* Isolate Creator Mode from audio-recognition result callbacks. */
 void music_display_set_creator_active(bool active);

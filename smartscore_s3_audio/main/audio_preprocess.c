@@ -86,3 +86,36 @@ bool audio_preprocess_above_gate(const audio_preprocess_state_t *state,
 {
     return state->calibrated && metrics->rms >= state->noise_gate;
 }
+
+void audio_preprocess_rescale_gain(audio_preprocess_state_t *state,
+                                   float linear_scale)
+{
+    if (state == NULL || !isfinite(linear_scale) || linear_scale <= 0.0f) return;
+    memset(state->prev_x, 0, sizeof(state->prev_x));
+    memset(state->prev_y, 0, sizeof(state->prev_y));
+    state->noise_rms_sum *= linear_scale;
+    state->noise_peak *= linear_scale;
+    state->noise_floor *= linear_scale;
+    if (state->noise_floor < MUSIC_MIN_RMS / MUSIC_NOISE_GATE_MULTIPLIER) {
+        state->noise_floor = MUSIC_MIN_RMS / MUSIC_NOISE_GATE_MULTIPLIER;
+    }
+    state->noise_gate = fmaxf(MUSIC_MIN_RMS,
+                              state->noise_floor * MUSIC_NOISE_GATE_MULTIPLIER);
+}
+
+void audio_preprocess_track_ambient(audio_preprocess_state_t *state,
+                                    const audio_frame_metrics_t *metrics)
+{
+    if (state == NULL || metrics == NULL || !state->calibrated ||
+        metrics->clipped || metrics->rms <= state->noise_floor) {
+        return;
+    }
+    /* Cap each target step so a sudden non-tonal impact cannot instantly raise
+     * the gate. The detector calls this only when neither YIN nor stable local
+     * spectral peaks indicate a played note. */
+    const float limited_target = fminf(metrics->rms, state->noise_floor * 1.05f);
+    state->noise_floor += MUSIC_DEMO_AMBIENT_TRACK_ALPHA *
+                          (limited_target - state->noise_floor);
+    state->noise_gate = fmaxf(MUSIC_MIN_RMS,
+                              state->noise_floor * MUSIC_NOISE_GATE_MULTIPLIER);
+}

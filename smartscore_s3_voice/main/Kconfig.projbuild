@@ -1,0 +1,28 @@
+menu "SmartScore Qwen Audio Realtime on voice S3"
+
+    config SMARTSCORE_QWEN_REALTIME_ENABLED
+        bool "Enable Qwen Audio Realtime on the voice S3"
+        default y
+
+    config SMARTSCORE_QWEN_REALTIME_MODEL
+        string "Qwen realtime model"
+        default "qwen-audio-3.0-realtime-plus"
+        depends on SMARTSCORE_QWEN_REALTIME_ENABLED
+
+    config SMARTSCORE_QWEN_REALTIME_ENDPOINT
+        string "Qwen realtime WebSocket endpoint"
+        default "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
+        depends on SMARTSCORE_QWEN_REALTIME_ENABLED
+
+    config SMARTSCORE_QWEN_REALTIME_VOICE
+        string "Qwen output voice"
+        default "longanqian"
+        depends on SMARTSCORE_QWEN_REALTIME_ENABLED
+
+    config SMARTSCORE_QWEN_REALTIME_INSTRUCTIONS
+        string "Qwen system instructions"
+        default "You are the SmartScore piano voice assistant. Answer naturally and concisely in Chinese. The wake phrase is not part of the question."
+        depends on SMARTSCORE_QWEN_REALTIME_ENABLED
+
+endmenu
+

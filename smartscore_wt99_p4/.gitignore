@@ -1,6 +1,7 @@
 build/
 build_verify/
 build-codex/
+build_codex/
 build-verify/
 sdkconfig
 sdkconfig.old

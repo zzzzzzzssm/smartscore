@@ -78,6 +78,63 @@ static bool json_optional_u32(const cJSON *object,
     return item == NULL || json_u32(object, name, out_value);
 }
 
+static bool parse_poly_fields(const cJSON *root,
+                              s3_music_message_t *message)
+{
+    const cJSON *kind = cJSON_GetObjectItemCaseSensitive(root, "kind");
+    const cJSON *notes = cJSON_GetObjectItemCaseSensitive(root, "notes");
+    if (!cJSON_IsString(kind) || kind->valuestring == NULL ||
+        !cJSON_IsArray(notes)) {
+        return false;
+    }
+    if (strcmp(kind->valuestring, "interval") == 0) {
+        message->poly_kind = S3_PROTOCOL_POLY_INTERVAL;
+    } else if (strcmp(kind->valuestring, "chord") == 0) {
+        message->poly_kind = S3_PROTOCOL_POLY_CHORD;
+    } else {
+        return false;
+    }
+
+    const int count = cJSON_GetArraySize(notes);
+    if (count < 2 || count > S3_PROTOCOL_POLY_MAX_NOTES) return false;
+    for (int index = 0; index < count; ++index) {
+        const cJSON *note = cJSON_GetArrayItem(notes, index);
+        if (!cJSON_IsNumber(note) || !isfinite(note->valuedouble) ||
+            note->valuedouble < 0.0 || note->valuedouble > 127.0 ||
+            floor(note->valuedouble) != note->valuedouble) {
+            return false;
+        }
+        const uint8_t midi = (uint8_t)note->valuedouble;
+        for (int previous = 0; previous < index; ++previous) {
+            if (message->notes[previous] == midi) return false;
+        }
+        message->notes[index] = midi;
+    }
+    message->note_count = (uint8_t)count;
+
+    const cJSON *name = cJSON_GetObjectItemCaseSensitive(root, "name");
+    if (name != NULL) {
+        if (!cJSON_IsString(name) || name->valuestring == NULL ||
+            strlen(name->valuestring) >= sizeof(message->poly_name)) {
+            return false;
+        }
+        memcpy(message->poly_name, name->valuestring,
+               strlen(name->valuestring) + 1U);
+    }
+    if (message->poly_kind == S3_PROTOCOL_POLY_CHORD &&
+        message->poly_name[0] == '\0') {
+        return false;
+    }
+
+    if (!json_optional_float(root, "confidence", 0.0f, 1.0f,
+                             &message->confidence,
+                             &message->has_confidence)) {
+        return false;
+    }
+    if (!message->has_confidence) message->confidence = 0.75f;
+    return true;
+}
+
 static bool parse_type(const char *type, s3_music_message_type_t *out_type)
 {
     static const struct {
@@ -181,7 +238,9 @@ s3_protocol_result_t s3_protocol_parse_music_line(
         break;
     case S3_MUSIC_MESSAGE_PONG:
     case S3_MUSIC_MESSAGE_PITCH:
+        break;
     case S3_MUSIC_MESSAGE_POLY:
+        fields_valid = parse_poly_fields(root, &message);
         break;
     }
 

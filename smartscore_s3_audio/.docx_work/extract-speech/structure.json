@@ -1,0 +1,1456 @@
+{
+  "path": "D:\\qianrushi\\智能乐谱辅助系统_离线语音识别模块设计文档.docx",
+  "sha256": "e6053fee6e5a54520860a7d2bedbb231ab7d495079acd2857dcc777645e936f8",
+  "paragraph_count": 48,
+  "table_count": 2,
+  "inline_shape_count": 2,
+  "section_count": 1,
+  "sections": [
+    {
+      "index": 1,
+      "width_twips": 12240,
+      "height_twips": 15840,
+      "top_margin_twips": 1440,
+      "bottom_margin_twips": 1440,
+      "left_margin_twips": 1440,
+      "right_margin_twips": 1440,
+      "header_distance_twips": 708,
+      "footer_distance_twips": 708,
+      "different_first_page": true,
+      "header": [
+        "智能乐谱辅助系统技术报告"
+      ],
+      "footer": [
+        "第 1 页"
+      ],
+      "first_page_header": [],
+      "first_page_footer": []
+    }
+  ],
+  "styles": [
+    {
+      "name": "Normal",
+      "font": "Calibri",
+      "size_pt": 11.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 6.0,
+      "line_spacing": 1.1,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 1",
+      "font": null,
+      "size_pt": 16.0,
+      "bold": true,
+      "alignment": null,
+      "space_before_pt": 16.0,
+      "space_after_pt": 8.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 2",
+      "font": null,
+      "size_pt": 13.0,
+      "bold": true,
+      "alignment": null,
+      "space_before_pt": 12.0,
+      "space_after_pt": 6.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 3",
+      "font": null,
+      "size_pt": 12.0,
+      "bold": true,
+      "alignment": null,
+      "space_before_pt": 8.0,
+      "space_after_pt": 4.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 4",
+      "font": null,
+      "size_pt": null,
+      "bold": true,
+      "alignment": null,
+      "space_before_pt": 10.0,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 5",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": 10.0,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 6",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": 10.0,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 7",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": 10.0,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 8",
+      "font": null,
+      "size_pt": 10.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": 10.0,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Heading 9",
+      "font": null,
+      "size_pt": 10.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": 10.0,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "macro",
+      "font": "Courier",
+      "size_pt": 10.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 10.0,
+      "line_spacing": 1.15,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List 3",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": -360
+    },
+    {
+      "name": "List Number 2",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Number",
+      "font": "Calibri",
+      "size_pt": 11.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 4.0,
+      "line_spacing": 1.1666666666666667,
+      "first_line_indent_twips": -360
+    },
+    {
+      "name": "Caption",
+      "font": null,
+      "size_pt": 9.0,
+      "bold": true,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": 1.0,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Bullet",
+      "font": "Calibri",
+      "size_pt": 11.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 4.0,
+      "line_spacing": 1.1666666666666667,
+      "first_line_indent_twips": -360
+    },
+    {
+      "name": "Body Text 3",
+      "font": null,
+      "size_pt": 8.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 6.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Bullet 3",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Body Text",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 6.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Number 3",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List 2",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": -360
+    },
+    {
+      "name": "List Continue",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 6.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Bullet 2",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Footer",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": 1.0,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Header",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": 1.0,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Subtitle",
+      "font": null,
+      "size_pt": 12.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": -360
+    },
+    {
+      "name": "Body Text 2",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 6.0,
+      "line_spacing": 2.0,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Continue 2",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 6.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Continue 3",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 6.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Title",
+      "font": null,
+      "size_pt": 26.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": 15.0,
+      "line_spacing": 1.0,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "No Spacing",
+      "font": null,
+      "size_pt": 11.0,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": 1.0,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "List Paragraph",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Quote",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Intense Quote",
+      "font": null,
+      "size_pt": null,
+      "bold": true,
+      "alignment": null,
+      "space_before_pt": 10.0,
+      "space_after_pt": 14.0,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "TOC Heading",
+      "font": null,
+      "size_pt": null,
+      "bold": null,
+      "alignment": null,
+      "space_before_pt": null,
+      "space_after_pt": null,
+      "line_spacing": null,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Figure Caption",
+      "font": "Calibri",
+      "size_pt": 10.0,
+      "bold": null,
+      "alignment": 1,
+      "space_before_pt": 4.0,
+      "space_after_pt": 8.0,
+      "line_spacing": 1.15,
+      "first_line_indent_twips": null
+    },
+    {
+      "name": "Table Title",
+      "font": "Calibri",
+      "size_pt": 10.5,
+      "bold": true,
+      "alignment": null,
+      "space_before_pt": 8.0,
+      "space_after_pt": 4.0,
+      "line_spacing": 1.15,
+      "first_line_indent_twips": null
+    }
+  ],
+  "blocks": [
+    {
+      "kind": "paragraph",
+      "style": "Heading 1",
+      "text": "3.X 离线语音识别功能设计",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": [
+        {
+          "text": "3.X 离线语音识别功能设计",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 16.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "3.X.1 模块功能",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": [
+        {
+          "text": "3.X.1 模块功能",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 13.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "离线语音识别模块是智能乐谱辅助系统的人机交互子模块，采用 INMP441 数字麦克风采集用户语音，在 ESP32-S3 上完成音频前端处理、离线唤醒和中文命令识别。模块不依赖云端语音服务，能够将识别结果统一转换为 1～7 的固定控制编号，供总系统的练习控制、乐谱翻页、评分查看和界面返回等功能调用，从而减少演奏过程中手动触摸设备造成的操作中断。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "离线语音识别模块是智能乐谱辅助系统的人机交互子模块，采用 INMP441 数字麦克风采集用户语音，在 ESP32-S3 上完成音频前端处理、离线唤醒和中文命令识别。模块不依赖云端语音服务，能够将识别结果统一转换为 1～7 的固定控制编号，供总系统的练习控制、乐谱翻页、评分查看和界面返回等功能调用，从而减少演奏过程中手动触摸设备造成的操作中断。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "3.X.2 功能组成",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": [
+        {
+          "text": "3.X.2 功能组成",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 13.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "模块由语音采集、音频前端、唤醒检测、命令识别和结果输出五个部分组成，各部分按音频数据流顺序工作。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "模块由语音采集、音频前端、唤醒检测、命令识别和结果输出五个部分组成，各部分按音频数据流顺序工作。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "• 语音采集：通过 INMP441 获取 16 kHz 单声道数字音频，为后续离线识别提供连续 PCM 数据。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "• 语音采集：",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        },
+        {
+          "text": "通过 INMP441 获取 16 kHz 单声道数字音频，为后续离线识别提供连续 PCM 数据。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "• 音频前端：利用 ESP-SR AFE 完成语音活动检测（VAD）和噪声抑制，降低静音段与环境噪声对识别结果的影响。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "• 音频前端：",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        },
+        {
+          "text": "利用 ESP-SR AFE 完成语音活动检测（VAD）和噪声抑制，降低静音段与环境噪声对识别结果的影响。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "• 唤醒检测：使用 WakeNet 识别“你好小智”，只有检测到唤醒词后才进入命令识别阶段。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "• 唤醒检测：",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        },
+        {
+          "text": "使用 WakeNet 识别“你好小智”，只有检测到唤醒词后才进入命令识别阶段。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "• 命令识别：使用中文 MultiNet 识别七类规范命令及其常用同义表达。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "• 命令识别：",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        },
+        {
+          "text": "使用中文 MultiNet 识别七类规范命令及其常用同义表达。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "• 结果输出：将识别到的命令映射为固定数字 ID，并以独立纯数字行输出，便于总系统直接解析。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "• 结果输出：",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        },
+        {
+          "text": "将识别到的命令映射为固定数字 ID，并以独立纯数字行输出，便于总系统直接解析。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Caption",
+      "text": "图 3.X-1  离线语音识别模块功能框图",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "图 3.X-1  离线语音识别模块功能框图",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 9.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "3.X.3 语音交互流程",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": [
+        {
+          "text": "3.X.3 语音交互流程",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 13.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "系统采用“先唤醒、后识别”的两级交互方式。正常运行时仅保持唤醒词检测，唤醒成功后在限定时间内识别一条控制命令；识别成功或等待超时后，系统立即清理当前识别状态并重新等待下一次唤醒。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "系统采用“先唤醒、后识别”的两级交互方式。正常运行时仅保持唤醒词检测，唤醒成功后在限定时间内识别一条控制命令；识别成功或等待超时后，系统立即清理当前识别状态并重新等待下一次唤醒。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "• 步骤1：系统启动后进入等待唤醒状态，持续监听“你好小智”。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "• 步骤1：",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        },
+        {
+          "text": "系统启动后进入等待唤醒状态，持续监听“你好小智”。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "• 步骤2：检测到唤醒词后，提示用户说出控制命令。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "• 步骤2：",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        },
+        {
+          "text": "检测到唤醒词后，提示用户说出控制命令。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "• 步骤3：在命令窗口内识别七类命令及其同义表达。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "• 步骤3：",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        },
+        {
+          "text": "在命令窗口内识别七类命令及其同义表达。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "• 步骤4：识别成功后输出对应数字 ID；超过 6 s 未识别到有效命令则判定为超时。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "• 步骤4：",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        },
+        {
+          "text": "识别成功后输出对应数字 ID；超过 6 s 未识别到有效命令则判定为超时。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "• 步骤5：清理 MultiNet 状态并重新启用 WakeNet，返回等待唤醒状态。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "• 步骤5：",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        },
+        {
+          "text": "清理 MultiNet 状态并重新启用 WakeNet，返回等待唤醒状态。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Caption",
+      "text": "图 3.X-2  离线语音识别交互流程图",
+      "alignment": 1,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "图 3.X-2  离线语音识别交互流程图",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 9.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "3.X.4 命令功能表",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": [
+        {
+          "text": "3.X.4 命令功能表",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 13.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Table Title",
+      "text": "表 3.X-1  离线语音命令与数字编号映射",
+      "alignment": 0,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": [
+        {
+          "text": "表 3.X-1  离线语音命令与数字编号映射",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "table",
+      "style": "Table Grid",
+      "rows": [
+        [
+          "规范命令",
+          "数字 ID"
+        ],
+        [
+          "开始练习",
+          "1"
+        ],
+        [
+          "停止练习",
+          "2"
+        ],
+        [
+          "下一页",
+          "3"
+        ],
+        [
+          "上一页",
+          "4"
+        ],
+        [
+          "重新开始",
+          "5"
+        ],
+        [
+          "查看评分",
+          "6"
+        ],
+        [
+          "返回首页",
+          "7"
+        ]
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "每类规范命令配置 15 种常用说法，共注册 105 条中文识别短语。不同说法共享同一个数字 ID，因此总系统只需处理七种固定控制结果，无需区分具体表达方式。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "每类规范命令配置 15 种常用说法，共注册 105 条中文识别短语。不同说法共享同一个数字 ID，因此总系统只需处理七种固定控制结果，无需区分具体表达方式。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": []
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 1",
+      "text": "4.X 离线语音识别模块实现",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": [
+        {
+          "text": "4.X 离线语音识别模块实现",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 16.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "4.X.1 硬件实现",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": [
+        {
+          "text": "4.X.1 硬件实现",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 13.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "模块主控采用 ESP32-S3-N16R8，具备 16 MB Flash 和 8 MB PSRAM，可为 WakeNet、MultiNet、AFE 缓冲区及运行时任务提供存储空间。语音输入采用 INMP441 I2S 数字麦克风，麦克风工作电压为 3.3 V，L/R 引脚接地选择左声道。程序启动时会检查 Flash 与 PSRAM 容量，若硬件配置不满足要求则停止语音链路初始化。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "模块主控采用 ESP32-S3-N16R8，具备 16 MB Flash 和 8 MB PSRAM，可为 WakeNet、MultiNet、AFE 缓冲区及运行时任务提供存储空间。语音输入采用 INMP441 I2S 数字麦克风，麦克风工作电压为 3.3 V，L/R 引脚接地选择左声道。程序启动时会检查 Flash 与 PSRAM 容量，若硬件配置不满足要求则停止语音链路初始化。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Table Title",
+      "text": "表 4.X-1  ESP32-S3 与 INMP441 接线",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "表 4.X-1  ESP32-S3 与 INMP441 接线",
+          "bold": null,
+          "italic": null,
+          "font": null,
+          "size_pt": null
+        }
+      ]
+    },
+    {
+      "kind": "table",
+      "style": "Table Grid",
+      "rows": [
+        [
+          "INMP441 引脚",
+          "ESP32-S3 连接",
+          "功能说明"
+        ],
+        [
+          "VCC",
+          "3.3 V",
+          "麦克风供电"
+        ],
+        [
+          "GND",
+          "GND",
+          "公共地"
+        ],
+        [
+          "SCK / BCLK",
+          "GPIO1",
+          "I2S 位时钟"
+        ],
+        [
+          "WS / LRCL",
+          "GPIO2",
+          "I2S 左右声道时钟"
+        ],
+        [
+          "SD / DIN",
+          "GPIO42",
+          "麦克风数据输入"
+        ],
+        [
+          "L/R",
+          "GND",
+          "选择左声道输出"
+        ]
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "4.X.2 音频采集实现",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": [
+        {
+          "text": "4.X.2 音频采集实现",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 13.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "音频采集采用 ESP-IDF 标准 I2S RX 接口，I2S0 配置为主机接收模式，采样率为 16 kHz，单声道左声道采集，每个采样使用 32 位时隙承载 INMP441 的有效 24 位数据。采集任务按照 AFE 要求的 feed chunk 长度连续读取数据，保证提交给语音前端的帧长与模型接口一致。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "音频采集采用 ESP-IDF 标准 I2S RX 接口，I2S0 配置为主机接收模式，采样率为 16 kHz，单声道左声道采集，每个采样使用 32 位时隙承载 INMP441 的有效 24 位数据。采集任务按照 AFE 要求的 feed chunk 长度连续读取数据，保证提交给语音前端的帧长与模型接口一致。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "• 数据格式转换：INMP441 的有效 24 位有符号数据位于 32 位采样的高位，程序将原始值缩放为 int16_t 单声道 PCM，并设置固定数字增益。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "• 数据格式转换：",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        },
+        {
+          "text": "INMP441 的有效 24 位有符号数据位于 32 位采样的高位，程序将原始值缩放为 int16_t 单声道 PCM，并设置固定数字增益。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "• 饱和保护：转换过程使用 64 位中间变量计算，结果超过 int16_t 范围时进行上、下限钳位，避免强声音造成整数溢出。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "• 饱和保护：",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        },
+        {
+          "text": "转换过程使用 64 位中间变量计算，结果超过 int16_t 范围时进行上、下限钳位，避免强声音造成整数溢出。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "• 缓冲区管理：I2S 原始采样缓冲区使用内部 DMA 可访问内存，避免外部存储访问影响实时采集。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "• 缓冲区管理：",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        },
+        {
+          "text": "I2S 原始采样缓冲区使用内部 DMA 可访问内存，避免外部存储访问影响实时采集。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "• 麦克风自检：程序累计一秒音频样本并计算 RMS，通过串口周期输出音量值，用于检查接线、声道选择和麦克风工作状态。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "• 麦克风自检：",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        },
+        {
+          "text": "程序累计一秒音频样本并计算 RMS，通过串口周期输出音量值，用于检查接线、声道选择和麦克风工作状态。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "4.X.3 ESP-SR 识别实现",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": [
+        {
+          "text": "4.X.3 ESP-SR 识别实现",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 13.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "识别部分基于乐鑫官方 ESP-SR 2.4.6 组件实现。模型文件存放在独立的 model 分区中，系统启动后加载“你好小智”WakeNet 模型和中文 MultiNet 模型。AFE 采用单麦克风高性能模式，开启 VAD、噪声抑制和 WakeNet，关闭不适用于当前单麦克风结构的 AEC 与语音增强通道，并优先使用 PSRAM 分配模型运行内存。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "识别部分基于乐鑫官方 ESP-SR 2.4.6 组件实现。模型文件存放在独立的 model 分区中，系统启动后加载“你好小智”WakeNet 模型和中文 MultiNet 模型。AFE 采用单麦克风高性能模式，开启 VAD、噪声抑制和 WakeNet，关闭不适用于当前单麦克风结构的 AEC 与语音增强通道，并优先使用 PSRAM 分配模型运行内存。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "七类控制命令均使用固定 command_id 注册。每类命令扩展 15 条常用表达，短语按照 MultiNet 中文拼音格式由官方工具生成或校验后写入命令表，总计 105 条识别短语。识别结果只保留 command_id，使同义表达在系统控制层具有完全一致的行为。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "七类控制命令均使用固定 command_id 注册。每类命令扩展 15 条常用表达，短语按照 MultiNet 中文拼音格式由官方工具生成或校验后写入命令表，总计 105 条识别短语。识别结果只保留 command_id，使同义表达在系统控制层具有完全一致的行为。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "4.X.4 任务与状态控制",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": [
+        {
+          "text": "4.X.4 任务与状态控制",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 13.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "软件采用两个 FreeRTOS 任务并行运行，将连续音频输入与模型识别处理分离，避免模型检测过程阻塞 I2S 采样。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "软件采用两个 FreeRTOS 任务并行运行，将连续音频输入与模型识别处理分离，避免模型检测过程阻塞 I2S 采样。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "• 音频采集任务：固定在 Core 0，持续从 INMP441 读取 PCM 帧并调用 AFE feed 接口提交音频。任务优先级为 5，栈空间为 6 KB。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "• 音频采集任务：",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        },
+        {
+          "text": "固定在 Core 0，持续从 INMP441 读取 PCM 帧并调用 AFE feed 接口提交音频。任务优先级为 5，栈空间为 6 KB。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "• 语音识别任务：固定在 Core 1，持续调用 AFE fetch 获取处理后的语音帧，完成唤醒状态判断和 MultiNet 命令检测。任务优先级为 5，栈空间为 8 KB。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "• 语音识别任务：",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        },
+        {
+          "text": "固定在 Core 1，持续调用 AFE fetch 获取处理后的语音帧，完成唤醒状态判断和 MultiNet 命令检测。任务优先级为 5，栈空间为 8 KB。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "识别状态机仅包含“等待唤醒”和“等待命令”两个状态。检测到唤醒词后清理 MultiNet 历史状态并进入命令窗口；一次唤醒只允许输出一条有效命令。命令识别成功或 6 s 超时后，系统再次清理 MultiNet、重新启用 WakeNet，并返回等待唤醒状态，从机制上避免连续讲话导致重复输出。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "识别状态机仅包含“等待唤醒”和“等待命令”两个状态。检测到唤醒词后清理 MultiNet 历史状态并进入命令窗口；一次唤醒只允许输出一条有效命令。命令识别成功或 6 s 超时后，系统再次清理 MultiNet、重新启用 WakeNet，并返回等待唤醒状态，从机制上避免连续讲话导致重复输出。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Heading 2",
+      "text": "4.X.5 输出与验证",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": true,
+      "runs": [
+        {
+          "text": "4.X.5 输出与验证",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 13.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "命令识别成功时，程序首先输出带命令名称和 ID 的调试日志，随后使用 printf 单独输出一行纯数字，例如“3”。该数字行不带时间戳、日志级别和模块前缀，便于后续总系统直接读取并转换为控制事件。唤醒成功时输出提示语，命令超时则记录超时日志但不输出命令数字。",
+      "alignment": 3,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "命令识别成功时，程序首先输出带命令名称和 ID 的调试日志，随后使用 printf 单独输出一行纯数字，例如“3”。该数字行不带时间戳、日志级别和模块前缀，便于后续总系统直接读取并转换为控制事件。唤醒成功时输出提示语，命令超时则记录超时日志但不输出命令数字。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "• 软件构建验证：工程已在 ESP-IDF 5.1.2、目标芯片 esp32s3 环境下完成构建，生成 smartscore_s3_voice.bin；工程依赖 ESP-SR 2.4.6，并启用 16 MB Flash、8 MB PSRAM 与独立模型分区。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "• 软件构建验证：",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        },
+        {
+          "text": "工程已在 ESP-IDF 5.1.2、目标芯片 esp32s3 环境下完成构建，生成 smartscore_s3_voice.bin；工程依赖 ESP-SR 2.4.6，并启用 16 MB Flash、8 MB PSRAM 与独立模型分区。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "• 待完成硬件验证：实际唤醒率、七类命令识别率、噪声环境表现、说话距离和 105 条同义表达效果仍需在 ESP32-S3-N16R8 与 INMP441 实机上进行多轮测试后确定。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "• 待完成硬件验证：",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        },
+        {
+          "text": "实际唤醒率、七类命令识别率、噪声环境表现、说话距离和 105 条同义表达效果仍需在 ESP32-S3-N16R8 与 INMP441 实机上进行多轮测试后确定。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    },
+    {
+      "kind": "paragraph",
+      "style": "Normal",
+      "text": "• 建议验收方法：分别在安静环境和一般背景噪声环境下测试每类命令，记录成功次数、误识别次数、超时次数和平均响应时间，并据此调整麦克风增益、降噪配置和命令短语。",
+      "alignment": null,
+      "page_break_before": false,
+      "keep_with_next": false,
+      "runs": [
+        {
+          "text": "• 建议验收方法：",
+          "bold": true,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        },
+        {
+          "text": "分别在安静环境和一般背景噪声环境下测试每类命令，记录成功次数、误识别次数、超时次数和平均响应时间，并据此调整麦克风增益、降噪配置和命令短语。",
+          "bold": null,
+          "italic": null,
+          "font": "Calibri",
+          "size_pt": 11.0
+        }
+      ]
+    }
+  ]
+}

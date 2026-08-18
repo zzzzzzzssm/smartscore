@@ -202,8 +202,7 @@ static void set_music_status(const char *text)
 static void hide_voice_popup(void)
 {
     if (s_voice_popup_timer != NULL) {
-        lv_timer_delete(s_voice_popup_timer);
-        s_voice_popup_timer = NULL;
+        lv_timer_pause(s_voice_popup_timer);
     }
     if (s_voice_popup && lv_obj_is_valid(s_voice_popup)) {
         lv_obj_add_flag(s_voice_popup, LV_OBJ_FLAG_HIDDEN);
@@ -212,11 +211,10 @@ static void hide_voice_popup(void)
 
 static void voice_popup_timeout_cb(lv_timer_t *timer)
 {
-    if (timer == s_voice_popup_timer) s_voice_popup_timer = NULL;
     if (s_voice_popup && lv_obj_is_valid(s_voice_popup)) {
         lv_obj_add_flag(s_voice_popup, LV_OBJ_FLAG_HIDDEN);
     }
-    lv_timer_delete(timer);
+    if (timer == s_voice_popup_timer) lv_timer_pause(timer);
 }
 
 static void ensure_voice_popup(void)
@@ -235,6 +233,7 @@ static void ensure_voice_popup(void)
     lv_obj_set_style_shadow_opa(s_voice_popup, LV_OPA_30, 0);
     lv_obj_set_style_shadow_color(s_voice_popup, lv_color_hex(0x000000), 0);
     lv_obj_clear_flag(s_voice_popup, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_voice_popup, LV_OBJ_FLAG_HIDDEN);
 
     s_voice_popup_accent = lv_obj_create(s_voice_popup);
     lv_obj_set_size(s_voice_popup_accent, 54, 54);
@@ -260,6 +259,16 @@ static void ensure_voice_popup(void)
                                 lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_text_align(s_voice_popup_label,
                                 LV_TEXT_ALIGN_LEFT, 0);
+
+    /* Create the timeout timer once with the popup.  Reusing both objects
+     * avoids LVGL heap churn and top-layer rebuilds on every wake event. */
+    if (s_voice_popup_timer == NULL) {
+        s_voice_popup_timer = lv_timer_create(
+            voice_popup_timeout_cb, SCREEN_VOICE_LISTEN_TIMEOUT_MS, NULL);
+        if (s_voice_popup_timer != NULL) {
+            lv_timer_pause(s_voice_popup_timer);
+        }
+    }
 }
 
 static void show_voice_popup(const char *text, bool handled,
@@ -273,16 +282,12 @@ static void show_voice_popup(const char *text, bool handled,
         lv_color_hex(handled ? 0x38BDF8 : 0xF59E0B), 0);
     lv_label_set_text(s_voice_popup_label, text ? text : "");
     lv_obj_clear_flag(s_voice_popup, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_to_index(
-        s_voice_popup, lv_obj_get_child_count(lv_layer_top()) - 1);
 
     if (s_voice_popup_timer != NULL) {
-        lv_timer_delete(s_voice_popup_timer);
-    }
-    s_voice_popup_timer = lv_timer_create(
-        voice_popup_timeout_cb, timeout_ms, NULL);
-    if (s_voice_popup_timer != NULL) {
-        lv_timer_set_repeat_count(s_voice_popup_timer, 1);
+        lv_timer_set_period(s_voice_popup_timer,
+                            timeout_ms > 0U ? timeout_ms : 1U);
+        lv_timer_reset(s_voice_popup_timer);
+        lv_timer_resume(s_voice_popup_timer);
     }
 }
 
@@ -373,6 +378,49 @@ static void reset_alignment_locked(void)
     memset(s_pending_notes, 0, sizeof(s_pending_notes));
     memset(s_recent_matches, 0, sizeof(s_recent_matches));
     memset(s_extra_observations, 0, sizeof(s_extra_observations));
+}
+
+static void expected_note_group_locked(int *first_target,
+                                       int *last_target)
+{
+    int first = 0;
+    int last = 0;
+    if (s_session_active &&
+        s_aligned_index < s_target_score.note_count &&
+        s_aligned_index < SCORE_DATA_MAX_NOTES) {
+        size_t start = s_aligned_index;
+        while (start < s_target_score.note_count &&
+               start < SCORE_DATA_MAX_NOTES &&
+               s_target_consumed[start]) {
+            ++start;
+        }
+        if (start < s_target_score.note_count &&
+            start < SCORE_DATA_MAX_NOTES) {
+            const uint32_t onset = s_target_score.notes[start].start_ms;
+            size_t end = start;
+            while (end + 1 < s_target_score.note_count &&
+                   end + 1 < SCORE_DATA_MAX_NOTES &&
+                   s_target_score.notes[end + 1].start_ms == onset) {
+                ++end;
+            }
+            first = (int)start + 1;
+            last = (int)end + 1;
+        }
+    }
+    if (first_target) *first_target = first;
+    if (last_target) *last_target = last;
+}
+
+static void refresh_expected_note_guide(void)
+{
+    int first = 0;
+    int last = 0;
+    if (s_session_lock != NULL) {
+        xSemaphoreTake(s_session_lock, portMAX_DELAY);
+        expected_note_group_locked(&first, &last);
+        xSemaphoreGive(s_session_lock);
+    }
+    music_display_set_expected_note_group(first, last);
 }
 
 static int midi_distance(uint8_t left, uint8_t right)
@@ -775,6 +823,7 @@ static void practice_follow_task(void *argument)
         }
 
         apply_settled_results(settled, settled_count);
+        if (settled_count > 0) refresh_expected_note_guide();
         if (score_time_ms >= 0 &&
             (last_page_check_ms < 0 ||
              score_time_ms - last_page_check_ms >=
@@ -814,6 +863,7 @@ static void end_active_session(void)
         notify_camera_practice_state(S3_CAMERA_PRACTICE_FINISHED);
     }
     hide_audio_countdown_overlay();
+    music_display_set_expected_note_group(0, 0);
     music_display_set_practice_navigation_state(false, false);
     if (s_metronome_running) {
         speaker_service_metronome_stop();
@@ -1701,6 +1751,7 @@ static bool start_selected_score(const char *filename,
     }
     xSemaphoreGive(s_session_lock);
     music_display_set_practice_navigation_state(true, audio_countdown);
+    refresh_expected_note_guide();
     notify_camera_practice_state(
         audio_countdown ? S3_CAMERA_PRACTICE_PAUSED
                         : S3_CAMERA_PRACTICE_PLAYING);
@@ -1855,6 +1906,9 @@ static void screen_init_task(void *argument)
         ESP_LOGE(TAG, "screen mode hub initialization failed: %s",
                  esp_err_to_name(err));
     }
+    /* Build the hidden top-layer voice popup after the other screen modules
+     * so it naturally remains above them without per-wake reordering. */
+    ensure_voice_popup();
     s_ui_watch_timer = lv_timer_create(ui_watch_timer_cb, 250, NULL);
     bsp_display_unlock();
 
@@ -2177,7 +2231,9 @@ static bool voice_restart_practice(void)
 
 static bool voice_go_home(void)
 {
-    if (!guider_ui.screen || creator_mode_is_active()) return false;
+    if (!guider_ui.screen) return false;
+    if (screen_modes_voice_go_home()) return true;
+    if (creator_mode_is_active()) return false;
 
     lv_obj_t *active_screen = lv_screen_active();
     bool supported = active_screen == guider_ui.screen ||
@@ -2487,6 +2543,9 @@ static void handle_practice_note_on(const usb_midi_event_t *event)
                                         event->midi, 1.0f,
                                         pitch_ok, onset_ok);
     }
+    if (target_slot > 0 || settled_count > 0) {
+        refresh_expected_note_guide();
+    }
     if (page_score_time_ms >= 0) {
         music_display_check_time_page_turn(page_score_time_ms);
     }
@@ -2601,4 +2660,10 @@ void screen_adapter_handle_usb_midi_event(const usb_midi_event_t *event)
     } else if (event->type == USB_MIDI_EVENT_NOTE_ON) {
         handle_practice_note_on(event);
     }
+}
+
+void screen_adapter_handle_audio_s3_event(const s3_music_event_t *event)
+{
+    if (event == NULL || !s_ready) return;
+    screen_modes_handle_audio_s3_event(event);
 }

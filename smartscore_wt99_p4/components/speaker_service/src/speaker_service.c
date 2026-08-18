@@ -24,13 +24,15 @@
 #define SPEAKER_STREAM_OUTPUT_DRAIN_MS 80
 #define SPEAKER_STREAM_BUFFER_BYTES (256U * 1024U)
 #define SPEAKER_STREAM_READ_WAIT_MS 10U
-/* The Doubao business stream can pause for several seconds while the
- * WebSocket itself remains alive.  Keep the existing 256 KiB PSRAM ring, but
- * build a four-second jitter reserve before starting/resuming 24 kHz S16
- * mono playback.  STREAM_FINISH still bypasses this threshold so short or
- * interrupted replies are never stranded in the ring. */
-#define SPEAKER_STREAM_PREBUFFER_BYTES (192U * 1024U)
-#define SPEAKER_STREAM_REBUFFER_BYTES (192U * 1024U)
+/* Qwen normally delivers one 19.2 KiB PCM delta at a time.  Release playback
+ * on the first delta instead of imposing the old four-second fixed delay.
+ * If the upstream rate later falls below 48 kB/s, adapt only the rebuffer
+ * threshold for this stream: 64 KiB after the first underrun and 96 KiB after
+ * repeated underruns.  Producers can always keep filling the 256 KiB PSRAM
+ * ring while I2S consumption is paused. */
+#define SPEAKER_STREAM_PREBUFFER_BYTES (48U * 1024U)
+#define SPEAKER_STREAM_FIRST_REBUFFER_BYTES (48U * 1024U)
+#define SPEAKER_STREAM_REPEAT_REBUFFER_BYTES (64U * 1024U)
 #define SPEAKER_STREAM_LOW_WATER_TICKS 2U
 #define SPEAKER_STREAM_BACKPRESSURE_LOG_INTERVAL 50U
 #define METRONOME_QUEUE_LENGTH 6
@@ -127,6 +129,13 @@ static uint64_t s_stream_played_bytes;
 static uint32_t s_stream_backpressure_events;
 /* Static double buffer: 2 KiB total, never allocated on the audio task stack. */
 static int16_t s_pcm[2][SPEAKER_CHUNK_SAMPLES];
+
+static size_t stream_rebuffer_threshold_bytes(void)
+{
+    return s_stream_underruns <= 1U
+               ? SPEAKER_STREAM_FIRST_REBUFFER_BYTES
+               : SPEAKER_STREAM_REPEAT_REBUFFER_BYTES;
+}
 
 static void initialize_status_defaults(bool hardware_output_enabled)
 {
@@ -557,10 +566,11 @@ static void handle_stream_start(uint32_t sample_rate_hz, bool held)
     } else {
         ESP_LOGI(TAG,
                  "PCM stream prepared: %" PRIu32
-                 " Hz, ring=%u prebuffer=%u rebuffer=%u bytes, held=%s resume-file=%s",
+                 " Hz, ring=%u prebuffer=%u rebuffer=%u/%u bytes, held=%s resume-file=%s",
                  sample_rate_hz, (unsigned)SPEAKER_STREAM_BUFFER_BYTES,
                  (unsigned)SPEAKER_STREAM_PREBUFFER_BYTES,
-                 (unsigned)SPEAKER_STREAM_REBUFFER_BYTES,
+                 (unsigned)SPEAKER_STREAM_FIRST_REBUFFER_BYTES,
+                 (unsigned)SPEAKER_STREAM_REPEAT_REBUFFER_BYTES,
                  held ? "yes" : "no",
                  s_stream_resume_file ? "yes" : "no");
     }
@@ -744,7 +754,7 @@ static void speaker_task(void *context)
                 xStreamBufferBytesAvailable(s_stream_buffer);
             if (!s_stream_output_started) {
                 const size_t threshold = s_stream_rebuffering
-                                             ? SPEAKER_STREAM_REBUFFER_BYTES
+                                             ? stream_rebuffer_threshold_bytes()
                                              : SPEAKER_STREAM_PREBUFFER_BYTES;
                 if (available < threshold &&
                     !(s_stream_finish_requested && available > 0U)) {
@@ -783,7 +793,7 @@ static void speaker_task(void *context)
                     ESP_LOGI(TAG,
                              "PCM rebuffer recovered automatically: buffered=%u threshold=%u bytes underruns=%" PRIu32,
                              (unsigned)available,
-                             (unsigned)SPEAKER_STREAM_REBUFFER_BYTES,
+                             (unsigned)threshold,
                              s_stream_underruns);
                 }
             }
@@ -809,6 +819,8 @@ static void speaker_task(void *context)
                         const uint32_t underruns = s_stream_underruns;
                         const size_t max_buffered =
                             s_stream_max_buffered_bytes;
+                        const size_t rebuffer_threshold =
+                            stream_rebuffer_threshold_bytes();
                         portEXIT_CRITICAL(&s_stream_lock);
                         ESP_LOGW(TAG,
                                  "PCM underrun=%" PRIu32
@@ -816,7 +828,7 @@ static void speaker_task(void *context)
                                  underruns,
                                  (unsigned)available,
                                  (unsigned)max_buffered,
-                                 (unsigned)SPEAKER_STREAM_REBUFFER_BYTES);
+                                 (unsigned)rebuffer_threshold);
                     } else {
                         vTaskDelay(pdMS_TO_TICKS(
                             SPEAKER_STREAM_READ_WAIT_MS));

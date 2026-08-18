@@ -1,0 +1,125 @@
+{
+  "input": "D:\\qianrushi\\smartscore_s3_audio\\\u667a\u80fd\u4e50\u8c31\u8f85\u52a9\u7cfb\u7edf_\u672c\u5730\u97f3\u9891\u91c7\u96c6\u4e0e\u97f3\u4e50\u8bc6\u522b\u5b50\u6a21\u5757\u8bbe\u8ba1\u6587\u6863.docx",
+  "fonts_by_char_count": {
+    "Calibri": 746
+  },
+  "direct_run_formatting_runs": 57,
+  "direct_paragraph_formatting_paragraphs": 55,
+  "heading_like_paragraphs_not_heading_style": [
+    {
+      "para_index": 45,
+      "text": "\u7ed3\u679c\u7c7b\u578b",
+      "style": "Normal"
+    },
+    {
+      "para_index": 46,
+      "text": "\u5224\u5b9a\u542b\u4e49",
+      "style": "Normal"
+    },
+    {
+      "para_index": 47,
+      "text": "\u540e\u7eed\u7528\u9014",
+      "style": "Normal"
+    },
+    {
+      "para_index": 63,
+      "text": "\u5bf9\u8c61/\u4fe1\u53f7",
+      "style": "Normal"
+    },
+    {
+      "para_index": 64,
+      "text": "ESP32-S3\u8fde\u63a5\u6216\u53c2\u6570",
+      "style": "Normal"
+    },
+    {
+      "para_index": 65,
+      "text": "\u5b9e\u73b0\u8bf4\u660e",
+      "style": "Normal"
+    },
+    {
+      "para_index": 87,
+      "text": "\u6267\u884c\u5355\u5143",
+      "style": "Normal"
+    },
+    {
+      "para_index": 88,
+      "text": "\u6838\u5fc3/\u4f18\u5148\u7ea7/\u6808",
+      "style": "Normal"
+    },
+    {
+      "para_index": 89,
+      "text": "\u4e3b\u8981\u804c\u8d23",
+      "style": "Normal"
+    },
+    {
+      "para_index": 90,
+      "text": "\u8d44\u6e90\u7ea6\u675f",
+      "style": "Normal"
+    },
+    {
+      "para_index": 99,
+      "text": "\u667a\u80fd\u4e50\u8c31\u8f85\u52a9\u7cfb\u7edf\u6280\u672f\u62a5\u544a",
+      "style": "Header"
+    }
+  ],
+  "examples": {
+    "direct_paragraph_formatting": [
+      {
+        "para_index": 8,
+        "text": "",
+        "style": "Normal"
+      },
+      {
+        "para_index": 45,
+        "text": "\u7ed3\u679c\u7c7b\u578b",
+        "style": "Normal"
+      },
+      {
+        "para_index": 46,
+        "text": "\u5224\u5b9a\u542b\u4e49",
+        "style": "Normal"
+      },
+      {
+        "para_index": 47,
+        "text": "\u540e\u7eed\u7528\u9014",
+        "style": "Normal"
+      },
+      {
+        "para_index": 48,
+        "text": "SINGLE",
+        "style": "Normal"
+      }
+    ],
+    "direct_run_formatting": [
+      {
+        "para_index": 45,
+        "run_text": "\u7ed3\u679c\u7c7b\u578b",
+        "style": "Normal"
+      },
+      {
+        "para_index": 46,
+        "run_text": "\u5224\u5b9a\u542b\u4e49",
+        "style": "Normal"
+      },
+      {
+        "para_index": 47,
+        "run_text": "\u540e\u7eed\u7528\u9014",
+        "style": "Normal"
+      },
+      {
+        "para_index": 48,
+        "run_text": "SINGLE",
+        "style": "Normal"
+      },
+      {
+        "para_index": 49,
+        "run_text": "\u7a33\u5b9a\u5355\u97f3\uff1b\u7ed9\u51fa\u9891\u7387\u3001MIDI\u3001\u97f3\u540d\u3001\u97f3\u5206\u548c\u7f6e\u4fe1\u5ea6",
+        "style": "Normal"
+      }
+    ]
+  },
+  "notes": [
+    "Direct formatting is not always wrong, but it often causes inconsistent output when templates change.",
+    "Heading-like paragraphs not using Heading styles can break TOC and accessibility."
+  ]
+}

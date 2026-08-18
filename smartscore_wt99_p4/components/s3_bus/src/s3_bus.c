@@ -29,6 +29,11 @@
 #define S3_MUSIC_ONLINE_TIMEOUT_MS    3000
 #define S3_MUSIC_COMMAND_MAX_BYTES    64
 
+_Static_assert(S3_MUSIC_POLY_MAX_NOTES == S3_PROTOCOL_POLY_MAX_NOTES,
+               "public and parser poly capacities must match");
+_Static_assert(S3_MUSIC_POLY_NAME_MAX == S3_PROTOCOL_POLY_NAME_MAX,
+               "public and parser poly name capacities must match");
+
 static const char *TAG = "S3_MUSIC";
 static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 static QueueHandle_t s_event_queue;
@@ -42,7 +47,10 @@ static s3_bus_status_t s_status;
 static bool s_received_any;
 static bool s_sequence_valid;
 static bool s_note_stream_logged;
+static bool s_poly_stream_logged;
 static uint32_t s_requested_sid;
+static s3_music_stream_profile_t s_requested_profile =
+    S3_MUSIC_STREAM_PROFILE_STRICT;
 
 static uint32_t local_now_ms(void)
 {
@@ -120,16 +128,32 @@ esp_err_t s3_bus_ping(void)
 
 esp_err_t s3_bus_start_stream(uint32_t sid)
 {
+    return s3_bus_start_stream_with_profile(
+        sid, S3_MUSIC_STREAM_PROFILE_STRICT);
+}
+
+esp_err_t s3_bus_start_stream_with_profile(
+    uint32_t sid, s3_music_stream_profile_t profile)
+{
+    if (profile != S3_MUSIC_STREAM_PROFILE_STRICT &&
+        profile != S3_MUSIC_STREAM_PROFILE_DEMO) {
+        return ESP_ERR_INVALID_ARG;
+    }
     char command[S3_MUSIC_COMMAND_MAX_BYTES];
-    const int length = snprintf(command, sizeof(command),
-                                "{\"cmd\":\"start\",\"sid\":%" PRIu32 "}\n",
-                                sid);
+    const int length = profile == S3_MUSIC_STREAM_PROFILE_DEMO
+                           ? snprintf(command, sizeof(command),
+                                      "{\"cmd\":\"start\",\"sid\":%" PRIu32
+                                      ",\"profile\":\"demo\"}\n", sid)
+                           : snprintf(command, sizeof(command),
+                                      "{\"cmd\":\"start\",\"sid\":%" PRIu32 "}\n",
+                                      sid);
     if (length < 0 || (size_t)length >= sizeof(command)) {
         return ESP_ERR_INVALID_SIZE;
     }
     taskENTER_CRITICAL(&s_status_lock);
     s_status.stream_requested = true;
     s_requested_sid = sid;
+    s_requested_profile = profile;
     taskEXIT_CRITICAL(&s_status_lock);
     return send_command_line(command, (size_t)length);
 }
@@ -139,6 +163,7 @@ esp_err_t s3_bus_stop_stream(void)
     static const char command[] = "{\"cmd\":\"stop\"}\n";
     taskENTER_CRITICAL(&s_status_lock);
     s_status.stream_requested = false;
+    s_requested_profile = S3_MUSIC_STREAM_PROFILE_STRICT;
     taskEXIT_CRITICAL(&s_status_lock);
     return send_command_line(command, sizeof(command) - 1U);
 }
@@ -148,8 +173,10 @@ static esp_err_t sync_requested_stream(void)
     taskENTER_CRITICAL(&s_status_lock);
     const bool requested = s_status.stream_requested;
     const uint32_t sid = s_requested_sid;
+    const s3_music_stream_profile_t profile = s_requested_profile;
     taskEXIT_CRITICAL(&s_status_lock);
-    return requested ? s3_bus_start_stream(sid) : s3_bus_stop_stream();
+    return requested ? s3_bus_start_stream_with_profile(sid, profile)
+                     : s3_bus_stop_stream();
 }
 
 static bool accept_and_record_message(const s3_music_message_t *message)
@@ -195,12 +222,16 @@ static bool accept_and_record_message(const s3_music_message_t *message)
     return accepted;
 }
 
-static void queue_note_event(const s3_music_message_t *message)
+static void queue_music_event(const s3_music_message_t *message)
 {
+    s3_music_event_type_t event_type = S3_MUSIC_EVENT_NOTE_OFF;
+    if (message->type == S3_MUSIC_MESSAGE_NOTE_ON) {
+        event_type = S3_MUSIC_EVENT_NOTE_ON;
+    } else if (message->type == S3_MUSIC_MESSAGE_POLY) {
+        event_type = S3_MUSIC_EVENT_POLY;
+    }
     s3_music_event_t event = {
-        .type = message->type == S3_MUSIC_MESSAGE_NOTE_ON
-                    ? S3_MUSIC_EVENT_NOTE_ON
-                    : S3_MUSIC_EVENT_NOTE_OFF,
+        .type = event_type,
         .seq = message->seq,
         .sid = message->sid,
         .sender_ts_ms = message->ts_ms,
@@ -212,7 +243,15 @@ static void queue_note_event(const s3_music_message_t *message)
         .has_duration = message->has_duration,
         .has_frequency = message->has_frequency,
         .has_confidence = message->has_confidence,
+        .poly_kind = message->poly_kind == S3_PROTOCOL_POLY_INTERVAL
+                         ? S3_MUSIC_POLY_INTERVAL
+                         : message->poly_kind == S3_PROTOCOL_POLY_CHORD
+                               ? S3_MUSIC_POLY_CHORD
+                               : S3_MUSIC_POLY_NONE,
+        .note_count = message->note_count,
     };
+    memcpy(event.notes, message->notes, sizeof(event.notes));
+    memcpy(event.poly_name, message->poly_name, sizeof(event.poly_name));
     if (xQueueSend(s_event_queue, &event, 0) != pdTRUE) {
         taskENTER_CRITICAL(&s_status_lock);
         ++s_status.dropped_events;
@@ -249,16 +288,27 @@ static void process_line(char *line, size_t length)
                  message.sid, message.seq);
     }
     if (message.type == S3_MUSIC_MESSAGE_NOTE_ON ||
-        message.type == S3_MUSIC_MESSAGE_NOTE_OFF) {
+        message.type == S3_MUSIC_MESSAGE_NOTE_OFF ||
+        message.type == S3_MUSIC_MESSAGE_POLY) {
         if (!s_note_stream_logged) {
-            ESP_LOGI(TAG,
-                     "S3 melody note stream confirmed: type=%s midi=%u velocity=%u",
-                     message.type == S3_MUSIC_MESSAGE_NOTE_ON ? "note_on"
-                                                              : "note_off",
-                     (unsigned)message.midi, (unsigned)message.velocity);
+            const char *type =
+                message.type == S3_MUSIC_MESSAGE_NOTE_ON ? "note_on" :
+                message.type == S3_MUSIC_MESSAGE_NOTE_OFF ? "note_off" :
+                                                            "poly";
+            ESP_LOGI(TAG, "S3 music stream confirmed: type=%s", type);
             s_note_stream_logged = true;
         }
-        queue_note_event(&message);
+        if (message.type == S3_MUSIC_MESSAGE_POLY &&
+            !s_poly_stream_logged) {
+            ESP_LOGI(TAG,
+                     "native poly stream confirmed: kind=%s notes=%u name=%s",
+                     message.poly_kind == S3_PROTOCOL_POLY_CHORD
+                         ? "chord" : "interval",
+                     (unsigned)message.note_count,
+                     message.poly_name[0] ? message.poly_name : "-");
+            s_poly_stream_logged = true;
+        }
+        queue_music_event(&message);
     }
 }
 

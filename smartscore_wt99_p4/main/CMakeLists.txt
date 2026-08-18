@@ -9,6 +9,7 @@ idf_component_register(
         web_provisioning
         device_api
         speaker_service
+        wake_prompt
         voice_assistant
         usb_midi
         s3_bus
