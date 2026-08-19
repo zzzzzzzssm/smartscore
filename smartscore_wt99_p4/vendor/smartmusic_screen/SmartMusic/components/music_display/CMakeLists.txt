@@ -16,4 +16,5 @@ idf_component_register(
         wt99p4c5_s1_board
         esp_timer
         json
+        creator_core
 )

@@ -287,7 +287,7 @@ static bool correct_yin_octave_from_spectrum(yin_result_t *yin,
         const int difference = candidate->midi - yin->midi;
         if (candidate->midi < MUSIC_MELODY_FALLBACK_MIDI_MIN ||
             candidate->midi > MUSIC_MELODY_FALLBACK_MIDI_MAX ||
-            difference == 0 || abs(difference) > 24 ||
+            difference >= 0 || abs(difference) > 24 ||
             abs(difference) % 12 != 0 ||
             candidate->relative_score <
                 MUSIC_OCTAVE_CORRECTION_MIN_RELATIVE ||
@@ -335,16 +335,31 @@ bool music_classifier_update(music_classifier_t *classifier,
                              const audio_frame_metrics_t *mic2_metrics,
                              float mic1_gate, float mic2_gate, int selected_mic,
                              const yin_result_t *yin_input, float harmonic_ratio,
-                             const chord_result_t *chord, bool demo_profile,
+                             const chord_result_t *chord,
+                             const low_frequency_result_t *low_frequency,
+                             bool demo_profile,
                              int poly_stable_votes,
                              uint32_t timestamp_ms,
                              music_result_t *result, const char **unknown_reason)
 {
     yin_result_t corrected_yin = *yin_input;
-    const bool octave_corrected =
+    bool octave_corrected =
         correct_yin_octave_from_spectrum(&corrected_yin, chord);
+    const bool low_single_available = demo_profile &&
+        low_frequency != NULL && low_frequency->ready &&
+        low_frequency->final_kind == LOW_FREQUENCY_RESULT_SINGLE &&
+        low_frequency->yin.valid;
+    const bool use_low_single = low_single_available &&
+        (low_frequency->yin.midi < MUSIC_MELODY_FALLBACK_MIDI_MIN ||
+         low_frequency->octave_corrected || !corrected_yin.valid);
+    if (use_low_single) {
+        corrected_yin = low_frequency->yin;
+        harmonic_ratio = low_frequency->harmonic_ratio;
+        octave_corrected = octave_corrected ||
+                           low_frequency->octave_corrected;
+    }
     const yin_result_t *yin = &corrected_yin;
-    if (octave_corrected) {
+    if (octave_corrected && !use_low_single) {
         harmonic_ratio = chord_detector_harmonic_explained_ratio(
             corrected_yin.frequency_hz);
     }
@@ -368,7 +383,12 @@ bool music_classifier_update(music_classifier_t *classifier,
     result->mic2_rms = 0.0f;
     result->rms = mic1_metrics->rms;
     result->selected_mic = 1;
-    const bool silence = mic1_metrics->rms < mic1_gate;
+    const bool low_signal_active = demo_profile && low_frequency != NULL &&
+        low_frequency->triggered &&
+        low_frequency->band_snr_db[AUDIO_PREPROCESS_BAND_LOW] >=
+            MUSIC_LOW_BAND_MIN_SNR_DB;
+    const bool silence = mic1_metrics->rms < mic1_gate &&
+                         !low_signal_active;
     const bool selected_above_gate = !silence;
     const bool selected_clipped = mic1_metrics->clipped;
 #else
@@ -377,7 +397,13 @@ bool music_classifier_update(music_classifier_t *classifier,
         selected_mic == 2 ? mic2_metrics : mic1_metrics;
     result->rms = selected_metrics->rms;
     result->selected_mic = selected_mic;
-    const bool silence = mic1_metrics->rms < mic1_gate && mic2_metrics->rms < mic2_gate;
+    const bool low_signal_active = demo_profile && low_frequency != NULL &&
+        low_frequency->triggered &&
+        low_frequency->band_snr_db[AUDIO_PREPROCESS_BAND_LOW] >=
+            MUSIC_LOW_BAND_MIN_SNR_DB;
+    const bool silence = mic1_metrics->rms < mic1_gate &&
+                         mic2_metrics->rms < mic2_gate &&
+                         !low_signal_active;
     const bool selected_above_gate =
         selected_metrics->rms >= (selected_mic == 2 ? mic2_gate : mic1_gate);
     const bool selected_clipped = selected_metrics->clipped;
@@ -385,6 +411,8 @@ bool music_classifier_update(music_classifier_t *classifier,
     music_result_type_t candidate = MUSIC_RESULT_UNKNOWN;
     int identity = -1;
     bool minor = false;
+    bool candidate_from_low_single = false;
+    bool candidate_from_low_poly = false;
     const bool yin_spectrum_single = yin->valid &&
                                      yin->confidence >= MUSIC_YIN_SPECTRAL_SINGLE_CONFIDENCE &&
                                      chord->independent_pitch_class_count == 1 &&
@@ -433,6 +461,21 @@ bool music_classifier_update(music_classifier_t *classifier,
                                    yin->confidence >= MUSIC_SINGLE_DOMINANCE_YIN_CONFIDENCE &&
                                    harmonic_ratio >= MUSIC_SINGLE_DOMINANCE_HARMONIC_RATIO));
     const bool accepted_single = gate.accepted;
+    const bool accepted_low_single = use_low_single;
+    bool low_poly_extends_range = false;
+    if (low_frequency != NULL) {
+        for (int index = 0; index < low_frequency->note_count; ++index) {
+            if (low_frequency->midi_notes[index] < MUSIC_CHORD_MIDI_MIN) {
+                low_poly_extends_range = true;
+                break;
+            }
+        }
+    }
+    const bool accepted_low_poly = demo_profile && low_frequency != NULL &&
+        (low_frequency->final_kind == LOW_FREQUENCY_RESULT_INTERVAL ||
+         low_frequency->final_kind == LOW_FREQUENCY_RESULT_CHORD) &&
+        low_frequency->note_count >= 2 &&
+        (low_poly_extends_range || low_frequency->octave_corrected);
     *unknown_reason = octave_corrected
                           ? "octave_corrected_stabilizing"
                           : "low_confidence";
@@ -448,6 +491,25 @@ bool music_classifier_update(music_classifier_t *classifier,
 #endif
         candidate = MUSIC_RESULT_UNKNOWN;
         *unknown_reason = "clipping";
+    } else if (accepted_low_poly &&
+               low_frequency->final_kind == LOW_FREQUENCY_RESULT_CHORD) {
+        candidate = MUSIC_RESULT_CHORD;
+        identity = low_frequency->chord_root * 2 +
+                   (low_frequency->chord_is_minor ? 1 : 0);
+        minor = low_frequency->chord_is_minor;
+        candidate_from_low_poly = true;
+    } else if (accepted_low_poly) {
+        candidate = MUSIC_RESULT_INTERVAL;
+        const int first_pc = low_frequency->midi_notes[0] % 12;
+        const int second_pc = low_frequency->midi_notes[1] % 12;
+        identity = first_pc < second_pc
+            ? first_pc * 12 + second_pc
+            : second_pc * 12 + first_pc;
+        candidate_from_low_poly = true;
+    } else if (accepted_low_single) {
+        candidate = MUSIC_RESULT_SINGLE;
+        identity = yin->midi;
+        candidate_from_low_single = true;
     } else if (accepted_poly && chord->kind != CHORD_DETECTION_INTERVAL && !dominant_single) {
         candidate = MUSIC_RESULT_CHORD;
         identity = chord->identity;
@@ -465,6 +527,10 @@ bool music_classifier_update(music_classifier_t *classifier,
         *unknown_reason = "single_chord_conflict";
     } else if (yin->valid && yin->confidence >= MUSIC_YIN_CONFIDENCE_THRESHOLD) {
         *unknown_reason = "low_harmonic_ratio";
+    } else if (demo_profile && low_frequency != NULL &&
+               low_frequency->triggered) {
+        *unknown_reason = low_frequency_reject_reason_name(
+            low_frequency->reject_reason);
     } else {
         *unknown_reason = "unstable_spectrum";
     }
@@ -503,6 +569,15 @@ bool music_classifier_update(music_classifier_t *classifier,
     bool suppressing_unconfirmed_transition = false;
     if (candidate == MUSIC_RESULT_SILENCE) {
         stable_type = MUSIC_RESULT_SILENCE;
+    } else if (demo_profile && candidate_from_low_single &&
+               classifier->consecutive_count >=
+                   MUSIC_LOW_SINGLE_CONFIRM_FRAMES) {
+        stable_type = MUSIC_RESULT_SINGLE;
+    } else if (demo_profile && candidate_from_low_poly) {
+        /* The low-frequency analyzer already required consecutive template
+         * agreement before exposing final_kind. Do not add a second latency
+         * window here. */
+        stable_type = candidate;
     } else if (demo_profile && candidate == MUSIC_RESULT_SINGLE &&
                classifier->consecutive_count >= MUSIC_STABLE_VOTE_COUNT) {
         stable_type = MUSIC_RESULT_SINGLE;
@@ -564,9 +639,11 @@ bool music_classifier_update(music_classifier_t *classifier,
     }
     result->type = stable_type;
     if (stable_type == MUSIC_RESULT_SINGLE) {
-        result->confidence = gate.confidence_from_yin
-                                 ? yin->confidence
-                                 : fminf(yin->confidence, harmonic_ratio);
+        result->confidence = candidate_from_low_single
+                                 ? low_frequency->confidence
+                                 : gate.confidence_from_yin
+                                  ? yin->confidence
+                                  : fminf(yin->confidence, harmonic_ratio);
         const bool recent_attack =
             classifier->pending_attack_ms != 0 &&
             timestamp_ms - classifier->pending_attack_ms <=
@@ -595,6 +672,21 @@ bool music_classifier_update(music_classifier_t *classifier,
             memcpy(result->midi_notes, classifier->last_emitted.midi_notes,
                    sizeof(result->midi_notes));
             memcpy(result->chroma, classifier->last_emitted.chroma, sizeof(result->chroma));
+        } else if (candidate_from_low_poly) {
+            result->confidence = low_frequency->confidence;
+            result->chord_root = low_frequency->chord_root;
+            result->chord_is_minor = low_frequency->chord_is_minor;
+            result->pitch_class_count = low_frequency->note_count;
+            memcpy(result->chord_name, low_frequency->chord_name,
+                   sizeof(result->chord_name));
+            for (int index = 0; index < low_frequency->note_count; ++index) {
+                result->midi_notes[index] =
+                    low_frequency->midi_notes[index];
+                result->pitch_classes[index] =
+                    low_frequency->midi_notes[index] % 12;
+                result->chroma[result->pitch_classes[index]] =
+                    1.0f / low_frequency->note_count;
+            }
         } else {
             result->confidence = chord->confidence;
             result->chord_root = chord->root;

@@ -15,6 +15,7 @@
 
 typedef struct {
     bool used;
+    bool key_released;
     uint8_t channel;
     uint8_t pitch;
     uint8_t velocity;
@@ -35,6 +36,10 @@ typedef struct {
     creator_recorded_note_t notes[MAX_NOTES];
     int note_count;
     active_note_t active[CREATOR_MAX_ACTIVE_NOTES];
+    bool sustain_pedal[CREATOR_MIDI_CHANNELS];
+    midi_raw_event_t raw_events[MAX_MIDI_RAW_EVENTS];
+    int raw_event_count;
+    int raw_event_start;
     bool onset_group_valid;
     uint64_t onset_group_time_us;
     uint32_t onset_group_tick;
@@ -44,6 +49,8 @@ typedef struct {
 } creator_recorder_context_t;
 
 static creator_recorder_context_t s_recorder;
+
+static uint8_t dots_for_exact_ticks(uint32_t ticks);
 
 static void lock_recorder(void)
 {
@@ -204,11 +211,14 @@ static bool finish_active_locked(active_note_t *active, uint64_t timestamp_us)
     note->duration_us = duration_us;
     note->start_tick = active->start_tick;
     note->duration_ticks = quantized.ticks;
-    if (s_recorder.range_recording &&
+    bool clipped = s_recorder.range_recording &&
         note->start_tick < s_recorder.range_end_tick &&
-        note->duration_ticks > s_recorder.range_end_tick - note->start_tick)
+        note->duration_ticks > s_recorder.range_end_tick - note->start_tick;
+    if (clipped)
         note->duration_ticks = s_recorder.range_end_tick - note->start_tick;
     note->note_value = quantized.value;
+    note->dots = clipped ? dots_for_exact_ticks(note->duration_ticks) :
+                 quantized.dots;
     note->within_tolerance = quantized.within_tolerance;
     assign_staff_locked(note->pitch, &note->staff, &note->voice);
 
@@ -216,6 +226,29 @@ static bool finish_active_locked(active_note_t *active, uint64_t timestamp_us)
     if (end_tick > s_recorder.append_tick) s_recorder.append_tick = end_tick;
     active->used = false;
     return true;
+}
+
+static void retain_raw_event_locked(midi_raw_event_type_t type,
+                                    uint8_t channel, uint8_t data1,
+                                    int16_t value, uint64_t timestamp_us)
+{
+    int index;
+    if (s_recorder.raw_event_count < MAX_MIDI_RAW_EVENTS) {
+        index = (s_recorder.raw_event_start + s_recorder.raw_event_count) %
+                MAX_MIDI_RAW_EVENTS;
+        s_recorder.raw_event_count++;
+    } else {
+        index = s_recorder.raw_event_start;
+        s_recorder.raw_event_start =
+            (s_recorder.raw_event_start + 1) % MAX_MIDI_RAW_EVENTS;
+    }
+    s_recorder.raw_events[index] = (midi_raw_event_t){
+        .tick = current_tick_locked(timestamp_us),
+        .type = type,
+        .channel = channel & 0x0f,
+        .data1 = data1,
+        .value = value,
+    };
 }
 
 static void finish_all_active_locked(uint64_t timestamp_us)
@@ -233,6 +266,41 @@ static void recompute_append_tick_locked(void)
                             s_recorder.notes[i].duration_ticks;
         if (end_tick > s_recorder.append_tick)
             s_recorder.append_tick = end_tick;
+    }
+}
+
+static void remove_dangling_connections_locked(void)
+{
+    for (int i = 0; i < s_recorder.note_count; ++i) {
+        creator_recorded_note_t *note = &s_recorder.notes[i];
+        if (note->slur_start) {
+            bool found = false;
+            for (int j = i + 1; j < s_recorder.note_count; ++j)
+                if (s_recorder.notes[j].slur_stop == note->slur_start)
+                    found = true;
+            if (!found) note->slur_start = 0;
+        }
+        if (note->gliss_start) {
+            bool found = false;
+            for (int j = i + 1; j < s_recorder.note_count; ++j)
+                if (s_recorder.notes[j].gliss_stop == note->gliss_start)
+                    found = true;
+            if (!found) note->gliss_start = 0;
+        }
+        if (note->slur_stop) {
+            bool found = false;
+            for (int j = 0; j < i; ++j)
+                if (s_recorder.notes[j].slur_start == note->slur_stop)
+                    found = true;
+            if (!found) note->slur_stop = 0;
+        }
+        if (note->gliss_stop) {
+            bool found = false;
+            for (int j = 0; j < i; ++j)
+                if (s_recorder.notes[j].gliss_start == note->gliss_stop)
+                    found = true;
+            if (!found) note->gliss_stop = 0;
+        }
     }
 }
 
@@ -266,6 +334,57 @@ static int compare_midi_notes(const void *lhs, const void *rhs)
     return (int)a->note - (int)b->note;
 }
 
+static uint8_t dots_for_exact_ticks(uint32_t ticks)
+{
+    static const uint32_t dotted_ticks[] = {
+        CREATOR_TICKS_PER_QUARTER * 6,
+        CREATOR_TICKS_PER_QUARTER * 3,
+        CREATOR_TICKS_PER_QUARTER * 3 / 2,
+        CREATOR_TICKS_PER_QUARTER * 3 / 4,
+        CREATOR_TICKS_PER_QUARTER * 3 / 8,
+    };
+    for (size_t i = 0; i < sizeof(dotted_ticks) / sizeof(dotted_ticks[0]); ++i)
+        if (ticks == dotted_ticks[i]) return 1;
+    return 0;
+}
+
+static void append_split_note_locked(midi_data_t *out,
+                                     const creator_recorded_note_t *source,
+                                     uint32_t measure_ticks)
+{
+    if (!out || !source || !source->duration_ticks || !measure_ticks) return;
+    uint32_t start = source->start_tick;
+    uint32_t remaining = source->duration_ticks;
+    bool has_previous_segment = false;
+    bool crosses_bar = start / measure_ticks !=
+                       (start + remaining - 1) / measure_ticks;
+    while (remaining && out->note_count < MAX_NOTES) {
+        uint32_t next_bar = (start / measure_ticks + 1) * measure_ticks;
+        uint32_t available = next_bar > start ? next_bar - start : remaining;
+        uint32_t duration = remaining < available ? remaining : available;
+        bool has_next_segment = remaining > duration;
+        midi_note_t *target = &out->notes[out->note_count++];
+        *target = (midi_note_t){
+            .note = source->pitch,
+            .velocity = source->velocity,
+            .staff = source->staff,
+            .voice = source->voice,
+            .dots = crosses_bar ? dots_for_exact_ticks(duration) : source->dots,
+            .tie_flags = (uint8_t)((has_previous_segment ? MIDI_NOTE_TIE_STOP : 0) |
+                                   (has_next_segment ? MIDI_NOTE_TIE_START : 0)),
+            .slur_start = has_previous_segment ? 0 : source->slur_start,
+            .slur_stop = has_next_segment ? 0 : source->slur_stop,
+            .gliss_start = has_previous_segment ? 0 : source->gliss_start,
+            .gliss_stop = has_next_segment ? 0 : source->gliss_stop,
+            .start_tick = start,
+            .duration = duration,
+        };
+        start += duration;
+        remaining -= duration;
+        has_previous_segment = true;
+    }
+}
+
 esp_err_t creator_recorder_init(void)
 {
     if (s_recorder.mutex) return ESP_OK;
@@ -281,6 +400,9 @@ void creator_recorder_begin(const creator_recorder_config_t *config,
     s_recorder.note_count = 0;
     memset(s_recorder.notes, 0, sizeof(s_recorder.notes));
     memset(s_recorder.active, 0, sizeof(s_recorder.active));
+    memset(s_recorder.sustain_pedal, 0, sizeof(s_recorder.sustain_pedal));
+    s_recorder.raw_event_count = 0;
+    s_recorder.raw_event_start = 0;
     reset_input_filter_locked();
     s_recorder.segment_origin_us = timestamp_us;
     s_recorder.segment_start_tick = 0;
@@ -296,6 +418,7 @@ void creator_recorder_stop(void)
 {
     lock_recorder();
     memset(s_recorder.active, 0, sizeof(s_recorder.active));
+    memset(s_recorder.sustain_pedal, 0, sizeof(s_recorder.sustain_pedal));
     reset_input_filter_locked();
     s_recorder.segment_started = false;
     s_recorder.range_recording = false;
@@ -346,11 +469,15 @@ bool creator_recorder_resume_from_measure(int measure_number,
         creator_recorded_note_t note = s_recorder.notes[i];
         if (note.start_tick >= boundary) continue;
         uint32_t end_tick = note.start_tick + note.duration_ticks;
-        if (end_tick > boundary) note.duration_ticks = boundary - note.start_tick;
+        if (end_tick > boundary) {
+            note.duration_ticks = boundary - note.start_tick;
+            note.dots = dots_for_exact_ticks(note.duration_ticks);
+        }
         if (note.duration_ticks)
             s_recorder.notes[write_index++] = note;
     }
     s_recorder.note_count = write_index;
+    remove_dangling_connections_locked();
     memset(s_recorder.active, 0, sizeof(s_recorder.active));
     s_recorder.append_tick = boundary;
     s_recorder.segment_start_tick = boundary;
@@ -393,11 +520,13 @@ bool creator_recorder_resume_measure_range(int first_measure,
             uint32_t end_tick = note.start_tick + note.duration_ticks;
             if (end_tick > range_start)
                 note.duration_ticks = range_start - note.start_tick;
+            note.dots = dots_for_exact_ticks(note.duration_ticks);
             if (!note.duration_ticks) continue;
         }
         s_recorder.notes[write_index++] = note;
     }
     s_recorder.note_count = write_index;
+    remove_dangling_connections_locked();
     memset(s_recorder.active, 0, sizeof(s_recorder.active));
     recompute_append_tick_locked();
     s_recorder.segment_start_tick = range_start;
@@ -457,6 +586,7 @@ bool creator_recorder_note_on(uint8_t channel, uint8_t pitch, uint8_t velocity,
 
     *slot = (active_note_t){
         .used = true,
+        .key_released = false,
         .channel = channel,
         .pitch = pitch,
         .velocity = velocity,
@@ -493,7 +623,12 @@ bool creator_recorder_note_off(uint8_t channel, uint8_t pitch,
         active_note_t *active = &s_recorder.active[i];
         if (active->used && active->channel == channel &&
             active->pitch == pitch) {
-            finished = finish_active_locked(active, timestamp_us);
+            if (s_recorder.sustain_pedal[channel & 0x0f]) {
+                active->key_released = true;
+                finished = true;
+            } else {
+                finished = finish_active_locked(active, timestamp_us);
+            }
             break;
         }
     }
@@ -506,6 +641,79 @@ bool creator_recorder_note_off(uint8_t channel, uint8_t pitch,
     }
     unlock_recorder();
     return finished;
+}
+
+bool creator_recorder_control_change(uint8_t channel, uint8_t controller,
+                                     uint8_t value, uint64_t timestamp_us)
+{
+    if (controller > 127 || value > 127) return false;
+    lock_recorder();
+    if (s_recorder.state != CREATOR_RECORDER_RECORDING) {
+        unlock_recorder();
+        return false;
+    }
+    channel &= 0x0f;
+    retain_raw_event_locked(MIDI_RAW_CONTROL_CHANGE, channel, controller,
+                            value, timestamp_us);
+    if (controller == 64) {
+        bool was_down = s_recorder.sustain_pedal[channel];
+        bool is_down = value >= 64;
+        s_recorder.sustain_pedal[channel] = is_down;
+        if (was_down && !is_down) {
+            for (int i = 0; i < CREATOR_MAX_ACTIVE_NOTES; ++i) {
+                active_note_t *active = &s_recorder.active[i];
+                if (active->used && active->channel == channel &&
+                    active->key_released)
+                    finish_active_locked(active, timestamp_us);
+            }
+        }
+    }
+    unlock_recorder();
+    return true;
+}
+
+bool creator_recorder_pitch_bend(uint8_t channel, int16_t value,
+                                 uint64_t timestamp_us)
+{
+    if (value < -8192) value = -8192;
+    if (value > 8191) value = 8191;
+    lock_recorder();
+    if (s_recorder.state != CREATOR_RECORDER_RECORDING) {
+        unlock_recorder();
+        return false;
+    }
+    retain_raw_event_locked(MIDI_RAW_PITCH_BEND, channel, 0, value,
+                            timestamp_us);
+    unlock_recorder();
+    return true;
+}
+
+bool creator_recorder_add_connection(creator_connection_kind_t kind,
+                                     int start_note_index,
+                                     int end_note_index,
+                                     uint8_t number)
+{
+    if (!number || start_note_index < 0 || end_note_index <= start_note_index)
+        return false;
+    lock_recorder();
+    if (end_note_index >= s_recorder.note_count) {
+        unlock_recorder();
+        return false;
+    }
+    creator_recorded_note_t *start = &s_recorder.notes[start_note_index];
+    creator_recorded_note_t *end = &s_recorder.notes[end_note_index];
+    if (kind == CREATOR_CONNECTION_SLUR) {
+        start->slur_start = number;
+        end->slur_stop = number;
+    } else if (kind == CREATOR_CONNECTION_GLISS) {
+        start->gliss_start = number;
+        end->gliss_stop = number;
+    } else {
+        unlock_recorder();
+        return false;
+    }
+    unlock_recorder();
+    return true;
 }
 
 creator_recorder_state_t creator_recorder_state(void)
@@ -585,17 +793,11 @@ static bool snapshot_locked(midi_data_t *out, uint64_t timestamp_us,
     out->tonality_sf = 0;
     out->tonality_minor = false;
     snprintf(out->title, sizeof(out->title), "Creator Mode");
-    out->note_count = s_recorder.note_count;
+    out->note_count = 0;
+    uint32_t measure_ticks = measure_ticks_locked();
     for (int i = 0; i < s_recorder.note_count && i < MAX_NOTES; ++i) {
         const creator_recorded_note_t *source = &s_recorder.notes[i];
-        out->notes[i] = (midi_note_t){
-            .note = source->pitch,
-            .velocity = source->velocity,
-            .staff = source->staff,
-            .voice = source->voice,
-            .start_tick = source->start_tick,
-            .duration = source->duration_ticks,
-        };
+        append_split_note_locked(out, source, measure_ticks);
     }
     if (include_active) {
         for (int i = 0; i < CREATOR_MAX_ACTIVE_NOTES &&
@@ -609,22 +811,35 @@ static bool snapshot_locked(midi_data_t *out, uint64_t timestamp_us,
                     duration_us, s_recorder.config.bpm,
                     s_recorder.config.duration_tolerance_percent);
             uint32_t duration_ticks = duration.ticks;
-            if (s_recorder.range_recording &&
+            bool duration_clipped = s_recorder.range_recording &&
                 active->start_tick < s_recorder.range_end_tick &&
-                duration_ticks > s_recorder.range_end_tick - active->start_tick)
+                duration_ticks > s_recorder.range_end_tick - active->start_tick;
+            if (duration_clipped)
                 duration_ticks = s_recorder.range_end_tick - active->start_tick;
             uint8_t staff;
             uint8_t voice;
             assign_staff_locked(active->pitch, &staff, &voice);
-            out->notes[out->note_count++] = (midi_note_t){
-                .note = active->pitch,
+            creator_recorded_note_t live = {
+                .pitch = active->pitch,
                 .velocity = active->velocity,
                 .staff = staff,
                 .voice = voice,
                 .start_tick = active->start_tick,
-                .duration = duration_ticks,
+                .duration_ticks = duration_ticks,
+                .note_value = duration.value,
+                .dots = duration_clipped ?
+                        dots_for_exact_ticks(duration_ticks) : duration.dots,
             };
+            append_split_note_locked(out, &live, measure_ticks);
         }
+    }
+    out->raw_event_count = s_recorder.raw_event_count;
+    if (out->raw_event_count > MAX_MIDI_RAW_EVENTS)
+        out->raw_event_count = MAX_MIDI_RAW_EVENTS;
+    for (int i = 0; i < out->raw_event_count; ++i) {
+        int source_index = (s_recorder.raw_event_start + i) %
+                           MAX_MIDI_RAW_EVENTS;
+        out->raw_events[i] = s_recorder.raw_events[source_index];
     }
     qsort(out->notes, (size_t)out->note_count, sizeof(out->notes[0]),
           compare_midi_notes);

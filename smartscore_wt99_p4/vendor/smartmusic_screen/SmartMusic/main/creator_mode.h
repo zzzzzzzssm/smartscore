@@ -47,6 +47,10 @@ esp_err_t creator_mode_resume(void);
 esp_err_t creator_mode_finish(void);
 esp_err_t creator_mode_cancel(void);
 void creator_mode_get_status(creator_mode_status_t *status);
+bool creator_mode_add_connection(creator_connection_kind_t kind,
+                                 int start_note_index,
+                                 int end_note_index,
+                                 uint8_t number);
 
 /* Called by the existing single USB-MIDI queue consumer. */
 bool creator_mode_handle_midi_event(const usb_midi_input_event_t *event);

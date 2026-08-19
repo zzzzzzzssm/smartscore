@@ -35,6 +35,28 @@
     </view>
 
     <view class="section">
+      <view class="card import-card">
+        <view class="row between">
+          <view>
+            <view class="card-title">上传音乐到设备</view>
+            <view class="hint import-hint">支持 MP3、M4A/AAC、FLAC、OGG、WAV，手机转码后写入 P4 的 SD 卡</view>
+          </view>
+          <button class="primary-btn import-btn" bindtap="chooseAndUploadMusic"
+                  disabled="{{importing || !online || activeFile}}">
+            {{importing ? '处理中' : '选择音乐'}}
+          </button>
+        </view>
+        <view class="import-progress" wx:if="{{importing}}">
+          <view class="row between import-progress-copy">
+            <text>{{importStage}}</text><text>{{importProgress}}%</text>
+          </view>
+          <progress percent="{{importProgress}}" stroke-width="5" activeColor="#0f766e" backgroundColor="#dce9e8" />
+          <view class="hint">请保持小程序在前台，练习和音乐播放期间会暂停上传。</view>
+        </view>
+      </view>
+    </view>
+
+    <view class="section">
       <view class="section-head">
         <view>
           <view class="section-title compact">SD 卡曲库</view>

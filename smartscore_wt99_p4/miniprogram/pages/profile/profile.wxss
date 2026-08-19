@@ -88,6 +88,11 @@
   background: #f3ecff;
 }
 
+.cache-icon {
+  color: #b42318;
+  background: #fff1f2;
+}
+
 .menu-item + .menu-item {
   border-top: 1rpx solid #e5eeee;
 }

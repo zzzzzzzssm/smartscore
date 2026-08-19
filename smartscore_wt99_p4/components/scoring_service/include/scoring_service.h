@@ -12,6 +12,7 @@ extern "C" {
 #endif
 
 #define SCORING_PROFILE_NAME_MAX_LENGTH 32
+#define SCORING_SESSION_ID_MAX_LENGTH 64
 
 typedef enum {
     SCORING_SERVICE_UNINITIALIZED = 0,
@@ -32,6 +33,7 @@ typedef struct {
     esp_err_t last_error;
     char error[64];
     char message[96];
+    char practice_session_id[SCORING_SESSION_ID_MAX_LENGTH];
 } scoring_service_status_t;
 
 typedef esp_err_t (*scoring_result_consumer_t)(const char *json,

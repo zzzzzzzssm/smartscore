@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -12,7 +13,7 @@
 class SdStorage {
 public:
     esp_err_t init();
-    bool start_session(int64_t start_time_ms);
+    bool start_session(int64_t start_time_ms, const char *practice_session_id);
     bool finish_session(int64_t end_time_ms);
 
     bool can_accept_photo();
@@ -21,6 +22,15 @@ public:
     bool saving_available() const;
     bool session_active() const;
     uint32_t saved_photo_count() const;
+    bool find_photo_session(const char *practice_session_id,
+                            uint32_t *out_photo_count,
+                            char *out_directory,
+                            size_t directory_capacity) const;
+    bool photo_file_info(const char *practice_session_id,
+                         uint32_t photo_index,
+                         char *out_path,
+                         size_t path_capacity,
+                         size_t *out_size) const;
 
 private:
     struct WriteItem {
@@ -51,4 +61,5 @@ private:
     int64_t session_start_time_ms_ = 0;
     int64_t last_queue_warning_ms_ = -vision_config::kQueueWarningIntervalMs;
     char session_directory_[vision_config::kSessionPathBufferSize] = {};
+    char practice_session_id_[64] = {};
 };

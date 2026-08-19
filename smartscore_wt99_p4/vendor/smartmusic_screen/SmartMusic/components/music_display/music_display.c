@@ -4,6 +4,7 @@
 #include "leland_score_view.h"
 #include "gui_guider.h"
 #include "score_ui_flow.h"
+#include "creator_snapshot_mailbox.h"
 
 /* GUI Guider 生成的字体声明 (未包含在 gui_guider.h 中的补齐) */
 LV_FONT_DECLARE(lv_font_SimpMusicBasePSMTModified_90)
@@ -27,6 +28,10 @@ extern lv_ui guider_ui;
 
 /* ── 队列 ── */
 static QueueHandle_t s_queue = NULL;
+static SemaphoreHandle_t s_snapshot_mutex;
+static creator_snapshot_mailbox_t s_snapshot_mailbox;
+static int s_latest_snapshot_notation = MUSIC_DISPLAY_NOTATION_STAFF;
+static bool s_latest_snapshot_allow_empty;
 
 /* ── 内部状态 ── */
 static midi_data_t s_midi_data;
@@ -245,6 +250,8 @@ static void handle_midi_data(const uint8_t *data, size_t len);
 static void handle_parsed_midi(midi_data_t *md);
 static void handle_midi_snapshot(midi_data_t *md, int notation_type,
                                  bool allow_empty);
+static bool take_latest_snapshot(midi_data_t **snapshot, int *notation_type,
+                                 bool *allow_empty);
 static void handle_gesture(music_msg_type_t gesture);
 static void render_colored_line(lv_obj_t *group, const char *line,
                                 uint32_t start_tick, uint32_t end_tick,
@@ -768,13 +775,22 @@ static void handle_gesture(music_msg_type_t gesture)
 /* ── MIDI 数据处理 ── */
 static void handle_midi_data(const uint8_t *data, size_t len)
 {
-    midi_data_t result;
-    if (!midi_parse(data, len, &result)) {
-        ESP_LOGE(TAG, "MIDI parse failed");
+    midi_data_t *result = heap_caps_calloc(1, sizeof(*result),
+                                           MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!result) result = calloc(1, sizeof(*result));
+    if (!result) {
+        ESP_LOGE(TAG, "MIDI parse workspace allocation failed");
         return;
     }
-    ESP_LOGI(TAG, "MIDI parsed: BPM=%d, Notes=%d", result.bpm, result.note_count);
-    s_midi_data = result;
+    if (!midi_parse(data, len, result)) {
+        ESP_LOGE(TAG, "MIDI parse failed");
+        free(result);
+        return;
+    }
+    ESP_LOGI(TAG, "MIDI parsed: BPM=%d, Notes=%d", result->bpm,
+             result->note_count);
+    s_midi_data = *result;
+    free(result);
     s_midi_parsed = true;
     s_current_page = 0;
     reset_note_status();
@@ -859,6 +875,22 @@ static void handle_midi_snapshot(midi_data_t *md, int notation_type,
         }
     }
     bsp_display_unlock();
+}
+
+static bool take_latest_snapshot(midi_data_t **snapshot, int *notation_type,
+                                 bool *allow_empty)
+{
+    if (!snapshot || !notation_type || !allow_empty || !s_snapshot_mutex)
+        return false;
+    *snapshot = NULL;
+    xSemaphoreTake(s_snapshot_mutex, portMAX_DELAY);
+    if (s_snapshot_mailbox.latest) {
+        *snapshot = creator_snapshot_mailbox_take(&s_snapshot_mailbox);
+        *notation_type = s_latest_snapshot_notation;
+        *allow_empty = s_latest_snapshot_allow_empty;
+    }
+    xSemaphoreGive(s_snapshot_mutex);
+    return *snapshot != NULL;
 }
 /* ── 实时音符状态更新 ── */
 void music_display_apply_note_result(int target_index, int expected_midi,
@@ -1093,7 +1125,7 @@ static void music_display_task(void *arg)
     ESP_LOGI(TAG, "music_screen initialized");
 
     while (1) {
-        if (xQueueReceive(s_queue, &msg, portMAX_DELAY) == pdTRUE) {
+        if (xQueueReceive(s_queue, &msg, pdMS_TO_TICKS(16)) == pdTRUE) {
             switch (msg.type) {
             case MUSIC_MSG_MIDI_DATA:
                 if (msg.param.midi.len == 0 && msg.param.midi.data) {
@@ -1117,6 +1149,15 @@ static void music_display_task(void *arg)
             default:
                 break;
             }
+        }
+
+        midi_data_t *latest = NULL;
+        int latest_notation = MUSIC_DISPLAY_NOTATION_STAFF;
+        bool latest_allow_empty = false;
+        if (take_latest_snapshot(&latest, &latest_notation,
+                                 &latest_allow_empty)) {
+            handle_midi_snapshot(latest, latest_notation,
+                                 latest_allow_empty);
         }
 
         /* 警告容器 2s 自动隐藏 */
@@ -1150,6 +1191,8 @@ bool music_display_apply_score_json_with_options(
     cJSON *ts_j    = cJSON_GetObjectItemCaseSensitive(root, "time_signature");
     cJSON *key_j   = cJSON_GetObjectItemCaseSensitive(root, "key");
     cJSON *title_j = cJSON_GetObjectItemCaseSensitive(root, "title");
+    cJSON *tpq_j   = cJSON_GetObjectItemCaseSensitive(root,
+                                                      "ticks_per_quarter");
 
     int source_bpm = cJSON_IsNumber(bpm_j) ? bpm_j->valueint : 120;
     if (source_bpm < 1) source_bpm = 120;
@@ -1199,7 +1242,8 @@ bool music_display_apply_score_json_with_options(
     if (!md) { cJSON_Delete(root); return false; }
 
     md->bpm               = bpm_val;
-    md->ticks_per_quarter = 480;
+    md->ticks_per_quarter = cJSON_IsNumber(tpq_j) && tpq_j->valueint > 0 ?
+                            tpq_j->valueint : 480;
     md->time_sig_num      = ts_num;
     md->time_sig_den      = ts_den_pow;
     md->tonality_sf       = sf;
@@ -1227,6 +1271,20 @@ bool music_display_apply_score_json_with_options(
         cJSON *dur_j   = cJSON_GetObjectItemCaseSensitive(item, "duration");
         cJSON *staff_j = cJSON_GetObjectItemCaseSensitive(item, "staff");
         cJSON *voice_j = cJSON_GetObjectItemCaseSensitive(item, "voice");
+        cJSON *start_tick_j = cJSON_GetObjectItemCaseSensitive(item,
+                                                               "start_tick");
+        cJSON *duration_ticks_j = cJSON_GetObjectItemCaseSensitive(
+            item, "duration_ticks");
+        cJSON *dots_j = cJSON_GetObjectItemCaseSensitive(item, "dots");
+        cJSON *tie_j = cJSON_GetObjectItemCaseSensitive(item, "tie_flags");
+        cJSON *slur_start_j = cJSON_GetObjectItemCaseSensitive(item,
+                                                               "slur_start");
+        cJSON *slur_stop_j = cJSON_GetObjectItemCaseSensitive(item,
+                                                              "slur_stop");
+        cJSON *gliss_start_j = cJSON_GetObjectItemCaseSensitive(item,
+                                                                "gliss_start");
+        cJSON *gliss_stop_j = cJSON_GetObjectItemCaseSensitive(item,
+                                                               "gliss_stop");
         if (!cJSON_IsNumber(midi_j)) continue;
         int m = midi_j->valueint;
         if (m < 0 || m > 127) continue;
@@ -1240,11 +1298,53 @@ bool music_display_apply_score_json_with_options(
         md->notes[count].voice      = cJSON_IsNumber(voice_j) &&
                                       voice_j->valueint > 0 ?
                                       (uint8_t)voice_j->valueint : 1;
-        md->notes[count].start_tick = (uint32_t)(start_sec * ticks_per_sec + 0.5f);
-        md->notes[count].duration   = (uint32_t)(dur_sec   * ticks_per_sec + 0.5f);
+        md->notes[count].start_tick = cJSON_IsNumber(start_tick_j) &&
+                                      start_tick_j->valuedouble >= 0 ?
+            (uint32_t)start_tick_j->valuedouble :
+            (uint32_t)(start_sec * ticks_per_sec + 0.5f);
+        md->notes[count].duration = cJSON_IsNumber(duration_ticks_j) &&
+                                    duration_ticks_j->valuedouble > 0 ?
+            (uint32_t)duration_ticks_j->valuedouble :
+            (uint32_t)(dur_sec * ticks_per_sec + 0.5f);
+        md->notes[count].dots = cJSON_IsNumber(dots_j) ?
+                                (uint8_t)dots_j->valueint : 0;
+        md->notes[count].tie_flags = cJSON_IsNumber(tie_j) ?
+                                     (uint8_t)tie_j->valueint : 0;
+        md->notes[count].slur_start = cJSON_IsNumber(slur_start_j) ?
+                                      (uint8_t)slur_start_j->valueint : 0;
+        md->notes[count].slur_stop = cJSON_IsNumber(slur_stop_j) ?
+                                     (uint8_t)slur_stop_j->valueint : 0;
+        md->notes[count].gliss_start = cJSON_IsNumber(gliss_start_j) ?
+                                       (uint8_t)gliss_start_j->valueint : 0;
+        md->notes[count].gliss_stop = cJSON_IsNumber(gliss_stop_j) ?
+                                      (uint8_t)gliss_stop_j->valueint : 0;
         count++;
     }
     md->note_count = count;
+    cJSON *raw_events = cJSON_GetObjectItemCaseSensitive(
+        root, "performance_events");
+    cJSON *raw = NULL;
+    cJSON_ArrayForEach(raw, raw_events) {
+        if (md->raw_event_count >= MAX_MIDI_RAW_EVENTS) break;
+        cJSON *type_j = cJSON_GetObjectItemCaseSensitive(raw, "type");
+        cJSON *tick_j = cJSON_GetObjectItemCaseSensitive(raw, "tick");
+        cJSON *channel_j = cJSON_GetObjectItemCaseSensitive(raw, "channel");
+        cJSON *data1_j = cJSON_GetObjectItemCaseSensitive(raw, "data1");
+        cJSON *value_j = cJSON_GetObjectItemCaseSensitive(raw, "value");
+        midi_raw_event_t *target =
+            &md->raw_events[md->raw_event_count++];
+        target->type = cJSON_IsString(type_j) &&
+                       strcmp(type_j->valuestring, "pitch_bend") == 0 ?
+                       MIDI_RAW_PITCH_BEND : MIDI_RAW_CONTROL_CHANGE;
+        target->tick = cJSON_IsNumber(tick_j) ?
+                       (uint32_t)tick_j->valuedouble : 0;
+        target->channel = cJSON_IsNumber(channel_j) ?
+                          (uint8_t)channel_j->valueint : 0;
+        target->data1 = cJSON_IsNumber(data1_j) ?
+                        (uint8_t)data1_j->valueint : 0;
+        target->value = cJSON_IsNumber(value_j) ?
+                        (int16_t)value_j->valueint : 0;
+    }
     cJSON_Delete(root);
     if (count == 0) { free(md); return false; }
 
@@ -1278,20 +1378,21 @@ bool music_display_submit_midi_snapshot(
         free(snapshot);
         return false;
     }
-    music_msg_t msg = {
-        .type = MUSIC_MSG_MIDI_SNAPSHOT,
-        .param.snapshot = {
-            .parsed = snapshot,
-            .notation_type = options ? options->notation_type :
-                             MUSIC_DISPLAY_NOTATION_STAFF,
-            .allow_empty = allow_empty,
-        },
-    };
-    if (xQueueSend(s_queue, &msg, pdMS_TO_TICKS(100)) != pdPASS) {
+    if (!s_snapshot_mutex) {
         free(snapshot);
-        ESP_LOGW(TAG, "live display queue full; snapshot dropped");
         return false;
     }
+    xSemaphoreTake(s_snapshot_mutex, portMAX_DELAY);
+    midi_data_t *superseded = creator_snapshot_mailbox_replace(
+        &s_snapshot_mailbox, snapshot);
+    s_latest_snapshot_notation = options ? options->notation_type :
+                                 MUSIC_DISPLAY_NOTATION_STAFF;
+    s_latest_snapshot_allow_empty = allow_empty;
+    xSemaphoreGive(s_snapshot_mutex);
+    /* A live burst retains only the newest immutable frame. The consumer
+     * polls this slot every 16 ms, so queue pressure cannot discard the final
+     * Note On/Off state or accumulate stale full-score rebuilds. */
+    free(superseded);
     return true;
 }
 void music_display_set_note_selection_callback(
@@ -1360,8 +1461,13 @@ void music_display_start(void)
 {
     reset_note_status();
     s_queue = xQueueCreate(8, sizeof(music_msg_t));
-    if (!s_queue) {
-        ESP_LOGE(TAG, "queue create failed");
+    s_snapshot_mutex = xSemaphoreCreateMutex();
+    if (!s_queue || !s_snapshot_mutex) {
+        ESP_LOGE(TAG, "display queue/state create failed");
+        if (s_queue) vQueueDelete(s_queue);
+        if (s_snapshot_mutex) vSemaphoreDelete(s_snapshot_mutex);
+        s_queue = NULL;
+        s_snapshot_mutex = NULL;
         return;
     }
 
@@ -1369,7 +1475,9 @@ void music_display_start(void)
     if (ok != pdPASS) {
         ESP_LOGE(TAG, "task create failed");
         vQueueDelete(s_queue);
+        vSemaphoreDelete(s_snapshot_mutex);
         s_queue = NULL;
+        s_snapshot_mutex = NULL;
         return;
     }
     ESP_LOGI(TAG, "music_display task started");

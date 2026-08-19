@@ -8,6 +8,30 @@
   font-weight: 700;
 }
 
+.advice-badge {
+  display: inline-block;
+  margin-top: 10rpx;
+  padding: 6rpx 12rpx;
+  border-radius: 999rpx;
+  font-size: 21rpx;
+  font-weight: 700;
+}
+
+.advice-badge.ready {
+  color: #0f766e;
+  background: #e8f7f5;
+}
+
+.advice-badge.pending {
+  color: #b45309;
+  background: #fff7ed;
+}
+
+.advice-badge.missing {
+  color: #667085;
+  background: #f2f4f7;
+}
+
 .record-main {
   flex: 1;
 }
@@ -94,6 +118,106 @@
   color: #172033;
   font-size: 28rpx;
   font-weight: 700;
+}
+
+.advice-detail {
+  padding: 22rpx;
+  border: 1rpx solid #d7e7e6;
+  border-radius: 16rpx;
+  color: #475467;
+  background: #f8fbfb;
+  font-size: 25rpx;
+  line-height: 1.75;
+}
+
+.advice-detail.ready {
+  color: #253f3d;
+  border-color: #bfe6e2;
+  background: #f1fbfa;
+}
+
+.advice-text {
+  white-space: pre-wrap;
+}
+
+.advice-open-btn {
+  width: 100%;
+  margin-top: 18rpx;
+  font-size: 24rpx;
+}
+
+.photo-panel {
+  padding: 18rpx;
+  border: 1rpx solid #d7e7e6;
+  border-radius: 16rpx;
+  background: #f8fbfb;
+}
+
+.photo-status,
+.photo-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  color: #667085;
+  font-size: 23rpx;
+}
+
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14rpx;
+  margin-top: 16rpx;
+}
+
+.photo-cell {
+  position: relative;
+  overflow: hidden;
+  height: 210rpx;
+  border-radius: 14rpx;
+  background: #e8f1f0;
+}
+
+.photo-cell image {
+  width: 100%;
+  height: 100%;
+}
+
+.photo-index {
+  position: absolute;
+  right: 8rpx;
+  bottom: 8rpx;
+  padding: 5rpx 10rpx;
+  border-radius: 999rpx;
+  color: #fff;
+  background: rgba(15, 23, 42, .66);
+  font-size: 19rpx;
+}
+
+.photo-error,
+.photo-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 18rpx;
+  color: #667085;
+  box-sizing: border-box;
+  font-size: 22rpx;
+  text-align: center;
+}
+
+.photo-loading {
+  min-height: 92rpx;
+}
+
+.photo-pagination {
+  margin-top: 18rpx;
+}
+
+.photo-pagination button {
+  width: 180rpx;
+  margin: 0;
 }
 
 .note-table-wrap {

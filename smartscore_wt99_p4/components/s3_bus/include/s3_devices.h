@@ -82,7 +82,26 @@ typedef enum {
 
 /** Synchronize the real P4 practice state to the camera S3. */
 esp_err_t s3_camera_node_send_practice_state(
-    s3_camera_practice_state_t state);
+    s3_camera_practice_state_t state,
+    const char *practice_session_id);
+
+/** Read the number of photos associated with one completed practice. */
+esp_err_t s3_camera_node_list_photos(const char *practice_session_id,
+                                     uint32_t *out_photo_count);
+
+typedef esp_err_t (*s3_camera_photo_chunk_handler_t)(
+    const uint8_t *data,
+    size_t length,
+    size_t total_length,
+    bool first_chunk,
+    void *context);
+
+/** Stream one JPEG from the camera S3 without buffering the whole file. */
+esp_err_t s3_camera_node_stream_photo(
+    const char *practice_session_id,
+    uint32_t photo_index,
+    s3_camera_photo_chunk_handler_t handler,
+    void *context);
 
 #ifdef __cplusplus
 }

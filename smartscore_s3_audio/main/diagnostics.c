@@ -42,23 +42,34 @@ void diagnostics_log_performance(unsigned queue_depth, unsigned free_heap,
         (uint32_t)(s_counters.dsp_cycle_sum_us / s_counters.dsp_cycle_count) : 0;
 #if MUSIC_USE_SINGLE_MIC_CH1
     ESP_LOGI("DSP_PERF", "yin=%" PRIu32 "us fft=%" PRIu32 "us chord=%" PRIu32
+             "us low_yin=%" PRIu32 "us low_fft=%" PRIu32
              "us total=%" PRIu32 "us queue=%u dropped=%" PRIu32
-             " deadline_miss=%" PRIu32 " avg=%" PRIu32 "us max=%" PRIu32
+             " diag_drop=%" PRIu32 " deadline_miss=%" PRIu32
+             " avg=%" PRIu32 "us max=%" PRIu32
              "us exhausted=%" PRIu32 " heap=%u stack_min=%u words",
              s_counters.yin_time_us, s_counters.mic1_fft_time_us,
-             s_counters.chord_time_us, s_counters.dsp_cycle_time_us, queue_depth,
-             s_counters.dropped_buffer_count, s_counters.dsp_deadline_miss_count,
+             s_counters.chord_time_us, s_counters.low_yin_time_us,
+             s_counters.low_spectrum_time_us, s_counters.dsp_cycle_time_us,
+             queue_depth,
+             s_counters.dropped_buffer_count,
+             s_counters.diagnostic_drop_count,
+             s_counters.dsp_deadline_miss_count,
              average_us, s_counters.dsp_cycle_max_us, s_counters.buffer_exhaustion_count,
              free_heap, stack_words);
 #else
     ESP_LOGI("DSP_PERF", "yin=%" PRIu32 "us fft=%" PRIu32
-             "us chord=%" PRIu32 "us total=%" PRIu32 "us avg=%" PRIu32
+             "us chord=%" PRIu32 "us low_yin=%" PRIu32
+             "us low_fft=%" PRIu32 "us total=%" PRIu32 "us avg=%" PRIu32
              "us max=%" PRIu32 "us queue=%u dropped=%" PRIu32
-             " exhausted=%" PRIu32 " deadline_miss=%" PRIu32
+             " diag_drop=%" PRIu32 " exhausted=%" PRIu32
+             " deadline_miss=%" PRIu32
              " switches=%" PRIu32 " heap=%u stack_min=%u words",
              s_counters.yin_time_us, s_counters.mic1_fft_time_us,
-             s_counters.chord_time_us, s_counters.dsp_cycle_time_us, average_us,
+             s_counters.chord_time_us, s_counters.low_yin_time_us,
+             s_counters.low_spectrum_time_us,
+             s_counters.dsp_cycle_time_us, average_us,
              s_counters.dsp_cycle_max_us, queue_depth, s_counters.dropped_buffer_count,
+             s_counters.diagnostic_drop_count,
              s_counters.buffer_exhaustion_count, s_counters.dsp_deadline_miss_count,
              s_counters.mic_switch_count, free_heap, stack_words);
 #endif

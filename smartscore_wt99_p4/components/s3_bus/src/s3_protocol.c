@@ -78,6 +78,165 @@ static bool json_optional_u32(const cJSON *object,
     return item == NULL || json_u32(object, name, out_value);
 }
 
+static bool json_number_range(const cJSON *item, double minimum,
+                              double maximum, float *out_value)
+{
+    if (!cJSON_IsNumber(item) || !isfinite(item->valuedouble) ||
+        item->valuedouble < minimum || item->valuedouble > maximum) {
+        return false;
+    }
+    *out_value = (float)item->valuedouble;
+    return true;
+}
+
+static bool parse_result_kind(const cJSON *root, const char *name,
+                              s3_protocol_result_kind_t *out_kind)
+{
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(root, name);
+    if (!cJSON_IsString(item) || item->valuestring == NULL) return false;
+    static const struct {
+        const char *name;
+        s3_protocol_result_kind_t kind;
+    } kinds[] = {
+        {"unknown", S3_PROTOCOL_RESULT_UNKNOWN},
+        {"silence", S3_PROTOCOL_RESULT_SILENCE},
+        {"single", S3_PROTOCOL_RESULT_SINGLE},
+        {"interval", S3_PROTOCOL_RESULT_INTERVAL},
+        {"chord", S3_PROTOCOL_RESULT_CHORD},
+    };
+    for (size_t index = 0; index < sizeof(kinds) / sizeof(kinds[0]); ++index) {
+        if (strcmp(item->valuestring, kinds[index].name) == 0) {
+            *out_kind = kinds[index].kind;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool parse_diagnostic_notes(const cJSON *root, const char *name,
+                                   uint8_t *out_notes, uint8_t *out_count)
+{
+    const cJSON *notes = cJSON_GetObjectItemCaseSensitive(root, name);
+    if (!cJSON_IsArray(notes)) return false;
+    const int count = cJSON_GetArraySize(notes);
+    if (count < 0 || count > S3_PROTOCOL_DIAGNOSTIC_MAX_NOTES) return false;
+    for (int index = 0; index < count; ++index) {
+        const cJSON *note = cJSON_GetArrayItem(notes, index);
+        if (!cJSON_IsNumber(note) || !isfinite(note->valuedouble) ||
+            note->valuedouble < 0.0 || note->valuedouble > 127.0 ||
+            floor(note->valuedouble) != note->valuedouble) {
+            return false;
+        }
+        const uint8_t midi = (uint8_t)note->valuedouble;
+        for (int previous = 0; previous < index; ++previous) {
+            if (out_notes[previous] == midi) return false;
+        }
+        out_notes[index] = midi;
+    }
+    *out_count = (uint8_t)count;
+    return true;
+}
+
+static bool diagnostic_kind_matches_count(s3_protocol_result_kind_t kind,
+                                          uint8_t count)
+{
+    switch (kind) {
+        case S3_PROTOCOL_RESULT_UNKNOWN:
+        case S3_PROTOCOL_RESULT_SILENCE:
+            return count == 0;
+        case S3_PROTOCOL_RESULT_SINGLE:
+            return count == 1;
+        case S3_PROTOCOL_RESULT_INTERVAL:
+            return count == 2;
+        case S3_PROTOCOL_RESULT_CHORD:
+            return count >= 2 &&
+                   count <= S3_PROTOCOL_DIAGNOSTIC_MAX_NOTES;
+        default:
+            return false;
+    }
+}
+
+static bool parse_diagnostic_fields(const cJSON *root,
+                                    s3_music_message_t *message)
+{
+    const cJSON *raw = cJSON_GetObjectItemCaseSensitive(root, "raw");
+    if (!cJSON_IsArray(raw)) return false;
+    const int raw_count = cJSON_GetArraySize(raw);
+    if (raw_count < 0 || raw_count > S3_PROTOCOL_DIAGNOSTIC_MAX_RAW) {
+        return false;
+    }
+    for (int index = 0; index < raw_count; ++index) {
+        const cJSON *candidate = cJSON_GetArrayItem(raw, index);
+        if (!cJSON_IsArray(candidate) ||
+            cJSON_GetArraySize(candidate) != 4) {
+            return false;
+        }
+        const cJSON *source = cJSON_GetArrayItem(candidate, 0);
+        const cJSON *midi = cJSON_GetArrayItem(candidate, 1);
+        if (!cJSON_IsNumber(source) || !isfinite(source->valuedouble) ||
+            floor(source->valuedouble) != source->valuedouble ||
+            source->valuedouble < 0.0 || source->valuedouble > 3.0 ||
+            !cJSON_IsNumber(midi) || !isfinite(midi->valuedouble) ||
+            floor(midi->valuedouble) != midi->valuedouble ||
+            midi->valuedouble < 0.0 || midi->valuedouble > 127.0) {
+            return false;
+        }
+        s3_protocol_diagnostic_candidate_t *out =
+            &message->diagnostic_raw[index];
+        out->source = (uint8_t)source->valuedouble;
+        out->midi = (uint8_t)midi->valuedouble;
+        if (!json_number_range(cJSON_GetArrayItem(candidate, 2),
+                               0.0, 12000.0, &out->frequency_hz) ||
+            !json_number_range(cJSON_GetArrayItem(candidate, 3),
+                               0.0, 1.0, &out->confidence)) {
+            return false;
+        }
+    }
+    message->diagnostic_raw_count = (uint8_t)raw_count;
+    if (!parse_result_kind(root, "candidate_kind",
+                           &message->diagnostic_candidate_kind) ||
+        !parse_diagnostic_notes(root, "candidate",
+                                message->diagnostic_candidate_notes,
+                                &message->diagnostic_candidate_count) ||
+        !parse_result_kind(root, "final_kind",
+                           &message->diagnostic_final_kind) ||
+        !parse_diagnostic_notes(root, "final",
+                                 message->diagnostic_final_notes,
+                                 &message->diagnostic_final_count)) {
+        return false;
+    }
+    if (!diagnostic_kind_matches_count(
+            message->diagnostic_candidate_kind,
+            message->diagnostic_candidate_count) ||
+        !diagnostic_kind_matches_count(
+            message->diagnostic_final_kind,
+            message->diagnostic_final_count)) {
+        return false;
+    }
+    const cJSON *reject = cJSON_GetObjectItemCaseSensitive(root, "reject");
+    const cJSON *octave = cJSON_GetObjectItemCaseSensitive(root, "octave");
+    const cJSON *snr = cJSON_GetObjectItemCaseSensitive(root, "snr");
+    if (!cJSON_IsString(reject) || reject->valuestring == NULL ||
+        strlen(reject->valuestring) >= sizeof(message->diagnostic_reject) ||
+        !cJSON_IsNumber(octave) || !isfinite(octave->valuedouble) ||
+        floor(octave->valuedouble) != octave->valuedouble ||
+        octave->valuedouble < -24.0 || octave->valuedouble > 24.0 ||
+        !cJSON_IsArray(snr) || cJSON_GetArraySize(snr) != 3) {
+        return false;
+    }
+    memcpy(message->diagnostic_reject, reject->valuestring,
+           strlen(reject->valuestring) + 1U);
+    message->diagnostic_octave_shift = (int8_t)octave->valuedouble;
+    for (int index = 0; index < 3; ++index) {
+        if (!json_number_range(cJSON_GetArrayItem(snr, index),
+                               -120.0, 120.0,
+                               &message->diagnostic_snr_db[index])) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool parse_poly_fields(const cJSON *root,
                               s3_music_message_t *message)
 {
@@ -149,6 +308,7 @@ static bool parse_type(const char *type, s3_music_message_type_t *out_type)
         {"note_on", S3_MUSIC_MESSAGE_NOTE_ON},
         {"note_off", S3_MUSIC_MESSAGE_NOTE_OFF},
         {"poly", S3_MUSIC_MESSAGE_POLY},
+        {"diagnostic", S3_MUSIC_MESSAGE_DIAGNOSTIC},
     };
     for (size_t i = 0; i < sizeof(known_types) / sizeof(known_types[0]); ++i) {
         if (strcmp(type, known_types[i].name) == 0) {
@@ -241,6 +401,9 @@ s3_protocol_result_t s3_protocol_parse_music_line(
         break;
     case S3_MUSIC_MESSAGE_POLY:
         fields_valid = parse_poly_fields(root, &message);
+        break;
+    case S3_MUSIC_MESSAGE_DIAGNOSTIC:
+        fields_valid = parse_diagnostic_fields(root, &message);
         break;
     }
 

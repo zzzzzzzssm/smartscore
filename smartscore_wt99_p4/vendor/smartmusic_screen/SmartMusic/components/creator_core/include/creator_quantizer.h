@@ -20,6 +20,7 @@ typedef enum {
 
 typedef struct {
     creator_note_value_t value;
+    uint8_t dots;
     uint32_t ticks;
     uint32_t nominal_duration_us;
     uint8_t error_percent;

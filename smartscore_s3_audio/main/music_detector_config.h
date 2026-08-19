@@ -25,7 +25,7 @@ typedef enum {
 #define MUSIC_YIN_WINDOW_SIZE                   2048
 #define MUSIC_FFT_SIZE                          4096
 #define MUSIC_FFT_HOP_SIZE                      1024
-#define MUSIC_MIN_FREQUENCY_HZ_INTEGER          65
+#define MUSIC_MIN_FREQUENCY_HZ_INTEGER          55
 #define MUSIC_MIN_FREQUENCY_HZ                  ((float)MUSIC_MIN_FREQUENCY_HZ_INTEGER)
 #define MUSIC_MAX_FREQUENCY_HZ_INTEGER          2000
 #define MUSIC_MAX_FREQUENCY_HZ                  ((float)MUSIC_MAX_FREQUENCY_HZ_INTEGER)
@@ -100,9 +100,43 @@ typedef enum {
 #define MUSIC_HARMONIC_RATIO_TOLERANCE          0.03f
 #define MUSIC_HARMONIC_OWNER_MIN_RELATIVE       0.35f
 #define MUSIC_NOISE_GATE_MULTIPLIER             2.5f
+#define MUSIC_BAND_NOISE_GATE_MULTIPLIER        2.5f
 #define MUSIC_NOISE_FLOOR_RECOVERY_ALPHA        0.08f
 #define MUSIC_MIN_RMS                           0.0008f
-#define MUSIC_HIGH_PASS_HZ                      50.0f
+#define MUSIC_BAND_MIN_RMS                      0.00015f
+#define MUSIC_HIGH_PASS_HZ                      28.0f
+#define MUSIC_LOW_BAND_MIN_SNR_DB                6.0f
+#define MUSIC_LOW_BAND_TRIGGER_SNR_DB             8.0f
+#define MUSIC_LOW_SAMPLE_RATE_HZ                (MUSIC_SAMPLE_RATE_HZ / 2)
+#define MUSIC_LOW_YIN_WINDOW_SIZE               2048
+#define MUSIC_LOW_FFT_SIZE                      4096
+#define MUSIC_LOW_MIDI_MIN                        36
+#define MUSIC_LOW_MIDI_MAX                        67
+#define MUSIC_LOW_MIN_FREQUENCY_HZ              55.0f
+#define MUSIC_LOW_MAX_FREQUENCY_HZ             420.0f
+#define MUSIC_LOW_YIN_CONFIDENCE_THRESHOLD       0.88f
+#define MUSIC_LOW_YIN_CONTINUITY_CONFIDENCE      0.82f
+#define MUSIC_LOW_HARMONIC_RATIO_THRESHOLD        0.48f
+#define MUSIC_LOW_CONTINUITY_HARMONIC_RATIO       0.34f
+#define MUSIC_LOW_CONTINUITY_CENTS               55.0f
+#define MUSIC_LOW_ONSET_MIN_RMS_RISE          0.00012f
+#define MUSIC_LOW_OCTAVE_MIN_CONFIDENCE          0.82f
+#define MUSIC_LOW_OCTAVE_SCORE_MARGIN             1.08f
+#define MUSIC_LOW_TEMPLATE_NOISE_MULTIPLIER       2.2f
+#define MUSIC_LOW_TEMPLATE_MIN_PROMINENCE         1.08f
+#define MUSIC_LOW_TEMPLATE_MIN_RELATIVE           0.16f
+#define MUSIC_LOW_HARMONIC_ENVELOPE_FACTOR        1.35f
+#define MUSIC_LOW_TEMPLATE_CANDIDATE_COUNT          6
+#define MUSIC_LOW_DEBUG_CANDIDATE_COUNT              4
+#define MUSIC_LOW_TEMPLATE_HARMONICS                 5
+#define MUSIC_LOW_POLY_MIN_GAIN                   0.16f
+#define MUSIC_LOW_POLY_MIN_UNIQUE_SUPPORT         0.18f
+#define MUSIC_LOW_SINGLE_FFT_SKIP_CONFIDENCE      0.94f
+#define MUSIC_LOW_SINGLE_FFT_SKIP_HARMONIC_RATIO  0.86f
+#define MUSIC_LOW_SINGLE_CONFIRM_FRAMES              2
+#define MUSIC_LOW_OCTAVE_CONFIRM_FRAMES              3
+#define MUSIC_LOW_POLY_CONFIRM_FRAMES                3
+#define MUSIC_DIAGNOSTIC_STREAM_INTERVAL_MS        200U
 #define MUSIC_CALIBRATION_MS                    1000
 #define MUSIC_STABLE_HISTORY_SIZE               5
 #define MUSIC_STABLE_VOTE_COUNT                 3
@@ -157,6 +191,14 @@ typedef enum {
 #define MUSIC_UART_VELOCITY_FULL_SCALE_RMS      0.05f
 
 _Static_assert(MUSIC_FFT_SIZE >= MUSIC_YIN_WINDOW_SIZE, "FFT window must contain YIN window");
+_Static_assert((MUSIC_SAMPLE_RATE_HZ % 2) == 0,
+               "low-frequency decimation requires an even sample rate");
+_Static_assert(MUSIC_LOW_FFT_SIZE >= MUSIC_LOW_YIN_WINDOW_SIZE,
+               "low-frequency FFT window must contain its YIN window");
+_Static_assert(MUSIC_LOW_FFT_SIZE == MUSIC_FFT_SIZE,
+               "low-frequency analysis reuses the primary FFT workspace");
+_Static_assert(MUSIC_LOW_MIDI_MIN == 36,
+               "low-frequency analysis must include MIDI 36/C2");
 _Static_assert(MUSIC_REFERENCE_A4_HZ >= 400.0f && MUSIC_REFERENCE_A4_HZ <= 480.0f,
                "reference tuning must be a plausible A4 frequency");
 _Static_assert((MUSIC_FFT_SIZE % MUSIC_FFT_HOP_SIZE) == 0, "FFT hop must divide FFT size");

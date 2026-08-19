@@ -21,6 +21,7 @@
 #include "gui_guider.h"
 #include "input_source_manager.h"
 #include "music_display.h"
+#include "practice_advice_view.h"
 #include "score_data.h"
 #include "score_storage.h"
 #include "score_ui_flow.h"
@@ -163,6 +164,7 @@ static lv_obj_t *s_voice_popup_accent;
 static lv_obj_t *s_voice_popup_label;
 static lv_timer_t *s_voice_popup_timer;
 static lv_obj_t *s_result_back_button;
+static lv_obj_t *s_result_advice_button;
 static lv_obj_t *s_watched_volume_slider;
 static lv_timer_t *s_ui_watch_timer;
 static bool s_applying_volume_status;
@@ -181,7 +183,10 @@ static bool begin_practice_completion_internal(result_action_t action,
 static void notify_camera_practice_state(
     s3_camera_practice_state_t state)
 {
-    esp_err_t err = s3_camera_node_send_practice_state(state);
+    scoring_service_status_t practice = {0};
+    scoring_service_get_status(&practice);
+    esp_err_t err = s3_camera_node_send_practice_state(
+        state, practice.practice_session_id);
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         ESP_LOGW(TAG, "unable to synchronize camera practice state: %s",
                  esp_err_to_name(err));
@@ -913,6 +918,41 @@ static void ensure_result_back_button(void)
     bsp_display_unlock();
 }
 
+static void result_advice_event_cb(lv_event_t *event)
+{
+    (void)event;
+    practice_advice_view_open(guider_ui.end_screen);
+}
+
+static void ensure_result_advice_button(void)
+{
+    bsp_display_lock(portMAX_DELAY);
+    if (!guider_ui.end_screen || !lv_obj_is_valid(guider_ui.end_screen)) {
+        bsp_display_unlock();
+        return;
+    }
+    if (!s_result_advice_button ||
+        !lv_obj_is_valid(s_result_advice_button)) {
+        s_result_advice_button = lv_button_create(guider_ui.end_screen);
+        lv_obj_set_pos(s_result_advice_button, 824, 20);
+        lv_obj_set_size(s_result_advice_button, 176, 48);
+        lv_obj_set_style_radius(s_result_advice_button, 10, 0);
+        lv_obj_set_style_bg_color(s_result_advice_button,
+                                  lv_color_hex(0x0F766E), 0);
+        lv_obj_t *label = lv_label_create(s_result_advice_button);
+        lv_label_set_text(label, "练习建议");
+        const lv_font_t *font = app_font_chinese_22();
+        if (font) lv_obj_set_style_text_font(label, font, 0);
+        lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_center(label);
+        lv_obj_add_event_cb(s_result_advice_button,
+                            result_advice_event_cb,
+                            LV_EVENT_CLICKED, NULL);
+    }
+    lv_obj_clear_flag(s_result_advice_button, LV_OBJ_FLAG_HIDDEN);
+    bsp_display_unlock();
+}
+
 typedef struct {
     char *json;
     size_t length;
@@ -977,6 +1017,7 @@ static void result_task(void *argument)
         if (err == ESP_OK && result.json != NULL) {
             music_display_show_score(result.json);
             ensure_result_back_button();
+            ensure_result_advice_button();
             mark_preparation_ready_after_result();
         } else {
             ESP_LOGE(TAG, "score result unavailable: %s",
@@ -2624,6 +2665,9 @@ void screen_adapter_handle_usb_midi_event(const usb_midi_event_t *event)
         .channel = event->channel,
         .note = event->midi,
         .velocity = event->velocity,
+        .controller = event->controller,
+        .value = event->value,
+        .pitch_bend = event->pitch_bend,
     };
     switch (event->type) {
     case USB_MIDI_EVENT_CONNECTED: {
@@ -2645,6 +2689,12 @@ void screen_adapter_handle_usb_midi_event(const usb_midi_event_t *event)
         break;
     case USB_MIDI_EVENT_NOTE_OFF:
         legacy.type = USB_MIDI_INPUT_NOTE_OFF;
+        break;
+    case USB_MIDI_EVENT_CONTROL_CHANGE:
+        legacy.type = USB_MIDI_INPUT_CONTROL_CHANGE;
+        break;
+    case USB_MIDI_EVENT_PITCH_BEND:
+        legacy.type = USB_MIDI_INPUT_PITCH_BEND;
         break;
     default:
         return;

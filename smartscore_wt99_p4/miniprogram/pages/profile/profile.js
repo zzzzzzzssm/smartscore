@@ -59,5 +59,23 @@ Page({
       confirmText: '知道了',
       showCancel: false
     });
+  },
+
+  clearCache() {
+    wx.showModal({
+      title: '清理连接缓存',
+      content: '将清除设备地址、蓝牙设备和连接状态，需要重新连接设备。\n\n本地乐谱、当前选谱、练习记录和练习建议都会保留。',
+      confirmText: '确认清理',
+      confirmColor: '#dc2626',
+      success: (res) => {
+        if (!res.confirm) return;
+        ['apiBaseUrl', 'bluetoothDevice', 'deviceState'].forEach((key) => {
+          wx.removeStorageSync(key);
+        });
+        const app = getApp();
+        if (app && app.globalData) app.globalData.apiBaseUrl = '';
+        wx.showToast({ title: '连接缓存已清理', icon: 'success' });
+      }
+    });
   }
 });

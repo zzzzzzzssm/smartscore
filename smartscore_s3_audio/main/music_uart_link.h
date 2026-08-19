@@ -13,3 +13,4 @@ void music_uart_link_set_ready(bool ready);
 /* Both functions are non-blocking. Queue overflow only increments tx_drop. */
 void music_uart_link_submit_result(const music_result_t *result);
 void music_uart_link_submit_pitch(const music_result_t *result);
+void music_uart_link_submit_diagnostic(const music_diagnostic_t *diagnostic);

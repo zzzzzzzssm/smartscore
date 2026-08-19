@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include "audio_preprocess.h"
 #include "chord_detector.h"
+#include "low_frequency_analyzer.h"
 #include "music_detector.h"
 #include "music_detector_config.h"
 #include "yin_detector.h"
@@ -32,7 +33,9 @@ bool music_classifier_update(music_classifier_t *classifier,
                              const audio_frame_metrics_t *mic2_metrics,
                              float mic1_gate, float mic2_gate, int selected_mic,
                              const yin_result_t *yin, float harmonic_ratio,
-                             const chord_result_t *chord, bool demo_profile,
+                             const chord_result_t *chord,
+                             const low_frequency_result_t *low_frequency,
+                             bool demo_profile,
                              int poly_stable_votes,
                              uint32_t timestamp_ms,
                              music_result_t *result, const char **unknown_reason);

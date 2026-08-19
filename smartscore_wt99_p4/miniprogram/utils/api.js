@@ -133,6 +133,94 @@ function readFileArrayBuffer(filePath) {
   });
 }
 
+function readFileSlice(filePath, position, length) {
+  return new Promise((resolve, reject) => {
+    wx.getFileSystemManager().readFile({
+      filePath,
+      position,
+      length,
+      success: (res) => resolve(res.data),
+      fail: (err) => reject(new Error(errorMessage(err, '读取音乐分块失败')))
+    });
+  });
+}
+
+function fileStat(filePath) {
+  return new Promise((resolve, reject) => {
+    wx.getFileSystemManager().stat({
+      path: filePath,
+      success: (res) => resolve(res.stats),
+      fail: (err) => reject(new Error(errorMessage(err, '读取文件信息失败')))
+    });
+  });
+}
+
+function uploadAudioWav(filePath, name, onProgress) {
+  const baseUrl = getBaseUrl();
+  if (!baseUrl) return Promise.reject(new Error('尚未配置设备或后端地址'));
+  const chunkSize = 256 * 1024;
+  return fileStat(filePath).then((stats) => {
+    const total = Number(stats.size || 0);
+    if (!total) throw new Error('转码后的 WAV 文件为空');
+    let offset = 0;
+    const uploadNext = () => {
+      const length = Math.min(chunkSize, total - offset);
+      return readFileSlice(filePath, offset, length).then((data) => new Promise((resolve, reject) => {
+        const final = offset + length >= total;
+        wx.request({
+          url: `${baseUrl}/api/audio/upload?name=${encodeURIComponent(name)}&offset=${offset}&final=${final ? 1 : 0}`,
+          method: 'POST',
+          data,
+          header: { 'content-type': 'application/octet-stream' },
+          timeout: DEFAULT_TIMEOUT * 3,
+          success(res) {
+            if (res.statusCode >= 200 && res.statusCode < 300) {
+              resolve(res.data);
+            } else {
+              reject(buildRequestError(res.data, res.statusCode));
+            }
+          },
+          fail(err) {
+            reject(new Error(errorMessage(err, '音乐上传失败')));
+          }
+        });
+      })).then((result) => {
+        offset += length;
+        if (typeof onProgress === 'function') {
+          onProgress(Math.round(offset * 100 / total));
+        }
+        return offset < total ? uploadNext() : result;
+      });
+    };
+    return uploadNext();
+  });
+}
+
+function getPracticePhotos(sessionId, page = 1) {
+  return request(`/api/practice/photos?session_id=${encodeURIComponent(sessionId)}&page=${Math.max(1, Number(page) || 1)}&page_size=6`);
+}
+
+function downloadPracticePhoto(sessionId, index) {
+  const baseUrl = getBaseUrl();
+  if (!baseUrl) return Promise.reject(new Error('尚未配置设备或后端地址'));
+  return new Promise((resolve, reject) => {
+    wx.downloadFile({
+      url: `${baseUrl}/api/practice/photo?session_id=${encodeURIComponent(sessionId)}&index=${Number(index)}`,
+      timeout: DEFAULT_TIMEOUT * 3,
+      success(res) {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          resolve(res.tempFilePath);
+        } else {
+          reject(new Error(`照片读取失败：${res.statusCode}`));
+        }
+      },
+      fail(err) {
+        reject(new Error(errorMessage(err, '照片读取失败')));
+      }
+    });
+  });
+}
+
 function uploadRawFile(path, filePath, mimeType = 'application/octet-stream', timeout = DEFAULT_TIMEOUT * 2) {
   const baseUrl = getBaseUrl();
   if (!baseUrl) {
@@ -221,6 +309,9 @@ module.exports = {
   pauseMetronome: () => request('/api/metronome/pause', { method: 'POST' }),
   stopMetronome: () => request('/api/metronome/stop', { method: 'POST' }),
   getAudioFiles,
+  uploadAudioWav,
+  getPracticePhotos,
+  downloadPracticePhoto,
   getSdScores,
   renameSdScore: (filename, title) => request('/api/scores/sd/rename', {
     method: 'POST',
@@ -265,6 +356,7 @@ module.exports = {
   forceStartPractice: () => request('/api/force_start', { method: 'POST' }),
   stopPractice: () => request('/api/stop', { method: 'POST' }),
   getResult: () => request('/api/result'),
+  getPracticeAdvice: () => request('/api/practice/advice'),
   clearAll: () => request('/api/clear', { method: 'POST' }),
   requestAiScore: () => request('/api/ai/score', {
     method: 'POST',

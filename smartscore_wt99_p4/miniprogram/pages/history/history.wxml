@@ -8,6 +8,7 @@
         <view class="record-main" bindtap="viewDetail" data-id="{{item.id}}">
           <view class="record-title">{{item.scoreTitle}}</view>
           <view class="muted">{{item.practicedAt}}</view>
+          <view class="advice-badge {{item.adviceStatusClass}}">{{item.adviceStatusLabel}}</view>
         </view>
         <view class="score-block">
           <view class="score">{{item.totalScore}}</view>
@@ -42,6 +43,40 @@
         <view>音准 {{selectedRecord.pitchScore}}</view>
         <view>节奏 {{selectedRecord.rhythmScore}}</view>
         <view>完整度 {{selectedRecord.completeScore}}</view>
+      </view>
+
+      <view class="detail-title">练习建议</view>
+      <view class="advice-detail {{selectedRecord.adviceStatusClass}}">
+        <view wx:if="{{selectedRecord.adviceStatus == 'ready'}}" class="advice-text">{{selectedRecord.adviceText}}</view>
+        <view wx:else>{{selectedRecord.adviceMessage || '这次练习没有保存练习建议。'}}</view>
+        <button class="secondary-btn advice-open-btn"
+                bindtap="viewAdvice" data-id="{{selectedRecord.id}}">
+          {{selectedRecord.adviceStatus == 'ready' ? '单独查看建议' : '查看未生成原因'}}
+        </button>
+      </view>
+
+      <view class="detail-title">练习照片</view>
+      <view class="photo-panel">
+        <view class="photo-status">
+          <text>{{photoMessage}}</text>
+          <text wx:if="{{photoTotal}}">共 {{photoTotal}} 张</text>
+        </view>
+        <view class="photo-grid" wx:if="{{photos.length}}">
+          <view class="photo-cell" wx:for="{{photos}}" wx:key="index"
+                bindtap="previewPhoto" data-path="{{item.path}}">
+            <image wx:if="{{item.path}}" src="{{item.path}}" mode="aspectFill"></image>
+            <view wx:else class="photo-error">{{item.error || '读取失败'}}</view>
+            <view class="photo-index">第 {{item.index}} 张</view>
+          </view>
+        </view>
+        <view class="photo-loading" wx:if="{{photosLoading}}">正在从摄像头板读取，请稍候…</view>
+        <view class="photo-pagination" wx:if="{{photoTotalPages > 1}}">
+          <button class="ghost-btn mini-btn" bindtap="previousPhotoPage"
+                  disabled="{{photosLoading || photoPage <= 1}}">上一页</button>
+          <view>{{photoPage}} / {{photoTotalPages}}</view>
+          <button class="ghost-btn mini-btn" bindtap="nextPhotoPage"
+                  disabled="{{photosLoading || photoPage >= photoTotalPages}}">下一页</button>
+        </view>
       </view>
 
       <view class="detail-title">逐音符数据</view>

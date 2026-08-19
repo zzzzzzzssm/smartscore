@@ -44,8 +44,9 @@
       </button>
       <button class="secondary-btn" bindtap="stopPractice"
               disabled="{{!isRecording}}">结束练习</button>
-      <button class="secondary-btn" bindtap="requestAiScore"
-              disabled="{{isAdviceLoading}}">{{isAdviceLoading ? 'AI 分析中' : 'AI 练习建议'}}</button>
+      <button class="secondary-btn advice-btn advice-{{adviceState}}"
+              bindtap="viewPracticeAdvice"
+              loading="{{isAdviceLoading}}">{{adviceButtonText}}</button>
       <button class="ghost-btn" bindtap="resetPractice"
               disabled="{{isRecording || isStarting || creatorActive || !preparationValid}}">重新练习</button>
     </view>

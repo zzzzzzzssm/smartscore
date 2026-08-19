@@ -19,4 +19,5 @@ idf_component_register(
         display_board_adapter
         esp_timer
         json
+        creator_core
 )

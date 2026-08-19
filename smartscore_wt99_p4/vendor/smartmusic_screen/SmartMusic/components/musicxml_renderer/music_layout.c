@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX_NOTES_PER_SYSTEM 192
+#define MAX_NOTES_PER_SYSTEM 512
 
 typedef struct {
     const music_event_t *event;
@@ -12,12 +12,37 @@ typedef struct {
     music_sp_t x;
     music_sp_t y;
     music_sp_t stem_x;
+    music_sp_t stem_start_y;
     music_sp_t stem_end_y;
+    music_sp_t chord_left;
+    music_sp_t chord_right;
+    music_sp_t chord_top;
+    music_sp_t chord_bottom;
     music_stem_direction_t stem;
     uint8_t staff;
+    uint8_t system_index;
+    bool valid;
     bool has_stem;
     bool beamed;
 } note_layout_t;
+
+typedef struct {
+    music_sp_t head_x;
+    music_sp_t head_left;
+    music_sp_t head_right;
+    music_sp_t chord_left;
+    music_sp_t chord_right;
+    music_sp_t chord_top;
+    music_sp_t chord_bottom;
+    music_sp_t accidental_x;
+    music_sp_t dot_x;
+    music_sp_t dot_y;
+    music_sp_t stem_x;
+    music_sp_t stem_start_y;
+    music_sp_t stem_end_y;
+    music_stem_direction_t stem;
+    bool stem_owner;
+} chord_note_geometry_t;
 
 static bool set_error(char *error, size_t size, const char *message)
 {
@@ -380,6 +405,201 @@ static music_stem_direction_t resolved_stem_direction(
     return staff_position < 4 ? MUSIC_STEM_UP : MUSIC_STEM_DOWN;
 }
 
+static bool note_matches_chord(const music_event_t *candidate,
+                               const music_event_t *reference)
+{
+    if (candidate->kind != MUSIC_EVENT_NOTE ||
+        reference->kind != MUSIC_EVENT_NOTE ||
+        candidate->onset_divisions != reference->onset_divisions)
+        return false;
+    const music_note_t *a = &candidate->data.note;
+    const music_note_t *b = &reference->data.note;
+    return (a->staff ? a->staff : 1) == (b->staff ? b->staff : 1) &&
+           (a->voice ? a->voice : 1) == (b->voice ? b->voice : 1);
+}
+
+static music_stem_direction_t resolved_chord_stem_direction(
+    const music_score_t *score, const music_measure_t *measure,
+    const music_event_t *event, const music_clef_t *clef)
+{
+    int min_position = 127;
+    int max_position = -127;
+    music_stem_direction_t explicit_stem = MUSIC_STEM_AUTO;
+    for (int i = 0; i < measure->event_count; ++i) {
+        const music_event_t *candidate =
+            &score->events[measure->event_start + i];
+        if (!note_matches_chord(candidate, event)) continue;
+        int position = music_pitch_staff_position(&candidate->data.note.pitch,
+                                                  clef);
+        if (position < min_position) min_position = position;
+        if (position > max_position) max_position = position;
+        if (explicit_stem == MUSIC_STEM_AUTO &&
+            candidate->data.note.stem != MUSIC_STEM_AUTO)
+            explicit_stem = candidate->data.note.stem;
+    }
+    if (explicit_stem != MUSIC_STEM_AUTO) return explicit_stem;
+    int middle = min_position <= max_position ?
+                 (min_position + max_position) / 2 : 4;
+    return resolved_stem_direction(score, measure, event, middle);
+}
+
+typedef struct {
+    int position;
+    int order;
+} chord_position_t;
+
+static int compare_chord_position(const void *left, const void *right)
+{
+    const chord_position_t *a = left;
+    const chord_position_t *b = right;
+    if (a->position != b->position)
+        return (a->position > b->position) - (a->position < b->position);
+    return (a->order > b->order) - (a->order < b->order);
+}
+
+static music_sp_t chord_notehead_offset(const music_score_t *score,
+                                        const music_measure_t *measure,
+                                        const music_event_t *event,
+                                        const music_clef_t *clef,
+                                        music_stem_direction_t stem)
+{
+    chord_position_t positions[32];
+    int count = 0;
+    int target_order = 0;
+    for (int i = 0; i < measure->event_count && count < 32; ++i) {
+        const music_event_t *candidate =
+            &score->events[measure->event_start + i];
+        if (!note_matches_chord(candidate, event)) continue;
+        positions[count] = (chord_position_t){
+            .position = music_pitch_staff_position(&candidate->data.note.pitch,
+                                                   clef),
+            .order = i,
+        };
+        if (candidate == event) target_order = i;
+        count++;
+    }
+    if (count < 2) return 0.0f;
+    qsort(positions, (size_t)count, sizeof(positions[0]),
+          compare_chord_position);
+
+    int rank = 0;
+    bool collision = false;
+    for (int i = 0; i < count; ++i) {
+        if (positions[i].order == target_order) {
+            rank = i;
+            if ((i > 0 && positions[i].position - positions[i - 1].position <= 1) ||
+                (i + 1 < count && positions[i + 1].position -
+                                  positions[i].position <= 1))
+                collision = true;
+            break;
+        }
+    }
+    if (!collision) return 0.0f;
+    bool displace = stem == MUSIC_STEM_UP ? (rank & 1) != 0 :
+                    ((count - 1 - rank) & 1) != 0;
+    return displace ? (stem == MUSIC_STEM_UP ? 0.62f : -0.62f) : 0.0f;
+}
+
+static void chord_note_geometry(const music_score_t *score,
+                                const music_measure_t *measure,
+                                const music_event_t *event, int event_index,
+                                const music_clef_t *clef, music_sp_t base_x,
+                                music_sp_t staff_top,
+                                music_stem_direction_t stem,
+                                chord_note_geometry_t *geometry)
+{
+    music_sp_t chord_left = base_x;
+    music_sp_t chord_right = base_x;
+    music_sp_t chord_top = 10000.0f;
+    music_sp_t chord_bottom = -10000.0f;
+    int position = music_pitch_staff_position(&event->data.note.pitch, clef);
+    music_sp_t y = staff_top + 4.0f - position * 0.5f;
+    music_sp_t offset = chord_notehead_offset(score, measure, event, clef, stem);
+    music_sp_t head_x = base_x + offset;
+    music_sp_t head_width = leland_glyph_width(
+        smufl_notehead_glyph(event->data.note.type));
+    if (head_width <= 0.0f) head_width = 1.3f;
+
+    int accidental_column = 0;
+    int event_offset = event_index - measure->event_start;
+    for (int i = 0; i < measure->event_count; ++i) {
+        int candidate_index = measure->event_start + i;
+        const music_event_t *candidate = &score->events[candidate_index];
+        if (!note_matches_chord(candidate, event)) continue;
+        int candidate_position = music_pitch_staff_position(
+            &candidate->data.note.pitch, clef);
+        music_sp_t candidate_y = staff_top + 4.0f - candidate_position * 0.5f;
+        music_sp_t candidate_offset = chord_notehead_offset(
+            score, measure, candidate, clef, stem);
+        music_sp_t candidate_x = base_x + candidate_offset;
+        music_sp_t width = leland_glyph_width(
+            smufl_notehead_glyph(candidate->data.note.type));
+        if (width <= 0.0f) width = 1.3f;
+        music_sp_t left = candidate_x - width * 0.5f;
+        music_sp_t right = candidate_x + width * 0.5f;
+        if (left < chord_left) chord_left = left;
+        if (right > chord_right) chord_right = right;
+        if (candidate_y < chord_top) chord_top = candidate_y;
+        if (candidate_y > chord_bottom) chord_bottom = candidate_y;
+
+        if (i < event_offset && event->data.note.accidental != MUSIC_ACCIDENTAL_NONE &&
+            candidate->data.note.accidental != MUSIC_ACCIDENTAL_NONE) {
+            int distance = candidate_position - position;
+            if (distance < 0) distance = -distance;
+            if (distance <= 4) accidental_column++;
+        }
+    }
+
+    music_sp_t dot_y = (position & 1) ? y : y - 0.5f;
+    for (int i = 0; i < event_offset; ++i) {
+        const music_event_t *candidate = &score->events[measure->event_start + i];
+        if (!note_matches_chord(candidate, event) || !candidate->data.note.dots)
+            continue;
+        int candidate_position = music_pitch_staff_position(
+            &candidate->data.note.pitch, clef);
+        music_sp_t candidate_y = staff_top + 4.0f - candidate_position * 0.5f;
+        music_sp_t candidate_dot_y = (candidate_position & 1) ?
+                                     candidate_y : candidate_y - 0.5f;
+        music_sp_t delta = dot_y - candidate_dot_y;
+        if (delta < 0.0f) delta = -delta;
+        if (delta < 0.35f) dot_y += (position >= candidate_position) ? -0.5f : 0.5f;
+    }
+
+    bool stem_owner = true;
+    for (int i = 0; i < measure->event_count; ++i) {
+        int candidate_index = measure->event_start + i;
+        const music_event_t *candidate = &score->events[candidate_index];
+        if (!note_matches_chord(candidate, event) || candidate_index == event_index)
+            continue;
+        int candidate_position = music_pitch_staff_position(
+            &candidate->data.note.pitch, clef);
+        music_sp_t candidate_y = staff_top + 4.0f - candidate_position * 0.5f;
+        bool better = stem == MUSIC_STEM_UP ? candidate_y > y : candidate_y < y;
+        if (better || (candidate_y == y && candidate_index < event_index)) {
+            stem_owner = false;
+            break;
+        }
+    }
+
+    *geometry = (chord_note_geometry_t){
+        .head_x = head_x,
+        .head_left = head_x - head_width * 0.5f,
+        .head_right = head_x + head_width * 0.5f,
+        .chord_left = chord_left,
+        .chord_right = chord_right,
+        .chord_top = chord_top,
+        .chord_bottom = chord_bottom,
+        .accidental_x = chord_left - 0.55f - accidental_column * 0.82f,
+        .dot_x = chord_right + 0.42f,
+        .dot_y = dot_y,
+        .stem_x = stem == MUSIC_STEM_UP ? chord_right - 0.08f : chord_left + 0.08f,
+        .stem_start_y = stem == MUSIC_STEM_UP ? chord_bottom : chord_top,
+        .stem_end_y = stem == MUSIC_STEM_UP ? chord_top - 3.5f : chord_bottom + 3.5f,
+        .stem = stem,
+        .stem_owner = stem_owner,
+    };
+}
+
 static music_sp_t polyphonic_notehead_offset(
     const music_score_t *score, const music_measure_t *measure,
     const music_event_t *event, const music_clef_t *clef,
@@ -561,41 +781,48 @@ static bool render_note_symbol(music_scene_t *scene, const music_event_t *event,
                                music_sp_t x, music_sp_t staff_top,
                                const music_layout_config_t *config,
                                bool draw_ledger,
-                               music_stem_direction_t stem,
+                               const chord_note_geometry_t *geometry,
                                note_layout_t *layout)
 {
     const music_note_t *note = &event->data.note;
     int position = music_pitch_staff_position(&note->pitch, clef);
     music_sp_t y = staff_top + 4.0f - position * 0.5f;
+    music_sp_t head_x = geometry->head_x;
 
     if (draw_ledger &&
-        !draw_ledger_lines(scene, position, x, staff_top, config, event_index))
+        !draw_ledger_lines(scene, position, head_x, staff_top, config, event_index))
         return false;
     smufl_glyph_id_t accidental = smufl_accidental_glyph(note->accidental);
     if (accidental < SMUFL_GLYPH_COUNT &&
-        !add_glyph(scene, accidental, x - 1.25f, y, 1.0f, event_index)) return false;
+        !add_glyph(scene, accidental, geometry->accidental_x, y, 1.0f,
+                   event_index)) return false;
     if (!add_centered_glyph(scene, smufl_notehead_glyph(note->type),
-                            x, y, 1.0f, event_index)) return false;
+                            head_x, y, 1.0f, event_index)) return false;
 
     for (int dot = 0; dot < note->dots; ++dot) {
-        music_sp_t dot_y = (position & 1) ? y : y - 0.5f;
         if (!add_glyph(scene, SMUFL_GLYPH_AUGMENTATION_DOT,
-                       x + 1.15f + dot * 0.55f, dot_y, 1.0f,
+                       geometry->dot_x + dot * 0.55f, geometry->dot_y, 1.0f,
                        event_index)) return false;
     }
-    if (!render_articulations(scene, note, x, y, stem, event_index)) return false;
+    if (!render_articulations(scene, note, head_x, y, geometry->stem,
+                              event_index)) return false;
 
     *layout = (note_layout_t){
         .event = event,
         .event_index = event_index,
-        .x = x,
+        .x = head_x,
         .y = y,
-        /* Centre the stem on the notehead edge with a slight overlap. */
-        .stem_x = x + (stem == MUSIC_STEM_UP ? 0.59f : -0.59f),
-        .stem_end_y = y + (stem == MUSIC_STEM_UP ? -3.5f : 3.5f),
-        .stem = stem,
+        .stem_x = geometry->stem_x,
+        .stem_start_y = geometry->stem_start_y,
+        .stem_end_y = geometry->stem_end_y,
+        .chord_left = geometry->chord_left,
+        .chord_right = geometry->chord_right,
+        .chord_top = geometry->chord_top,
+        .chord_bottom = geometry->chord_bottom,
+        .stem = geometry->stem,
         .staff = note->staff ? note->staff : 1,
-        .has_stem = stem != MUSIC_STEM_NONE && note->type != MUSIC_DURATION_WHOLE && !note->chord,
+        .has_stem = geometry->stem_owner && geometry->stem != MUSIC_STEM_NONE &&
+                    note->type != MUSIC_DURATION_WHOLE,
     };
     return true;
 }
@@ -604,7 +831,7 @@ static bool render_unbeamed_stem(music_scene_t *scene, note_layout_t *layout,
                                  const music_layout_config_t *config)
 {
     if (!layout->has_stem) return true;
-    if (!add_line(scene, layout->stem_x, layout->y,
+    if (!add_line(scene, layout->stem_x, layout->stem_start_y,
                   layout->stem_x, layout->stem_end_y,
                   config->stem_thickness, layout->event_index)) return false;
     smufl_glyph_id_t flag = smufl_flag_glyph(layout->event->data.note.type,
@@ -616,43 +843,94 @@ static bool render_unbeamed_stem(music_scene_t *scene, note_layout_t *layout,
     return true;
 }
 
+static const music_note_t *chord_rhythm_note(note_layout_t *notes, int count,
+                                             int index)
+{
+    const music_event_t *event = notes[index].event;
+    const music_note_t *fallback = &event->data.note;
+    for (int i = 0; i < count; ++i) {
+        const music_event_t *candidate = notes[i].event;
+        if (candidate->measure_index != event->measure_index ||
+            candidate->onset_divisions != event->onset_divisions ||
+            notes[i].staff != notes[index].staff ||
+            (candidate->data.note.voice ? candidate->data.note.voice : 1) !=
+                (fallback->voice ? fallback->voice : 1))
+            continue;
+        if (!candidate->data.note.chord) return &candidate->data.note;
+    }
+    return fallback;
+}
+
+static int chord_stem_owner_index(note_layout_t *notes, int count, int index)
+{
+    const music_event_t *event = notes[index].event;
+    uint8_t voice = event->data.note.voice ? event->data.note.voice : 1;
+    for (int i = 0; i < count; ++i) {
+        const music_event_t *candidate = notes[i].event;
+        if (notes[i].has_stem &&
+            candidate->measure_index == event->measure_index &&
+            candidate->onset_divisions == event->onset_divisions &&
+            notes[i].staff == notes[index].staff &&
+            (candidate->data.note.voice ? candidate->data.note.voice : 1) ==
+                voice)
+            return i;
+    }
+    return index;
+}
+
 static bool render_beams(music_scene_t *scene, note_layout_t *notes, int count,
                          const music_layout_config_t *config)
 {
     for (int i = 0; i < count; ++i) {
         if (notes[i].beamed || !notes[i].has_stem) continue;
-        const music_note_t *first_note = &notes[i].event->data.note;
+        const music_note_t *first_note = chord_rhythm_note(notes, count, i);
         if (first_note->beams[0] != MUSIC_BEAM_BEGIN) continue;
 
         int end = -1;
         for (int j = i + 1; j < count; ++j) {
-            const music_note_t *candidate = &notes[j].event->data.note;
+            const music_note_t *candidate = chord_rhythm_note(notes, count, j);
             if (notes[j].staff != notes[i].staff || candidate->voice != first_note->voice) continue;
-            if (candidate->beams[0] == MUSIC_BEAM_END) { end = j; break; }
+            if (candidate->beams[0] == MUSIC_BEAM_END) {
+                end = chord_stem_owner_index(notes, count, j);
+                break;
+            }
         }
         if (end < 0) continue;
 
         music_stem_direction_t stem = notes[i].stem;
         for (int j = i; j <= end; ++j) {
             if (!notes[j].has_stem || notes[j].staff != notes[i].staff ||
-                notes[j].event->data.note.voice != first_note->voice) continue;
+                chord_rhythm_note(notes, count, j)->voice != first_note->voice)
+                continue;
             notes[j].stem = stem;
-            notes[j].stem_x = notes[j].x +
-                              (stem == MUSIC_STEM_UP ? 0.59f : -0.59f);
+            notes[j].stem_x = stem == MUSIC_STEM_UP ?
+                              notes[j].chord_right - 0.08f :
+                              notes[j].chord_left + 0.08f;
+            notes[j].stem_start_y = stem == MUSIC_STEM_UP ?
+                                    notes[j].chord_bottom :
+                                    notes[j].chord_top;
+            notes[j].stem_end_y = stem == MUSIC_STEM_UP ?
+                                  notes[j].chord_top - 3.5f :
+                                  notes[j].chord_bottom + 3.5f;
         }
         music_sp_t dx = notes[end].stem_x - notes[i].stem_x;
-        music_sp_t raw_slope = dx != 0.0f ? (notes[end].y - notes[i].y) / dx : 0.0f;
+        music_sp_t raw_slope = dx != 0.0f ?
+            (notes[end].stem_end_y - notes[i].stem_end_y) / dx : 0.0f;
         if (raw_slope > 0.25f) raw_slope = 0.25f;
         if (raw_slope < -0.25f) raw_slope = -0.25f;
 
-        music_sp_t beam_y = notes[i].y + (stem == MUSIC_STEM_UP ? -3.5f : 3.5f);
+        music_sp_t beam_y = notes[i].stem_end_y;
         for (int j = i; j <= end; ++j) {
             if (!notes[j].has_stem || notes[j].staff != notes[i].staff ||
                 notes[j].event->data.note.voice != first_note->voice) continue;
             music_sp_t target = beam_y + raw_slope * (notes[j].stem_x - notes[i].stem_x);
+            if (stem == MUSIC_STEM_UP && target > notes[j].stem_end_y)
+                target = notes[j].stem_end_y;
+            if (stem == MUSIC_STEM_DOWN && target < notes[j].stem_end_y)
+                target = notes[j].stem_end_y;
             notes[j].stem_end_y = target;
             notes[j].beamed = true;
-            if (!add_line(scene, notes[j].stem_x, notes[j].y,
+            if (!add_line(scene, notes[j].stem_x, notes[j].stem_start_y,
                           notes[j].stem_x, target, config->stem_thickness,
                           notes[j].event_index)) return false;
         }
@@ -665,8 +943,9 @@ static bool render_beams(music_scene_t *scene, note_layout_t *notes, int count,
             bool level_present = false;
             for (int j = i; j <= end; ++j) {
                 if (notes[j].staff == notes[i].staff &&
-                    notes[j].event->data.note.voice == first_note->voice &&
-                    notes[j].event->data.note.beams[level] != MUSIC_BEAM_NONE) {
+                    chord_rhythm_note(notes, count, j)->voice == first_note->voice &&
+                    chord_rhythm_note(notes, count, j)->beams[level] !=
+                        MUSIC_BEAM_NONE) {
                     level_present = true;
                     break;
                 }
@@ -686,43 +965,118 @@ static bool render_beams(music_scene_t *scene, note_layout_t *notes, int count,
     return true;
 }
 
-static bool render_connections(music_scene_t *scene, note_layout_t *notes, int count)
+static bool add_curved_connection_segment(music_scene_t *scene,
+                                          music_sp_t x1, music_sp_t y1,
+                                          music_sp_t x2, music_sp_t y2,
+                                          bool above, int event_index)
 {
-    for (int i = 0; i < count; ++i) {
-        const music_note_t *start = &notes[i].event->data.note;
-        if (!(start->tie_flags & MUSIC_TIE_START) && start->slur_start == 0) continue;
-        for (int j = i + 1; j < count; ++j) {
-            const music_note_t *end = &notes[j].event->data.note;
-            if (notes[j].staff != notes[i].staff || end->voice != start->voice)
+    if (x2 <= x1) return true;
+    music_sp_t arch = above ? -1.25f : 1.25f;
+    return add_bezier(scene, x1, y1,
+                      x1 + (x2 - x1) * 0.33f, y1 + arch,
+                      x1 + (x2 - x1) * 0.67f, y2 + arch,
+                      x2, y2, 0.10f, event_index);
+}
+
+static bool render_connection(music_scene_t *scene,
+                              const music_layout_config_t *config,
+                              const note_layout_t *start_layout,
+                              const note_layout_t *end_layout,
+                              bool gliss)
+{
+    bool above = start_layout->stem == MUSIC_STEM_DOWN;
+    music_sp_t side = above ? -0.75f : 0.75f;
+    music_sp_t x1 = start_layout->x + 0.55f;
+    music_sp_t x2 = end_layout->x - 0.55f;
+    music_sp_t y1 = start_layout->y + side;
+    music_sp_t y2 = end_layout->y + side;
+    int source = start_layout->event_index;
+    if (start_layout->system_index == end_layout->system_index) {
+        return gliss ? add_line(scene, x1, start_layout->y, x2,
+                                end_layout->y, 0.11f, source) :
+                       add_curved_connection_segment(scene, x1, y1, x2, y2,
+                                                     above, source);
+    }
+
+    music_sp_t right = config->page_width - config->right_margin - 0.25f;
+    music_sp_t left = config->left_margin + 4.75f;
+    if (gliss) {
+        if (!add_line(scene, x1, start_layout->y, right,
+                      start_layout->y, 0.11f, source)) return false;
+    } else if (!add_curved_connection_segment(scene, x1, y1, right, y1,
+                                               above, source)) return false;
+
+    for (int system = start_layout->system_index + 1;
+         system < end_layout->system_index; ++system) {
+        music_sp_t middle_y = scene->systems[system].top + 2.0f +
+            (start_layout->staff > 1 ? 4.0f + config->staff_gap : 0.0f);
+        if (gliss) {
+            if (!add_line(scene, left, middle_y, right, middle_y,
+                          0.11f, source)) return false;
+        } else if (!add_curved_connection_segment(scene, left, middle_y + side,
+                                                   right, middle_y + side,
+                                                   above, source)) return false;
+    }
+
+    music_sp_t incoming_left = x2 - 3.0f;
+    if (incoming_left < left) incoming_left = left;
+    if (gliss)
+        return add_line(scene, incoming_left, end_layout->y, x2,
+                        end_layout->y, 0.11f, source);
+    return add_curved_connection_segment(scene, incoming_left, y2, x2, y2,
+                                         above, source);
+}
+
+static bool render_connections(music_scene_t *scene,
+                               const music_layout_config_t *config,
+                               const music_score_t *score,
+                               const note_layout_t *layouts)
+{
+    for (int i = 0; i < score->event_count; ++i) {
+        if (!layouts[i].valid) continue;
+        const music_note_t *start = &score->events[i].data.note;
+        if (!(start->tie_flags & MUSIC_TIE_START) && start->slur_start == 0 &&
+            start->gliss_start == 0) continue;
+        bool tie_done = !(start->tie_flags & MUSIC_TIE_START);
+        bool slur_done = start->slur_start == 0;
+        bool gliss_done = start->gliss_start == 0;
+        for (int j = i + 1; j < score->event_count; ++j) {
+            if (!layouts[j].valid) continue;
+            const music_note_t *end = &score->events[j].data.note;
+            if (layouts[j].staff != layouts[i].staff ||
+                end->voice != start->voice)
                 continue;
-            bool tie = (start->tie_flags & MUSIC_TIE_START) &&
+            bool tie = !tie_done &&
                        (end->tie_flags & MUSIC_TIE_STOP) &&
                        start->pitch.step == end->pitch.step &&
                        start->pitch.octave == end->pitch.octave &&
                        start->pitch.alter == end->pitch.alter;
-            bool slur = start->slur_start && end->slur_stop == start->slur_start;
-            if (!tie && !slur) continue;
-            bool above = notes[i].stem == MUSIC_STEM_DOWN;
-            music_sp_t x1 = notes[i].x + 0.55f;
-            music_sp_t x2 = notes[j].x - 0.55f;
-            music_sp_t y1 = notes[i].y + (above ? -0.75f : 0.75f);
-            music_sp_t y2 = notes[j].y + (above ? -0.75f : 0.75f);
-            music_sp_t arch = above ? -1.25f : 1.25f;
-            if (!add_bezier(scene, x1, y1,
-                            x1 + (x2 - x1) * 0.33f, y1 + arch,
-                            x1 + (x2 - x1) * 0.67f, y2 + arch,
-                            x2, y2, 0.10f, notes[i].event_index)) return false;
-            break;
+            bool slur = !slur_done &&
+                        end->slur_stop == start->slur_start;
+            bool gliss = !gliss_done &&
+                         end->gliss_stop == start->gliss_start;
+            if (!tie && !slur && !gliss) continue;
+            if (tie && !render_connection(scene, config, &layouts[i],
+                                          &layouts[j], false)) return false;
+            if (slur && !render_connection(scene, config, &layouts[i],
+                                           &layouts[j], false)) return false;
+            if (gliss && !render_connection(scene, config, &layouts[i],
+                                            &layouts[j], true)) return false;
+            tie_done |= tie;
+            slur_done |= slur;
+            gliss_done |= gliss;
+            if (tie_done && slur_done && gliss_done) break;
         }
     }
     return true;
 }
 
-bool music_layout_build(const music_score_t *score,
-                        const music_layout_config_t *config,
-                        music_scene_t *scene,
-                        char *error,
-                        size_t error_size)
+static bool music_layout_build_range(const music_score_t *score,
+                                     const music_layout_config_t *config,
+                                     music_scene_t *scene,
+                                     int range_start, int range_end,
+                                     char *error,
+                                     size_t error_size)
 {
     if (!score || !config || !scene) return set_error(error, error_size, "invalid layout arguments");
     memset(scene, 0, sizeof(*scene));
@@ -734,20 +1088,33 @@ bool music_layout_build(const music_score_t *score,
      * so entering the renderer immediately tripped the FreeRTOS stack
      * protector. Keep large, score-dependent scratch storage off task stacks. */
     note_layout_t *notes = calloc(MAX_NOTES_PER_SYSTEM, sizeof(*notes));
-    if (!notes) return set_error(error, error_size, "unable to allocate layout workspace");
+    note_layout_t *all_notes = calloc(score->event_count ? score->event_count : 1,
+                                      sizeof(*all_notes));
+    if (!notes || !all_notes) {
+        free(notes);
+        free(all_notes);
+        return set_error(error, error_size, "unable to allocate layout workspace");
+    }
 
 #define LAYOUT_ERROR(message) do {                \
         free(notes);                              \
+        free(all_notes);                          \
         return set_error(error, error_size, message); \
     } while (0)
 
     const music_part_t *part = &score->parts[0];
-    int measure_cursor = part->measure_start;
-    int measure_end = part->measure_start + part->measure_count;
+    int part_start = part->measure_start;
+    int part_end = part->measure_start + part->measure_count;
+    int measure_cursor = range_start >= part_start ? range_start : part_start;
+    int measure_end = range_end > measure_cursor && range_end < part_end ?
+                      range_end : part_end;
     music_sp_t content_width = config->page_width - config->left_margin - config->right_margin;
     music_sp_t system_top = config->top_margin;
 
     while (measure_cursor < measure_end) {
+        int system_measure_start = measure_cursor;
+        int system_item_start = scene->item_count;
+        music_sp_t current_system_top = system_top;
         const music_measure_t *first = &score->measures[measure_cursor];
         uint8_t staff_count = first->staff_count ? first->staff_count : 1;
         if (staff_count > MUSIC_MAX_STAVES) staff_count = MUSIC_MAX_STAVES;
@@ -891,19 +1258,27 @@ bool music_layout_build(const music_score_t *score,
                     music_sp_t top = staff_top_for(staff, system_top, config);
                     int position = music_pitch_staff_position(
                         &event->data.note.pitch, &active_clefs[staff - 1]);
-                    music_stem_direction_t stem = resolved_stem_direction(
-                        score, measure, event, position);
+                    music_stem_direction_t stem = resolved_chord_stem_direction(
+                        score, measure, event, &active_clefs[staff - 1]);
                     bool draw_ledger = note_owns_ledger_lines(
                         score, measure, event_index,
                         &active_clefs[staff - 1], position);
                     x += polyphonic_notehead_offset(score, measure, event,
                                                     &active_clefs[staff - 1],
                                                     stem);
+                    chord_note_geometry_t geometry;
+                    chord_note_geometry(score, measure, event, event_index,
+                                        &active_clefs[staff - 1], x, top,
+                                        stem, &geometry);
                     if (!render_note_symbol(scene, event, event_index,
                                             &active_clefs[staff - 1], x, top,
-                                            config, draw_ledger, stem,
+                                            config, draw_ledger, &geometry,
                                             &notes[note_count]))
                         LAYOUT_ERROR("scene item capacity exceeded");
+                    notes[note_count].system_index =
+                        (uint8_t)scene->system_count;
+                    notes[note_count].valid = true;
+                    all_notes[event_index] = notes[note_count];
                     note_count++;
                 } else if (event->kind == MUSIC_EVENT_REST) {
                     uint8_t staff = event->data.rest.staff ? event->data.rest.staff : 1;
@@ -938,15 +1313,33 @@ bool music_layout_build(const music_score_t *score,
             measure_x += measure_width;
         }
 
-        if (!render_beams(scene, notes, note_count, config) ||
-            !render_connections(scene, notes, note_count))
+        if (!render_beams(scene, notes, note_count, config))
             LAYOUT_ERROR("scene item capacity exceeded");
 
-        scene->system_count++;
+        if (scene->system_count >= MUSIC_SCENE_MAX_SYSTEMS)
+            LAYOUT_ERROR("scene system capacity exceeded");
         music_sp_t system_height = 4.0f + (staff_count - 1) *
                                    (4.0f + config->staff_gap);
+        music_scene_system_t *system =
+            &scene->systems[scene->system_count++];
+        *system = (music_scene_system_t){
+            .measure_start = (uint16_t)system_measure_start,
+            .measure_end = (uint16_t)system_end,
+            .item_start = (uint16_t)system_item_start,
+            .item_count = (uint16_t)(scene->item_count - system_item_start),
+            .top = current_system_top,
+            .bottom = current_system_top + system_height,
+        };
         system_top += system_height + config->system_gap;
         measure_cursor = system_end;
+    }
+
+    if (!render_connections(scene, config, score, all_notes))
+        LAYOUT_ERROR("scene item capacity exceeded");
+    if (scene->system_count) {
+        music_scene_system_t *last =
+            &scene->systems[scene->system_count - 1];
+        last->item_count = (uint16_t)(scene->item_count - last->item_start);
     }
 
     /* system_top has already advanced past the last system. Excluding the
@@ -955,6 +1348,75 @@ bool music_layout_build(const music_score_t *score,
     scene->height = system_top - config->system_gap;
     if (error && error_size) error[0] = '\0';
     free(notes);
+    free(all_notes);
 #undef LAYOUT_ERROR
+    return true;
+}
+
+bool music_layout_build(const music_score_t *score,
+                        const music_layout_config_t *config,
+                        music_scene_t *scene,
+                        char *error,
+                        size_t error_size)
+{
+    return music_layout_build_range(score, config, scene, -1, -1,
+                                    error, error_size);
+}
+
+bool music_layout_rebuild_from_measure(const music_score_t *score,
+                                       const music_layout_config_t *config,
+                                       music_scene_t *scene,
+                                       uint16_t first_dirty_measure,
+                                       char *error,
+                                       size_t error_size)
+{
+    if (!score || !config || !scene || !scene->system_count)
+        return music_layout_build(score, config, scene, error, error_size);
+
+    int dirty_system = -1;
+    for (int i = 0; i < scene->system_count; ++i) {
+        if (first_dirty_measure < scene->systems[i].measure_end) {
+            dirty_system = i;
+            break;
+        }
+    }
+    if (dirty_system < 0) dirty_system = scene->system_count - 1;
+    if (dirty_system > 0) dirty_system--;
+
+    const music_scene_system_t boundary = scene->systems[dirty_system];
+    const int prefix_item_count = boundary.item_start;
+    music_layout_config_t tail_config = *config;
+    tail_config.top_margin = boundary.top;
+
+    music_scene_t *tail = calloc(1, sizeof(*tail));
+    if (!tail) return set_error(error, error_size,
+                                "unable to allocate dirty layout workspace");
+    bool built = music_layout_build_range(
+        score, &tail_config, tail, boundary.measure_start, -1,
+        error, error_size);
+    if (!built) {
+        free(tail);
+        return false;
+    }
+    if (prefix_item_count + tail->item_count > MUSIC_SCENE_MAX_ITEMS ||
+        dirty_system + tail->system_count > MUSIC_SCENE_MAX_SYSTEMS) {
+        free(tail);
+        return set_error(error, error_size,
+                         "dirty layout exceeds scene capacity");
+    }
+
+    memcpy(&scene->items[prefix_item_count], tail->items,
+           (size_t)tail->item_count * sizeof(tail->items[0]));
+    for (int i = 0; i < tail->system_count; ++i) {
+        scene->systems[dirty_system + i] = tail->systems[i];
+        scene->systems[dirty_system + i].item_start +=
+            (uint16_t)prefix_item_count;
+    }
+    scene->item_count = (uint16_t)(prefix_item_count + tail->item_count);
+    scene->system_count = (uint16_t)(dirty_system + tail->system_count);
+    scene->width = tail->width;
+    scene->height = tail->height;
+    free(tail);
+    if (error && error_size) error[0] = '\0';
     return true;
 }

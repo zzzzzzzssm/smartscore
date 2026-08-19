@@ -33,6 +33,15 @@ _Static_assert(S3_MUSIC_POLY_MAX_NOTES == S3_PROTOCOL_POLY_MAX_NOTES,
                "public and parser poly capacities must match");
 _Static_assert(S3_MUSIC_POLY_NAME_MAX == S3_PROTOCOL_POLY_NAME_MAX,
                "public and parser poly name capacities must match");
+_Static_assert(S3_MUSIC_DIAGNOSTIC_MAX_RAW ==
+                   S3_PROTOCOL_DIAGNOSTIC_MAX_RAW,
+               "public and parser diagnostic raw capacities must match");
+_Static_assert(S3_MUSIC_DIAGNOSTIC_MAX_NOTES ==
+                   S3_PROTOCOL_DIAGNOSTIC_MAX_NOTES,
+               "public and parser diagnostic note capacities must match");
+_Static_assert(S3_MUSIC_DIAGNOSTIC_REASON_MAX ==
+                   S3_PROTOCOL_DIAGNOSTIC_REASON_MAX,
+               "public and parser diagnostic reason capacities must match");
 
 static const char *TAG = "S3_MUSIC";
 static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -229,6 +238,8 @@ static void queue_music_event(const s3_music_message_t *message)
         event_type = S3_MUSIC_EVENT_NOTE_ON;
     } else if (message->type == S3_MUSIC_MESSAGE_POLY) {
         event_type = S3_MUSIC_EVENT_POLY;
+    } else if (message->type == S3_MUSIC_MESSAGE_DIAGNOSTIC) {
+        event_type = S3_MUSIC_EVENT_DIAGNOSTIC;
     }
     s3_music_event_t event = {
         .type = event_type,
@@ -249,9 +260,38 @@ static void queue_music_event(const s3_music_message_t *message)
                                ? S3_MUSIC_POLY_CHORD
                                : S3_MUSIC_POLY_NONE,
         .note_count = message->note_count,
+        .diagnostic_raw_count = message->diagnostic_raw_count,
+        .diagnostic_candidate_kind =
+            (s3_music_result_kind_t)message->diagnostic_candidate_kind,
+        .diagnostic_candidate_count =
+            message->diagnostic_candidate_count,
+        .diagnostic_final_kind =
+            (s3_music_result_kind_t)message->diagnostic_final_kind,
+        .diagnostic_final_count = message->diagnostic_final_count,
+        .diagnostic_octave_shift = message->diagnostic_octave_shift,
     };
     memcpy(event.notes, message->notes, sizeof(event.notes));
     memcpy(event.poly_name, message->poly_name, sizeof(event.poly_name));
+    for (int index = 0; index < message->diagnostic_raw_count; ++index) {
+        event.diagnostic_raw[index].source =
+            message->diagnostic_raw[index].source;
+        event.diagnostic_raw[index].midi =
+            message->diagnostic_raw[index].midi;
+        event.diagnostic_raw[index].frequency_hz =
+            message->diagnostic_raw[index].frequency_hz;
+        event.diagnostic_raw[index].confidence =
+            message->diagnostic_raw[index].confidence;
+    }
+    memcpy(event.diagnostic_candidate_notes,
+           message->diagnostic_candidate_notes,
+           sizeof(event.diagnostic_candidate_notes));
+    memcpy(event.diagnostic_final_notes,
+           message->diagnostic_final_notes,
+           sizeof(event.diagnostic_final_notes));
+    memcpy(event.diagnostic_snr_db, message->diagnostic_snr_db,
+           sizeof(event.diagnostic_snr_db));
+    memcpy(event.diagnostic_reject, message->diagnostic_reject,
+           sizeof(event.diagnostic_reject));
     if (xQueueSend(s_event_queue, &event, 0) != pdTRUE) {
         taskENTER_CRITICAL(&s_status_lock);
         ++s_status.dropped_events;
@@ -289,7 +329,12 @@ static void process_line(char *line, size_t length)
     }
     if (message.type == S3_MUSIC_MESSAGE_NOTE_ON ||
         message.type == S3_MUSIC_MESSAGE_NOTE_OFF ||
-        message.type == S3_MUSIC_MESSAGE_POLY) {
+        message.type == S3_MUSIC_MESSAGE_POLY ||
+        message.type == S3_MUSIC_MESSAGE_DIAGNOSTIC) {
+        if (message.type == S3_MUSIC_MESSAGE_DIAGNOSTIC) {
+            queue_music_event(&message);
+            return;
+        }
         if (!s_note_stream_logged) {
             const char *type =
                 message.type == S3_MUSIC_MESSAGE_NOTE_ON ? "note_on" :

@@ -6,12 +6,37 @@
 #include <stddef.h>
 
 #define MAX_NOTES 512
+#define MAX_MIDI_RAW_EVENTS 1024
+
+enum {
+    MIDI_NOTE_TIE_START = 1u << 0,
+    MIDI_NOTE_TIE_STOP  = 1u << 1,
+};
+
+typedef enum {
+    MIDI_RAW_CONTROL_CHANGE = 0,
+    MIDI_RAW_PITCH_BEND,
+} midi_raw_event_type_t;
+
+typedef struct {
+    uint32_t tick;
+    midi_raw_event_type_t type;
+    uint8_t channel;
+    uint8_t data1;
+    int16_t value;
+} midi_raw_event_t;
 
 typedef struct {
     uint8_t  note;       /* MIDI note number 0-127 */
     uint8_t  velocity;   /* Velocity 0-127 */
     uint8_t  staff;      /* 0/1=upper staff, 2=lower piano staff */
     uint8_t  voice;      /* 0 defaults to voice 1 */
+    uint8_t  dots;       /* Explicit augmentation dots from Creator data. */
+    uint8_t  tie_flags;  /* MIDI_NOTE_TIE_* */
+    uint8_t  slur_start; /* Explicit connection number, never inferred. */
+    uint8_t  slur_stop;
+    uint8_t  gliss_start;
+    uint8_t  gliss_stop;
     uint32_t start_tick; /* Start tick */
     uint32_t duration;   /* Duration in ticks */
 } midi_note_t;
@@ -28,6 +53,8 @@ typedef struct {
     char  title[24];          /* 曲名（最多 7 个中文字符） */
     int   note_count;         /* Number of notes parsed */
     midi_note_t notes[MAX_NOTES];
+    int raw_event_count;
+    midi_raw_event_t raw_events[MAX_MIDI_RAW_EVENTS];
 } midi_data_t;
 
 /**
