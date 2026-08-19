@@ -47,8 +47,18 @@ typedef struct {
     uint32_t start_tick;
     uint32_t duration_ticks;
     creator_note_value_t note_value;
+    uint8_t dots;
+    uint8_t slur_start;
+    uint8_t slur_stop;
+    uint8_t gliss_start;
+    uint8_t gliss_stop;
     bool within_tolerance;
 } creator_recorded_note_t;
+
+typedef enum {
+    CREATOR_CONNECTION_SLUR = 0,
+    CREATOR_CONNECTION_GLISS,
+} creator_connection_kind_t;
 
 esp_err_t creator_recorder_init(void);
 void creator_recorder_begin(const creator_recorder_config_t *config,
@@ -66,6 +76,16 @@ bool creator_recorder_note_on(uint8_t channel, uint8_t pitch, uint8_t velocity,
                               uint64_t timestamp_us);
 bool creator_recorder_note_off(uint8_t channel, uint8_t pitch,
                                uint64_t timestamp_us);
+bool creator_recorder_control_change(uint8_t channel, uint8_t controller,
+                                     uint8_t value, uint64_t timestamp_us);
+bool creator_recorder_pitch_bend(uint8_t channel, int16_t value,
+                                 uint64_t timestamp_us);
+/* Explicit semantic input for non-tie connections. Ordinary Note On/Off does
+ * not infer slurs or glissandi. Indices address captured logical notes. */
+bool creator_recorder_add_connection(creator_connection_kind_t kind,
+                                     int start_note_index,
+                                     int end_note_index,
+                                     uint8_t number);
 
 creator_recorder_state_t creator_recorder_state(void);
 bool creator_recorder_waiting_for_first_note(void);

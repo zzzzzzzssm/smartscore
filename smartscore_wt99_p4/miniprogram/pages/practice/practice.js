@@ -1,6 +1,7 @@
 const api = require('../../utils/api');
 const scoreLibrary = require('../../utils/score_library');
 const { formatTime } = require('../../utils/util');
+const practiceAdvice = require('../../utils/practice_advice');
 
 function emptyResult() {
   return {
@@ -24,57 +25,7 @@ function emptyResult() {
   };
 }
 
-function adviceText(value) {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-function formatPracticeAdvice(result) {
-  const summary = adviceText(result && result.summary);
-  const focus = Array.isArray(result && result.focus) ? result.focus : [];
-  const session = result && result.next_session;
-  const steps = session && Array.isArray(session.steps) ? session.steps : [];
-  if (!summary || focus.length === 0 || !session || steps.length === 0) {
-    throw new Error('DeepSeek 返回的练习建议不完整');
-  }
-
-  const lines = [summary, '', '优先练习：'];
-  focus.slice(0, 3).forEach((item, index) => {
-    const practice = item && item.practice ? item.practice : {};
-    const problem = adviceText(item && item.problem);
-    const action = adviceText(practice.action);
-    const target = adviceText(practice.target);
-    if (!problem || !action || !target) {
-      throw new Error('DeepSeek 返回的重点建议不完整');
-    }
-    lines.push(`${index + 1}. ${problem}`);
-    const evidence = (Array.isArray(item.evidence) ? item.evidence : [])
-      .map(adviceText)
-      .filter(Boolean);
-    if (evidence.length) lines.push(`依据：${evidence.join('；')}`);
-    lines.push(`练习：${action}`);
-    lines.push(`参数：${practice.bpm} BPM，${practice.minutes}分钟，重复${practice.repetitions}次`);
-    lines.push(`达标：${target}`);
-  });
-
-  lines.push('', `下次练习（${session.total_minutes}分钟）：`);
-  steps.forEach((step, index) => {
-    const action = adviceText(step && step.action);
-    if (!action) throw new Error('DeepSeek 返回的练习步骤不完整');
-    lines.push(`${index + 1}. ${action}（${step.minutes}分钟）`);
-  });
-
-  const encouragement = adviceText(result.encouragement);
-  if (encouragement) lines.push('', encouragement);
-  const insufficient = (Array.isArray(result.insufficient_data)
-    ? result.insufficient_data
-    : [])
-    .map(adviceText)
-    .filter(Boolean);
-  if (insufficient.length) {
-    lines.push('', `数据不足：${insufficient.join('；')}`);
-  }
-  return lines.join('\n');
-}
+const { formatPracticeAdvice } = practiceAdvice;
 
 Page({
   data: {
@@ -85,6 +36,11 @@ Page({
     isRecording: false,
     isStarting: false,
     isAdviceLoading: false,
+    adviceState: 'none',
+    adviceButtonText: '练习建议',
+    adviceMessage: '结束练习后会自动生成建议',
+    currentPracticeSessionId: '',
+    currentAdviceText: '',
     preparationValid: false,
     preparationChanging: false,
     preparationRevision: 0,
@@ -150,7 +106,7 @@ Page({
 
   startStatusPolling() {
     this.stopStatusPolling();
-    if (!this.pageVisible || this.data.isAdviceLoading) return;
+    if (!this.pageVisible) return;
     this.refreshLiveStatus();
     this.statusTimer = setInterval(() => this.refreshLiveStatus(), 1000);
   },
@@ -198,7 +154,7 @@ Page({
   },
 
   refreshLiveStatus() {
-    if (this.statusRefreshInFlight || this.data.isAdviceLoading) {
+    if (this.statusRefreshInFlight) {
       return Promise.resolve(false);
     }
     if (!api.getBaseUrl()) {
@@ -285,6 +241,7 @@ Page({
           nextData.isRecording = false;
         }
         this.setData(nextData);
+        return this.applyAdviceSummary(status);
       })
       .catch(() => {
         this.setData({
@@ -305,6 +262,135 @@ Page({
       .finally(() => {
         this.statusRefreshInFlight = false;
       });
+  },
+
+  savePracticeRecords(records) {
+    try {
+      wx.setStorageSync('practiceRecords', records);
+      return true;
+    } catch (err) {
+      if (!this.storageWarningVisible) {
+        this.storageWarningVisible = true;
+        wx.showModal({
+          title: '记录保存失败',
+          content: '小程序本地存储空间不足，已有练习记录不会被删除。',
+          showCancel: false,
+          complete: () => { this.storageWarningVisible = false; }
+        });
+      }
+      return false;
+    }
+  },
+
+  updateAdviceRecord(sessionId, patch) {
+    const records = wx.getStorageSync('practiceRecords') || [];
+    const result = practiceAdvice.updateRecordBySession(records, sessionId, patch);
+    if (!result.updated) return false;
+    return this.savePracticeRecords(result.records);
+  },
+
+  applyAdviceSummary(status) {
+    const state = practiceAdvice.normalizeAdviceState(status && status.advice_state);
+    const sessionId = String(status && status.practice_session_id || '');
+    const message = String(status && (
+      status.advice_message || status.practice_message || status.message
+    ) || '');
+    this.setData({
+      adviceState: state,
+      adviceButtonText: practiceAdvice.adviceButtonText(state),
+      adviceMessage: message || this.data.adviceMessage,
+      currentPracticeSessionId: sessionId || this.data.currentPracticeSessionId
+    });
+
+    if (sessionId) {
+      const records = wx.getStorageSync('practiceRecords') || [];
+      const mismatched = practiceAdvice.markMismatchedPending(records, sessionId);
+      if (mismatched.updated) this.savePracticeRecords(mismatched.records);
+    }
+
+    if (state === 'ready') return this.syncReadyAdvice(sessionId, false);
+    if (['skipped_offline', 'failed'].includes(state)) {
+      this.updateAdviceRecord(sessionId, {
+        adviceStatus: state,
+        adviceMessage: message || (state === 'skipped_offline'
+          ? '本次练习结束时设备未联网，未生成建议'
+          : '练习建议生成失败')
+      });
+    }
+    return Promise.resolve(false);
+  },
+
+  syncReadyAdvice(sessionId, showAfterSync) {
+    const id = String(sessionId || '');
+    if (!id) return Promise.resolve(false);
+    const records = wx.getStorageSync('practiceRecords') || [];
+    const existing = records.find((record) => record.practiceSessionId === id);
+    if (existing && existing.adviceStatus === 'ready' && existing.adviceText) {
+      this.setData({ currentAdviceText: existing.adviceText });
+      if (showAfterSync) {
+        wx.showModal({
+          title: 'AI 练习建议',
+          content: existing.adviceText,
+          showCancel: false
+        });
+      }
+      return Promise.resolve(true);
+    }
+    if (this.adviceFetchSession === id) return this.adviceFetchPromise || Promise.resolve(false);
+
+    this.adviceFetchSession = id;
+    this.adviceFetchPromise = api.getPracticeAdvice()
+      .then((response) => {
+        if (!response || response.state !== 'ready' ||
+            response.session_id !== id || !response.advice) {
+          throw new Error('设备返回的练习建议与当前记录不匹配');
+        }
+        const content = formatPracticeAdvice(response.advice);
+        const saved = this.updateAdviceRecord(id, {
+          adviceStatus: 'ready',
+          advice: response.advice,
+          adviceText: content,
+          adviceMessage: '练习建议已生成'
+        });
+        this.setData({
+          adviceState: 'ready',
+          adviceButtonText: practiceAdvice.adviceButtonText('ready'),
+          adviceMessage: '练习建议已生成',
+          currentPracticeSessionId: id,
+          currentAdviceText: content
+        });
+        if (showAfterSync) {
+          wx.showModal({
+            title: 'AI 练习建议',
+            content,
+            showCancel: false
+          });
+        } else if (saved && this.lastAdviceReadyToast !== id) {
+          this.lastAdviceReadyToast = id;
+          wx.showToast({ title: '练习建议已生成', icon: 'success' });
+        }
+        return true;
+      })
+      .catch((err) => {
+        this.setData({
+          adviceMessage: api.errorMessage(err, '暂时无法读取练习建议')
+        });
+        if (showAfterSync) {
+          wx.showModal({
+            title: '建议暂不可用',
+            content: api.errorMessage(err, '暂时无法读取练习建议'),
+            showCancel: false
+          });
+        }
+        return false;
+      })
+      .finally(() => {
+        if (this.adviceFetchSession === id) {
+          this.adviceFetchSession = '';
+          this.adviceFetchPromise = null;
+        }
+      });
+    return this.adviceFetchPromise;
   },
 
   getMatchedDetails(result) {
@@ -703,7 +789,14 @@ Page({
           status: readOnly ? '只读看谱' : '正在记录',
           statusClass: readOnly ? 'finished' : 'recording',
           isRecording: !readOnly,
-          result: this.buildEmptyResult()
+          result: this.buildEmptyResult(),
+          adviceState: readOnly ? 'none' : 'waiting_score',
+          adviceButtonText: '练习建议',
+          adviceMessage: readOnly
+            ? '只读看谱不会生成练习建议'
+            : '结束练习后会自动生成建议',
+          currentPracticeSessionId: '',
+          currentAdviceText: ''
         }, () => this.drawPracticeChart());
         this.refreshLiveStatus();
         wx.showToast({
@@ -775,7 +868,8 @@ Page({
       leadingExtraCount: Number(result.leading_extra_count || 0),
       alignmentOriginLocked: result.alignment_origin_locked === true,
       tempoSampleCount: Number(result.tempo_sample_count || 0),
-      details: Array.isArray(result.details) ? result.details : []
+      details: Array.isArray(result.details) ? result.details : [],
+      practiceSessionId: String(result.practice_session_id || '')
     };
   },
 
@@ -799,17 +893,32 @@ Page({
       alignmentOriginLocked: result.alignmentOriginLocked,
       tempoSampleCount: result.tempoSampleCount,
       details: result.details || [],
-      chartStats: this.data.chartStats
+      chartStats: this.data.chartStats,
+      practiceSessionId: result.practiceSessionId,
+      adviceStatus: result.practiceSessionId ? 'pending' : 'sync_missed',
+      advice: null,
+      adviceText: '',
+      adviceMessage: result.practiceSessionId
+        ? '练习建议正在后台生成'
+        : '设备未返回练习会话编号，建议无法同步'
     };
     const records = wx.getStorageSync('practiceRecords') || [];
     records.unshift(record);
-    wx.setStorageSync('practiceRecords', records);
+    this.savePracticeRecords(records);
     this.setData({
       status: '已完成',
       statusClass: 'finished',
       isRecording: false,
-      result
+      result,
+      adviceState: result.practiceSessionId ? 'running' : 'sync_missed',
+      adviceButtonText: practiceAdvice.adviceButtonText(
+        result.practiceSessionId ? 'running' : 'sync_missed'
+      ),
+      adviceMessage: record.adviceMessage,
+      currentPracticeSessionId: result.practiceSessionId,
+      currentAdviceText: ''
     }, () => this.drawPracticeChart());
+    this.refreshLiveStatus();
     wx.showToast({ title: '评分完成', icon: 'success' });
   },
 
@@ -836,7 +945,12 @@ Page({
           status: '正在记录',
           statusClass: 'recording',
           isRecording: true,
-          result: this.buildEmptyResult()
+          result: this.buildEmptyResult(),
+          adviceState: 'waiting_score',
+          adviceButtonText: '练习建议',
+          adviceMessage: '结束练习后会自动生成建议',
+          currentPracticeSessionId: '',
+          currentAdviceText: ''
         }, () => this.drawPracticeChart());
         this.refreshLiveStatus();
         wx.showToast({ title: '已重新开始', icon: 'success' });
@@ -854,36 +968,61 @@ Page({
       });
   },
 
-  requestAiScore() {
-    if (this.adviceRequestInFlight || this.data.isAdviceLoading) return false;
-    this.adviceRequestInFlight = true;
-    this.stopStatusPolling();
-    this.setData({ isAdviceLoading: true });
-    wx.showLoading({ title: 'AI 分析中' });
-    return api.requestAiScore()
-      .then((result) => {
-        if (!result || result.ok === false) {
-          throw new Error(api.messageText(result && result.message, 'AI 建议生成失败'));
-        }
-        const content = formatPracticeAdvice(result);
+  viewPracticeAdvice() {
+    const state = practiceAdvice.normalizeAdviceState(this.data.adviceState);
+    if (state === 'ready') {
+      if (this.data.currentAdviceText) {
         wx.showModal({
           title: 'AI 练习建议',
-          content,
+          content: this.data.currentAdviceText,
           showCancel: false
         });
-      })
-      .catch((err) => wx.showModal({
-        title: 'AI 建议未完成',
-        content: `${api.errorMessage(err, 'AI 分析失败')}\n请确认设备页地址、ESP32 网络和 DEEPSEEK_API_KEY 配置。`,
-        showCancel: false
-      }))
-      .finally(() => {
-        this.adviceRequestInFlight = false;
-        wx.hideLoading();
-        this.setData({ isAdviceLoading: false }, () => {
-          if (this.pageVisible) this.startStatusPolling();
+        return Promise.resolve(true);
+      }
+      this.setData({ isAdviceLoading: true });
+      wx.showLoading({ title: '读取建议中' });
+      return this.syncReadyAdvice(this.data.currentPracticeSessionId, true)
+        .finally(() => {
+          wx.hideLoading();
+          this.setData({ isAdviceLoading: false });
         });
+    }
+    if (state === 'running') {
+      wx.showModal({
+        title: '建议生成中',
+        content: '建议正在后台生成，请稍等。你可以先查看本次评分。',
+        showCancel: false
       });
+      return false;
+    }
+    if (state === 'waiting_score') {
+      wx.showModal({
+        title: '练习建议',
+        content: this.data.isRecording
+          ? '请先结束练习，评分完成后设备会自动生成建议。'
+          : '正在等待本地评分完成，请稍等。',
+        showCancel: false
+      });
+      return false;
+    }
+    if (['skipped_offline', 'failed', 'sync_missed'].includes(state)) {
+      wx.showModal({
+        title: '建议未生成',
+        content: this.data.adviceMessage || '本次没有可查看的练习建议。',
+        showCancel: false
+      });
+      return false;
+    }
+    wx.showModal({
+      title: '练习建议',
+      content: '请先完成一次练习。',
+      showCancel: false
+    });
+    return false;
+  },
+
+  requestAiScore() {
+    return this.viewPracticeAdvice();
   },
 
   formatPracticeAdvice

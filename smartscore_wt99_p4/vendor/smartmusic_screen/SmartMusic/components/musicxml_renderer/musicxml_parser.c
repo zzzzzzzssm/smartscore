@@ -359,6 +359,16 @@ static void XMLCALL start_element(void *user_data, const XML_Char *raw_name,
         if (number > 255) number = 255;
         if (type && strcmp(type, "start") == 0) ctx->note.slur_start = (uint8_t)number;
         if (type && strcmp(type, "stop") == 0) ctx->note.slur_stop = (uint8_t)number;
+    } else if ((strcmp(name, "glissando") == 0 ||
+                strcmp(name, "slide") == 0) && ctx->in_note) {
+        const char *type = attribute_value(attrs, "type");
+        int number = atoi(attribute_value(attrs, "number") ?: "1");
+        if (number < 1) number = 1;
+        if (number > 255) number = 255;
+        if (type && strcmp(type, "start") == 0)
+            ctx->note.gliss_start = (uint8_t)number;
+        if (type && strcmp(type, "stop") == 0)
+            ctx->note.gliss_stop = (uint8_t)number;
     } else if (strcmp(name, "articulations") == 0 && ctx->in_note) {
         ctx->in_articulations = true;
     } else if (ctx->in_articulations && strcmp(name, "staccato") == 0) {

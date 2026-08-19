@@ -17,6 +17,8 @@ typedef enum {
     USB_MIDI_EVENT_CONNECTED,
     USB_MIDI_EVENT_DISCONNECTED,
     USB_MIDI_EVENT_ERROR,
+    USB_MIDI_EVENT_CONTROL_CHANGE,
+    USB_MIDI_EVENT_PITCH_BEND,
 } usb_midi_event_type_t;
 
 typedef struct {
@@ -26,6 +28,9 @@ typedef struct {
     uint8_t channel;
     uint8_t midi;
     uint8_t velocity;
+    uint8_t controller;
+    uint8_t value;
+    int16_t pitch_bend;
 } usb_midi_event_t;
 
 typedef struct {

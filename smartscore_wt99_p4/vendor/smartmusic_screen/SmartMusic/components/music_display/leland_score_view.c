@@ -29,6 +29,7 @@ struct leland_score_view {
     lv_obj_t *canvas;
     music_score_t *score;
     music_scene_t *scene;
+    midi_data_t *midi_cache;
     lv_obj_t **item_objects;
     int16_t note_event_indices[VIEW_MAX_NOTES];
     int note_count;
@@ -435,6 +436,63 @@ static uint8_t score_staff_count(const midi_data_t *midi)
     }
     return 1;
 }
+
+static int first_dirty_measure(const leland_score_view_t *view,
+                               const midi_data_t *midi)
+{
+    if (!view || !view->midi_cache || !midi) return -1;
+    const midi_data_t *old = view->midi_cache;
+    if (old->ticks_per_quarter != midi->ticks_per_quarter ||
+        old->time_sig_num != midi->time_sig_num ||
+        old->time_sig_den != midi->time_sig_den ||
+        old->tonality_sf != midi->tonality_sf ||
+        old->tonality_minor != midi->tonality_minor)
+        return -1;
+
+    int shared = old->note_count < midi->note_count ?
+                 old->note_count : midi->note_count;
+    int changed = 0;
+    while (changed < shared &&
+           memcmp(&old->notes[changed], &midi->notes[changed],
+                  sizeof(midi->notes[changed])) == 0) {
+        changed++;
+    }
+    if (changed == shared && old->note_count == midi->note_count &&
+        strcmp(old->title, midi->title) == 0)
+        return INT_MAX;
+
+    uint32_t dirty_tick = UINT32_MAX;
+    if (changed < old->note_count)
+        dirty_tick = old->notes[changed].start_tick;
+    if (changed < midi->note_count &&
+        midi->notes[changed].start_tick < dirty_tick)
+        dirty_tick = midi->notes[changed].start_tick;
+    if (dirty_tick == UINT32_MAX) dirty_tick = 0;
+
+    int denominator_power = midi->time_sig_den >= 0 &&
+                            midi->time_sig_den <= 6 ?
+                            midi->time_sig_den : 2;
+    int denominator = 1 << denominator_power;
+    if (denominator <= 0) denominator = 4;
+    uint32_t measure_ticks = (uint32_t)midi->ticks_per_quarter *
+                             (midi->time_sig_num ? midi->time_sig_num : 4) *
+                             4 / denominator;
+    if (!measure_ticks) measure_ticks =
+        (uint32_t)midi->ticks_per_quarter * 4;
+    return (int)(dirty_tick / measure_ticks);
+}
+
+static bool midi_has_connections(const midi_data_t *midi)
+{
+    if (!midi) return false;
+    for (int i = 0; i < midi->note_count; ++i) {
+        const midi_note_t *note = &midi->notes[i];
+        if (note->tie_flags || note->slur_start || note->slur_stop ||
+            note->gliss_start || note->gliss_stop)
+            return true;
+    }
+    return false;
+}
 static uint8_t note_beam_level(const music_note_t *note)
 {
     if (!note || note->chord) return 0;
@@ -546,7 +604,10 @@ static bool build_score(leland_score_view_t *view, const midi_data_t *midi,
     part->staff_count = staff_count;
 
     int numerator = midi->time_sig_num > 0 ? midi->time_sig_num : 4;
-    int denominator = 1 << (midi->time_sig_den >= 0 ? midi->time_sig_den : 2);
+    int denominator_power = midi->time_sig_den >= 0 &&
+                            midi->time_sig_den <= 6 ?
+                            midi->time_sig_den : 2;
+    int denominator = 1 << denominator_power;
     if (denominator <= 0) denominator = 4;
     uint32_t measure_ticks = (uint32_t)midi->ticks_per_quarter * numerator * 4 /
                              denominator;
@@ -602,6 +663,12 @@ static bool build_score(leland_score_view_t *view, const midi_data_t *midi,
             note->duration_divisions = (int32_t)source->duration;
             note->type = duration_kind(source->duration,
                                        midi->ticks_per_quarter, &note->dots);
+            if (source->dots) note->dots = source->dots;
+            note->tie_flags = source->tie_flags;
+            note->slur_start = source->slur_start;
+            note->slur_stop = source->slur_stop;
+            note->gliss_start = source->gliss_start;
+            note->gliss_stop = source->gliss_stop;
             note->staff = staff_count == 2 && source->staff == 2 ? 2 : 1;
             note->voice = source->voice ? source->voice : 1;
             note->stem = MUSIC_STEM_AUTO;
@@ -687,9 +754,13 @@ leland_score_view_t *leland_score_view_create(lv_obj_t *parent)
                                    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     view->scene = heap_caps_calloc(1, sizeof(*view->scene),
                                    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    view->midi_cache = heap_caps_calloc(1, sizeof(*view->midi_cache),
+                                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!view->score) view->score = calloc(1, sizeof(*view->score));
     if (!view->scene) view->scene = calloc(1, sizeof(*view->scene));
-    if (!view->score || !view->scene) {
+    if (!view->midi_cache)
+        view->midi_cache = calloc(1, sizeof(*view->midi_cache));
+    if (!view->score || !view->scene || !view->midi_cache) {
         leland_score_view_destroy(view);
         return NULL;
     }
@@ -717,6 +788,7 @@ void leland_score_view_destroy(leland_score_view_t *view)
     if (view->canvas && lv_obj_is_valid(view->canvas)) lv_obj_delete(view->canvas);
     free(view->score);
     free(view->scene);
+    free(view->midi_cache);
     free(view);
 }
 
@@ -726,6 +798,12 @@ bool leland_score_view_set_midi(leland_score_view_t *view,
 {
     if (!view || !midi) return false;
     if (error && error_size) error[0] = '\0';
+    int dirty_measure = first_dirty_measure(view, midi);
+    if (dirty_measure == INT_MAX) return true;
+    /* Connection geometry may begin in a preserved system and finish in the
+     * dirty tail. Rebuild the whole scene in that uncommon case; ordinary
+     * dense input remains on the dirty-system fast path. */
+    if (midi_has_connections(midi)) dirty_measure = -1;
     delete_glyphs(view);
     if (!build_score(view, midi, error, error_size)) return false;
 
@@ -748,8 +826,14 @@ bool leland_score_view_set_midi(leland_score_view_t *view,
         config.max_measures_per_system = 2;
         config.system_gap = 5.0f;
     }
-    if (!music_layout_build(view->score, &config, view->scene,
-                            error, error_size)) return false;
+    bool layout_ok = dirty_measure >= 0 ?
+        music_layout_rebuild_from_measure(view->score, &config, view->scene,
+                                          (uint16_t)dirty_measure,
+                                          error, error_size) :
+        music_layout_build(view->score, &config, view->scene,
+                           error, error_size);
+    if (!layout_ok) return false;
+    *view->midi_cache = *midi;
     int scene_height_px = sp_to_px(view->scene->height);
     view->origin_y_px = VIEW_MIN_ORIGIN_Y_PX;
     if (view->scene->system_count == 1 && scene_height_px < view->viewport_height) {

@@ -13,6 +13,7 @@
 #include "esp_timer.h"
 #include "music_display.h"
 #include "score_storage.h"
+#include "freertos/FreeRTOS.h"
 
 #define COLOR_BG         0xFFF7EA
 #define COLOR_CARD       0xF3E2C7
@@ -43,6 +44,7 @@
 #define TXT_WAIT_FIRST "\xE7\xAD\x89\xE5\xBE\x85\xE9\xA6\x96\xE9\x9F\xB3"
 #define TXT_SELECT_RANGE "\xE8\xAF\xB7\xE4\xBE\x9D\xE6\xAC\xA1\xE7\x82\xB9\xE5\x87\xBB\xE9\x87\x8D\xE5\xBC\xB9\xE5\x8C\xBA\xE9\x97\xB4\xE7\x9A\x84\xE8\xB5\xB7\xE7\x82\xB9\xE5\x92\x8C\xE7\xBB\x88\xE7\x82\xB9\xE9\x9F\xB3\xE7\xAC\xA6"
 #define TXT_RANGE_START_FMT "\xE5\xB7\xB2\xE9\x80\x89\xE7\xAC\xAC%d\xE5\xB0\x8F\xE8\x8A\x82\xEF\xBC\x8C\xE8\xAF\xB7\xE7\x82\xB9\xE5\x87\xBB\xE7\xBB\x88\xE7\x82\xB9\xE9\x9F\xB3\xE7\xAC\xA6"
+#define CREATOR_LIVE_REFRESH_MS UINT32_C(40)
 typedef struct {
     lv_ui *ui;
     lv_obj_t *preparation;
@@ -58,6 +60,9 @@ typedef struct {
     lv_obj_t *overwrite_hint_label;
     int range_start_measure;
     lv_timer_t *auto_pause_timer;
+    uint32_t last_live_publish_ms;
+    bool live_refresh_pending;
+    bool live_publish_in_progress;
     creator_recorder_config_t config;
     volatile bool active;
     volatile bool initialized;
@@ -69,6 +74,7 @@ typedef struct {
 
 static const char *TAG = "creator_mode";
 static creator_mode_context_t s_creator;
+static portMUX_TYPE s_live_refresh_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static bool valid_config(const creator_recorder_config_t *config)
 {
@@ -183,7 +189,41 @@ static bool publish_snapshot(bool allow_empty, bool include_active)
         .time_sig_den = s_creator.config.time_sig_den,
         .notation_type = MUSIC_DISPLAY_NOTATION_STAFF,
     };
-    return music_display_submit_midi_snapshot(snapshot, &options, allow_empty);
+    return music_display_submit_midi_snapshot(snapshot, &options,
+                                              allow_empty);
+}
+
+static void flush_live_refresh(uint32_t now_ms)
+{
+    bool claimed = false;
+    taskENTER_CRITICAL(&s_live_refresh_lock);
+    if (s_creator.live_refresh_pending &&
+        !s_creator.live_publish_in_progress &&
+        (!s_creator.last_live_publish_ms ||
+         now_ms - s_creator.last_live_publish_ms >= CREATOR_LIVE_REFRESH_MS)) {
+        s_creator.live_refresh_pending = false;
+        s_creator.live_publish_in_progress = true;
+        claimed = true;
+    }
+    taskEXIT_CRITICAL(&s_live_refresh_lock);
+    if (!claimed) return;
+
+    bool submitted = publish_snapshot(false, true);
+    taskENTER_CRITICAL(&s_live_refresh_lock);
+    s_creator.live_publish_in_progress = false;
+    if (submitted)
+        s_creator.last_live_publish_ms = now_ms;
+    else
+        s_creator.live_refresh_pending = true;
+    taskEXIT_CRITICAL(&s_live_refresh_lock);
+}
+
+static void request_live_refresh(uint64_t timestamp_us)
+{
+    taskENTER_CRITICAL(&s_live_refresh_lock);
+    s_creator.live_refresh_pending = true;
+    taskEXIT_CRITICAL(&s_live_refresh_lock);
+    flush_live_refresh((uint32_t)(timestamp_us / 1000U));
 }
 
 static void reset_range_selection_ui(void)
@@ -237,9 +277,10 @@ static void sync_auto_pause_ui(bool was_recording)
 static void auto_pause_timer_cb(lv_timer_t *timer)
 {
     (void)timer;
-    if (!s_creator.active ||
-        !creator_recorder_poll((uint64_t)esp_timer_get_time()))
-        return;
+    if (!s_creator.active) return;
+    uint64_t now_us = (uint64_t)esp_timer_get_time();
+    flush_live_refresh((uint32_t)(now_us / 1000U));
+    if (!creator_recorder_poll(now_us)) return;
     publish_snapshot(true, false);
     reset_range_selection_ui();
     set_recording_ui(false);
@@ -285,6 +326,9 @@ static void exit_locked(void)
     creator_recorder_stop();
     s_creator.active = false;
     s_creator.saving = false;
+    taskENTER_CRITICAL(&s_live_refresh_lock);
+    s_creator.live_refresh_pending = false;
+    taskEXIT_CRITICAL(&s_live_refresh_lock);
     music_display_set_creator_active(false);
     reset_range_selection_ui();
     if (s_creator.pause_button)
@@ -458,6 +502,11 @@ static esp_err_t start_locked(const creator_recorder_config_t *config)
     s_creator.last_error = ESP_OK;
     s_creator.saved_title[0] = '\0';
     s_creator.saved_filename[0] = '\0';
+    taskENTER_CRITICAL(&s_live_refresh_lock);
+    s_creator.last_live_publish_ms = 0;
+    s_creator.live_refresh_pending = false;
+    s_creator.live_publish_in_progress = false;
+    taskEXIT_CRITICAL(&s_live_refresh_lock);
     creator_recorder_begin(&s_creator.config,
                            (uint64_t)esp_timer_get_time());
     s_creator.active = true;
@@ -614,7 +663,7 @@ static esp_err_t creator_mode_initialize(lv_ui *ui, bool bind_entry)
     }
     if (!s_creator.auto_pause_timer)
         s_creator.auto_pause_timer = lv_timer_create(auto_pause_timer_cb,
-                                                      50, NULL);
+                                                      20, NULL);
     if (!s_creator.auto_pause_timer) {
         ESP_LOGE(TAG, "unable to create Creator range timer");
         return ESP_ERR_NO_MEM;
@@ -743,6 +792,18 @@ void creator_mode_get_status(creator_mode_status_t *status)
     bsp_display_unlock();
 }
 
+bool creator_mode_add_connection(creator_connection_kind_t kind,
+                                 int start_note_index,
+                                 int end_note_index,
+                                 uint8_t number)
+{
+    if (!s_creator.active || !creator_recorder_add_connection(
+            kind, start_note_index, end_note_index, number))
+        return false;
+    request_live_refresh((uint64_t)esp_timer_get_time());
+    return true;
+}
+
 bool creator_mode_handle_midi_event(const usb_midi_input_event_t *event)
 {
     if (!event || !s_creator.active) return false;
@@ -773,7 +834,7 @@ bool creator_mode_handle_midi_event(const usb_midi_input_event_t *event)
                 set_recording_ui(true);
                 bsp_display_unlock();
             }
-            publish_snapshot(false, true);
+            request_live_refresh(event->timestamp_us);
         }
         sync_auto_pause_ui(was_recording);
         break;
@@ -783,10 +844,24 @@ bool creator_mode_handle_midi_event(const usb_midi_input_event_t *event)
                              CREATOR_RECORDER_RECORDING;
         if (creator_recorder_note_off(event->channel, event->note,
                                       event->timestamp_us))
-            publish_snapshot(false, false);
+            request_live_refresh(event->timestamp_us);
         sync_auto_pause_ui(was_recording);
         break;
     }
+    case USB_MIDI_INPUT_CONTROL_CHANGE:
+        if (creator_recorder_control_change(event->channel,
+                                            event->controller,
+                                            event->value,
+                                            event->timestamp_us) &&
+            event->controller == 64)
+            request_live_refresh(event->timestamp_us);
+        break;
+    case USB_MIDI_INPUT_PITCH_BEND:
+        creator_recorder_pitch_bend(event->channel, event->pitch_bend,
+                                    event->timestamp_us);
+        /* Pitch bend is retained for explicit/future gliss semantics. It does
+         * not alter notation or trigger a costly redraw by itself. */
+        break;
     default:
         break;
     }

@@ -12,6 +12,7 @@ extern "C" {
 #endif
 
 #define MUSIC_SCENE_MAX_ITEMS 4096
+#define MUSIC_SCENE_MAX_SYSTEMS MUSIC_MAX_MEASURES
 #define MUSIC_SCENE_COLOR_DEFAULT UINT32_C(0xFFFFFFFF)
 
 typedef enum {
@@ -73,7 +74,17 @@ typedef struct {
 } music_layout_config_t;
 
 typedef struct {
+    uint16_t measure_start;
+    uint16_t measure_end; /* Exclusive. */
+    uint16_t item_start;
+    uint16_t item_count;
+    music_sp_t top;
+    music_sp_t bottom;
+} music_scene_system_t;
+
+typedef struct {
     music_scene_item_t items[MUSIC_SCENE_MAX_ITEMS];
+    music_scene_system_t systems[MUSIC_SCENE_MAX_SYSTEMS];
     uint16_t item_count;
     uint16_t system_count;
     music_sp_t width;
@@ -91,6 +102,15 @@ bool music_layout_build(const music_score_t *score,
                         music_scene_t *scene,
                         char *error,
                         size_t error_size);
+/* Preserve systems before the one containing first_dirty_measure and rebuild
+ * only the affected tail. The preceding system is included so cross-system
+ * connectors and line-breaking remain stable. */
+bool music_layout_rebuild_from_measure(const music_score_t *score,
+                                       const music_layout_config_t *config,
+                                       music_scene_t *scene,
+                                       uint16_t first_dirty_measure,
+                                       char *error,
+                                       size_t error_size);
 
 #ifdef __cplusplus
 }

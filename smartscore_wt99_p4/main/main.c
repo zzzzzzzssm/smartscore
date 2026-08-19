@@ -161,7 +161,8 @@ static void handle_music_s3_event(const s3_music_event_t *event, void *context)
     screen_adapter_handle_audio_s3_event(event);
     /* Native poly frames are diagnostic snapshots. Audio S3 separately emits
      * its selected melody note_on/off stream for the unchanged scorer. */
-    if (event->type == S3_MUSIC_EVENT_POLY) {
+    if (event->type == S3_MUSIC_EVENT_POLY ||
+        event->type == S3_MUSIC_EVENT_DIAGNOSTIC) {
         return;
     }
     const uint64_t received_us = (uint64_t)esp_timer_get_time();

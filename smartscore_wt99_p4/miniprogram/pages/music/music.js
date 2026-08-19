@@ -1,5 +1,6 @@
 const api = require('../../utils/api');
 const utf8 = require('../../utils/utf8');
+const audioTranscoder = require('../../utils/audio_transcoder');
 
 Page({
   data: {
@@ -21,7 +22,10 @@ Page({
     activeSearch: '',
     emptyText: '没有找到可播放的 WAV 文件',
     activeFile: '',
-    filePaused: false
+    filePaused: false,
+    importing: false,
+    importStage: '',
+    importProgress: 0
   },
 
   onShow() {
@@ -94,6 +98,7 @@ Page({
   },
 
   refreshStatus() {
+    if (this.data.importing) return Promise.resolve(true);
     if (!this.data.configured || this.statusRefreshing) return Promise.resolve(false);
     this.statusRefreshing = true;
     return api.getAudioStatus().then((result) => {
@@ -289,6 +294,62 @@ Page({
     if (!this.data.activeFile) return;
     this.runCommand('file', () => api.stopAudioFile()).then((ok) => {
       if (ok) this.setData({ activeFile: '', filePaused: false });
+    });
+  },
+
+  chooseAndUploadMusic() {
+    if (this.data.importing) return;
+    if (!this.data.online) {
+      this.showConnectPrompt();
+      return;
+    }
+    if (this.data.activeFile) {
+      wx.showToast({ title: '请先停止正在播放的音乐', icon: 'none' });
+      return;
+    }
+    if (typeof wx.chooseMessageFile !== 'function') {
+      wx.showToast({ title: '当前微信版本不支持选择文件', icon: 'none' });
+      return;
+    }
+    wx.chooseMessageFile({
+      count: 1,
+      type: 'file',
+      extension: audioTranscoder.SUPPORTED_EXTENSIONS,
+      success: (result) => {
+        const file = result.tempFiles && result.tempFiles[0];
+        if (file) this.importMusicFile(file);
+      }
+    });
+  },
+
+  importMusicFile(file) {
+    let converted = null;
+    this.setData({
+      importing: true,
+      importStage: '正在手机端转码',
+      importProgress: 0
+    });
+    audioTranscoder.transcode(file, (progress) => {
+      this.setData({ importProgress: Math.max(0, Math.min(100, Number(progress) || 0)) });
+    }).then((result) => {
+      converted = result;
+      this.setData({ importStage: '正在上传到 P4', importProgress: 0 });
+      return api.uploadAudioWav(result.path, result.name, (progress) => {
+        this.setData({ importProgress: progress });
+      });
+    }).then(() => {
+      wx.showToast({ title: '音乐已保存到 SD 卡', icon: 'success' });
+      this.setData({ activeSearch: '', searchInput: '' });
+      return this.loadFiles(1);
+    }).catch((err) => {
+      wx.showModal({
+        title: '音乐导入失败',
+        content: api.errorMessage(err, '音乐转码或上传失败'),
+        showCancel: false
+      });
+    }).finally(() => {
+      audioTranscoder.removeTemporary(converted);
+      this.setData({ importing: false, importStage: '', importProgress: 0 });
     });
   }
 });

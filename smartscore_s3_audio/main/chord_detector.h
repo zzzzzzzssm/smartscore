@@ -47,3 +47,7 @@ void chord_detector_analyze(const float *mic1_ring, const float *mic2_ring,
                             float mic2_weight, bool demo_profile,
                             float signal_snr_db, chord_result_t *result);
 float chord_detector_harmonic_explained_ratio(float fundamental_hz);
+bool chord_detector_fft_magnitude_window(const float *ring,
+                                         size_t write_position,
+                                         float *magnitude,
+                                         size_t magnitude_count);

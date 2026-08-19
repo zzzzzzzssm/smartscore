@@ -2,15 +2,24 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 
+const storage = new Map([
+  ['apiBaseUrl', 'http://smart-score.local'],
+  ['practiceRecords', [{
+    id: 'record-1',
+    practiceSessionId: 'session-1',
+    adviceStatus: 'pending'
+  }]]
+]);
+const modals = [];
+
 global.wx = {
-  getStorageSync(key) {
-    return key === 'apiBaseUrl' ? 'http://smart-score.local' : '';
-  },
-  removeStorageSync() {},
-  setStorageSync() {},
+  getStorageSync(key) { return storage.get(key) || ''; },
+  removeStorageSync(key) { storage.delete(key); },
+  setStorageSync(key, value) { storage.set(key, value); },
   showLoading() {},
   hideLoading() {},
-  showModal() {},
+  showModal(options) { modals.push(options); },
+  showToast() {},
   createSelectorQuery() {
     return {
       in() { return this; },
@@ -35,9 +44,7 @@ function deferred() {
 
 function loadPage() {
   let definition;
-  global.Page = (value) => {
-    definition = value;
-  };
+  global.Page = (value) => { definition = value; };
   const pagePath = path.resolve(__dirname, '../pages/practice/practice.js');
   delete require.cache[require.resolve(pagePath)];
   require(pagePath);
@@ -60,7 +67,6 @@ function loadPage() {
 
 function adviceResult() {
   return {
-    ok: true,
     summary: '保持稳定节拍。',
     focus: [{
       problem: '节奏不稳',
@@ -82,7 +88,6 @@ function adviceResult() {
 
 async function run() {
   const api = require('../utils/api');
-
   const statusRequest = deferred();
   let statusCalls = 0;
   api.getStatus = () => {
@@ -97,65 +102,53 @@ async function run() {
   const overlappingRefresh = pollingPage.refreshLiveStatus();
   assert.strictEqual(statusCalls, 1);
   assert.strictEqual(await overlappingRefresh, false);
-  statusRequest.resolve({ practice_state: 'IDLE' });
+  statusRequest.resolve({
+    practice_state: 'READY',
+    practice_session_id: 'session-1',
+    advice_state: 'running',
+    advice_message: '建议正在后台生成，请稍等'
+  });
   await firstRefresh;
   assert.strictEqual(pollingPage.statusRefreshInFlight, false);
+  assert.strictEqual(pollingPage.data.adviceState, 'running');
 
-  const adviceRequest = deferred();
   let adviceCalls = 0;
-  api.requestAiScore = () => {
+  api.getPracticeAdvice = () => {
     adviceCalls += 1;
-    return adviceRequest.promise;
+    return Promise.resolve({
+      ok: true,
+      session_id: 'session-1',
+      state: 'ready',
+      ready: true,
+      advice: adviceResult()
+    });
   };
-  const advicePage = loadPage();
-  advicePage.pageVisible = true;
-  let stopCalls = 0;
-  let startCalls = 0;
-  advicePage.stopStatusPolling = () => { stopCalls += 1; };
-  advicePage.startStatusPolling = () => { startCalls += 1; };
-
-  const firstAdvice = advicePage.requestAiScore();
-  const duplicateAdvice = advicePage.requestAiScore();
+  await pollingPage.applyAdviceSummary({
+    practice_session_id: 'session-1',
+    advice_state: 'ready',
+    advice_message: '练习建议已生成'
+  });
+  await pollingPage.applyAdviceSummary({
+    practice_session_id: 'session-1',
+    advice_state: 'ready'
+  });
   assert.strictEqual(adviceCalls, 1);
-  assert.strictEqual(duplicateAdvice, false);
-  assert.strictEqual(advicePage.data.isAdviceLoading, true);
-  assert.strictEqual(stopCalls, 1);
-  adviceRequest.resolve(adviceResult());
-  await firstAdvice;
-  assert.strictEqual(advicePage.data.isAdviceLoading, false);
-  assert.strictEqual(startCalls, 1);
+  assert.strictEqual(storage.get('practiceRecords')[0].adviceStatus, 'ready');
+  assert.ok(storage.get('practiceRecords')[0].adviceText.includes('保持稳定节拍'));
 
-  const failedRequest = deferred();
-  api.requestAiScore = () => failedRequest.promise;
-  const failedPage = loadPage();
-  failedPage.pageVisible = true;
-  let failureRestarts = 0;
-  failedPage.stopStatusPolling = () => {};
-  failedPage.startStatusPolling = () => { failureRestarts += 1; };
-  const failedAdvice = failedPage.requestAiScore();
-  failedRequest.reject(new Error('network_interrupted'));
-  await failedAdvice;
-  assert.strictEqual(failedPage.data.isAdviceLoading, false);
-  assert.strictEqual(failureRestarts, 1);
-
-  const hiddenRequest = deferred();
-  api.requestAiScore = () => hiddenRequest.promise;
-  const hiddenPage = loadPage();
-  hiddenPage.pageVisible = true;
-  let hiddenRestarts = 0;
-  hiddenPage.stopStatusPolling = () => {};
-  hiddenPage.startStatusPolling = () => { hiddenRestarts += 1; };
-  const hiddenAdvice = hiddenPage.requestAiScore();
-  hiddenPage.onHide();
-  hiddenRequest.resolve(adviceResult());
-  await hiddenAdvice;
-  assert.strictEqual(hiddenPage.pageVisible, false);
-  assert.strictEqual(hiddenRestarts, 0);
+  const runningPage = loadPage();
+  runningPage.data.adviceState = 'running';
+  let stopCalls = 0;
+  runningPage.stopStatusPolling = () => { stopCalls += 1; };
+  assert.strictEqual(runningPage.viewPracticeAdvice(), false);
+  assert.strictEqual(stopCalls, 0);
+  assert.strictEqual(modals[modals.length - 1].title, '建议生成中');
 
   const wxml = fs.readFileSync(
     path.resolve(__dirname, '../pages/practice/practice.wxml'), 'utf8'
   );
-  assert.ok(wxml.includes('disabled="{{isAdviceLoading}}"'));
+  assert.ok(wxml.includes('bindtap="viewPracticeAdvice"'));
+  assert.ok(!wxml.includes('disabled="{{isAdviceLoading}}"'));
 
   console.log('practice socket budget tests passed');
 }

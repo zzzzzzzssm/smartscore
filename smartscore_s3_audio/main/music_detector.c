@@ -16,6 +16,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "low_frequency_analyzer.h"
 #include "music_classifier.h"
 #include "music_detector_config.h"
 #include "music_uart_link.h"
@@ -70,6 +71,7 @@ static void reset_spectral_history(void)
     memset(s_yin_window, 0, sizeof(s_yin_window));
     s_ring_write_position = 0;
     s_ring_filled = 0;
+    low_frequency_analyzer_reset();
 }
 
 static void copy_yin_window(int selected_mic)
@@ -218,6 +220,142 @@ static const char *adaptive_snr_tier(bool demo_profile, float snr_db)
     return "reject-poly";
 }
 
+static music_result_type_t diagnostic_low_kind(
+    low_frequency_result_kind_t kind)
+{
+    switch (kind) {
+        case LOW_FREQUENCY_RESULT_SINGLE: return MUSIC_RESULT_SINGLE;
+        case LOW_FREQUENCY_RESULT_INTERVAL: return MUSIC_RESULT_INTERVAL;
+        case LOW_FREQUENCY_RESULT_CHORD: return MUSIC_RESULT_CHORD;
+        case LOW_FREQUENCY_RESULT_NONE:
+        default: return MUSIC_RESULT_UNKNOWN;
+    }
+}
+
+static void diagnostic_add_candidate(music_diagnostic_t *diagnostic,
+                                     music_diagnostic_source_t source,
+                                     int midi, float frequency_hz,
+                                     float confidence)
+{
+    if (midi < 0 || midi > 127 ||
+        diagnostic->raw_candidate_count >=
+            MUSIC_DIAGNOSTIC_MAX_RAW_CANDIDATES) {
+        return;
+    }
+    music_diagnostic_candidate_t *candidate =
+        &diagnostic->raw_candidates[diagnostic->raw_candidate_count++];
+    candidate->source = source;
+    candidate->midi = midi;
+    candidate->frequency_hz = frequency_hz;
+    candidate->confidence = confidence;
+}
+
+static void build_music_diagnostic(
+    const yin_result_t *yin, const chord_result_t *chord,
+    const low_frequency_result_t *low_frequency,
+    const music_classifier_t *classifier, const music_result_t *result,
+    const char *unknown_reason, uint32_t timestamp_ms,
+    music_diagnostic_t *diagnostic)
+{
+    memset(diagnostic, 0, sizeof(*diagnostic));
+    diagnostic->timestamp_ms = timestamp_ms;
+    for (int index = 0; index < MUSIC_DIAGNOSTIC_MAX_NOTES; ++index) {
+        diagnostic->candidate_notes[index] = -1;
+        diagnostic->final_notes[index] = -1;
+    }
+    if (yin->valid) {
+        diagnostic_add_candidate(
+            diagnostic, MUSIC_DIAGNOSTIC_SOURCE_YIN, yin->midi,
+            yin->frequency_hz, yin->confidence);
+    }
+    if (low_frequency->yin.valid) {
+        diagnostic_add_candidate(
+            diagnostic, MUSIC_DIAGNOSTIC_SOURCE_LOW_YIN,
+            low_frequency->yin.midi, low_frequency->yin.frequency_hz,
+            low_frequency->yin.confidence);
+    }
+    for (int index = 0;
+         index < low_frequency->debug_candidate_count; ++index) {
+        diagnostic_add_candidate(
+            diagnostic, MUSIC_DIAGNOSTIC_SOURCE_LOW_TEMPLATE,
+            low_frequency->debug_candidates[index].midi,
+            low_frequency->debug_candidates[index].frequency_hz,
+            low_frequency->debug_candidates[index].relative_score);
+    }
+    for (int index = 0; index < chord->debug_candidate_count; ++index) {
+        diagnostic_add_candidate(
+            diagnostic, MUSIC_DIAGNOSTIC_SOURCE_SPECTRUM,
+            chord->debug_candidates[index].midi,
+            chord->debug_candidates[index].peak_frequency_hz,
+            chord->debug_candidates[index].relative_score);
+    }
+
+    diagnostic->candidate_type = diagnostic_low_kind(
+        low_frequency->candidate_kind);
+    if (diagnostic->candidate_type != MUSIC_RESULT_UNKNOWN) {
+        diagnostic->candidate_note_count = low_frequency->note_count <
+                MUSIC_DIAGNOSTIC_MAX_NOTES
+            ? low_frequency->note_count : MUSIC_DIAGNOSTIC_MAX_NOTES;
+        for (int index = 0;
+             index < low_frequency->note_count &&
+             index < MUSIC_DIAGNOSTIC_MAX_NOTES; ++index) {
+            diagnostic->candidate_notes[index] =
+                low_frequency->midi_notes[index];
+        }
+    } else if (chord->valid) {
+        diagnostic->candidate_type =
+            chord->kind == CHORD_DETECTION_INTERVAL
+                ? MUSIC_RESULT_INTERVAL : MUSIC_RESULT_CHORD;
+        diagnostic->candidate_note_count = chord->pitch_class_count <
+                MUSIC_DIAGNOSTIC_MAX_NOTES
+            ? chord->pitch_class_count : MUSIC_DIAGNOSTIC_MAX_NOTES;
+        for (int index = 0;
+             index < chord->pitch_class_count &&
+             index < MUSIC_DIAGNOSTIC_MAX_NOTES; ++index) {
+            diagnostic->candidate_notes[index] = chord->midi_notes[index];
+        }
+    } else if (yin->valid) {
+        diagnostic->candidate_type = MUSIC_RESULT_SINGLE;
+        diagnostic->candidate_note_count = 1;
+        diagnostic->candidate_notes[0] = yin->midi;
+    }
+
+    const music_result_t *final = result;
+    if (result->type == MUSIC_RESULT_UNKNOWN && classifier->has_last_emitted &&
+        unknown_reason != NULL &&
+        strcmp(unknown_reason, "holding_confirmed_result") == 0) {
+        final = &classifier->last_emitted;
+    }
+    diagnostic->final_type = final->type;
+    if (final->type == MUSIC_RESULT_SINGLE && final->midi >= 0) {
+        diagnostic->final_note_count = 1;
+        diagnostic->final_notes[0] = final->midi;
+    } else if (final->type == MUSIC_RESULT_INTERVAL ||
+               final->type == MUSIC_RESULT_CHORD) {
+        diagnostic->final_note_count = final->pitch_class_count <
+                MUSIC_DIAGNOSTIC_MAX_NOTES
+            ? final->pitch_class_count : MUSIC_DIAGNOSTIC_MAX_NOTES;
+        for (int index = 0;
+             index < final->pitch_class_count &&
+             index < MUSIC_DIAGNOSTIC_MAX_NOTES; ++index) {
+            diagnostic->final_notes[index] = final->midi_notes[index];
+        }
+    }
+    diagnostic->octave_shift = low_frequency->octave_corrected
+        ? low_frequency->octave_shift
+        : result->octave_corrected ? -12 : 0;
+    memcpy(diagnostic->band_snr_db, low_frequency->band_snr_db,
+           sizeof(diagnostic->band_snr_db));
+    const char *reason =
+        result->type == MUSIC_RESULT_SINGLE ||
+        result->type == MUSIC_RESULT_INTERVAL ||
+        result->type == MUSIC_RESULT_CHORD
+            ? "none"
+            : unknown_reason != NULL ? unknown_reason : "unknown";
+    snprintf(diagnostic->reject_reason,
+             sizeof(diagnostic->reject_reason), "%s", reason);
+}
+
 static void music_dsp_task(void *argument)
 {
     (void)argument;
@@ -241,6 +379,7 @@ static void music_dsp_task(void *argument)
         MUSIC_RECOGNITION_PROFILE_STRICT;
     bool active_profile_initialized = false;
     yin_detector_init();
+    low_frequency_analyzer_init();
     int selected_mic = 1;
 #if !MUSIC_USE_SINGLE_MIC_CH1
     int challenger_count = 0;
@@ -252,8 +391,12 @@ static void music_dsp_task(void *argument)
     uint32_t last_diagnostic_ms = 0;
     uint32_t last_performance_ms = 0;
     uint32_t last_spectrum_debug_ms = 0;
+    uint32_t last_stream_diagnostic_ms = 0;
     uint32_t low_peak_diagnostics = 0;
     float selected_snr_db = -120.0f;
+    float previous_low_band_rms = 0.0f;
+    uint32_t low_spectrum_hop = 0;
+    low_frequency_result_t last_low_frequency = {0};
     chord_result_t last_spectrum_debug = {0};
 #if MUSIC_USE_SINGLE_MIC_CH1
     float last_yin_confidence = 0.0f;
@@ -283,6 +426,9 @@ static void music_dsp_task(void *argument)
             active_profile_initialized = true;
             active_profile = requested_profile;
             music_classifier_init(&classifier);
+            low_frequency_analyzer_reset();
+            previous_low_band_rms = 0.0f;
+            low_spectrum_hop = 0;
 #if !MUSIC_USE_SINGLE_MIC_CH1
             dual_mic_selector_init(&demo_selector);
             challenger_count = 0;
@@ -352,6 +498,14 @@ static void music_dsp_task(void *argument)
         }
         const size_t metric_count = 2;
 #endif
+        const float *selected_frame =
+#if MUSIC_USE_SINGLE_MIC_CH1
+            s_frame_float;
+#else
+            s_frame_float[selected_mic - 1];
+#endif
+        low_frequency_analyzer_push(selected_frame, MUSIC_CAPTURE_FRAMES,
+                                    selected_mic);
         if (demo_profile && calibrated) {
             float requested_gain_db = input_control.current_gain_db;
             adaptive_gain_reason_t gain_reason = ADAPTIVE_GAIN_REASON_NONE;
@@ -440,10 +594,14 @@ static void music_dsp_task(void *argument)
         if (calibrated && s_ring_filled >= MUSIC_FFT_SIZE) {
             yin_result_t yin = {.midi = -1};
             chord_result_t chord = {0};
+            low_frequency_result_t low_frequency = {0};
             float harmonic_ratio = 0.0f;
 #if MUSIC_USE_SINGLE_MIC_CH1
             selected_mic = 1;
-            const bool above_gate = audio_preprocess_above_gate(&preprocess, &metrics[0]);
+            const bool above_gate =
+                audio_preprocess_above_gate(&preprocess, &metrics[0]) ||
+                audio_preprocess_any_band_above_gate(&preprocess,
+                                                     &metrics[0]);
             const bool analysis_active = above_gate || active_hangover_blocks > 0;
             if (above_gate) {
                 active_hangover_blocks = MUSIC_ACTIVITY_HANGOVER_BLOCKS;
@@ -499,6 +657,52 @@ static void music_dsp_task(void *argument)
             harmonic_ratio = yin.valid ?
                 chord_detector_harmonic_explained_ratio(yin.frequency_hz) : 0.0f;
 #endif
+            const audio_frame_metrics_t *selected_metrics =
+                &metrics[selected_mic - 1];
+            const audio_preprocess_state_t *selected_preprocess =
+#if MUSIC_USE_SINGLE_MIC_CH1
+                &preprocess;
+#else
+                &preprocess[selected_mic - 1];
+#endif
+            float band_snr_db[AUDIO_PREPROCESS_BAND_COUNT];
+            for (int band = 0; band < AUDIO_PREPROCESS_BAND_COUNT; ++band) {
+                band_snr_db[band] = audio_preprocess_band_snr_db(
+                    selected_preprocess, selected_metrics,
+                    (audio_preprocess_band_t)band);
+            }
+            const bool low_band_above_gate =
+                audio_preprocess_band_above_gate(
+                    selected_preprocess, selected_metrics,
+                    AUDIO_PREPROCESS_BAND_LOW);
+            const bool low_onset = previous_low_band_rms > 0.0f &&
+                selected_metrics->band_rms[AUDIO_PREPROCESS_BAND_LOW] >=
+                    previous_low_band_rms * MUSIC_ONSET_RISE_RATIO &&
+                selected_metrics->band_rms[AUDIO_PREPROCESS_BAND_LOW] -
+                    previous_low_band_rms >=
+                        MUSIC_LOW_ONSET_MIN_RMS_RISE;
+            previous_low_band_rms =
+                selected_metrics->band_rms[AUDIO_PREPROCESS_BAND_LOW];
+            const bool suspicious_octave = yin.valid &&
+                yin.midi >= MUSIC_LOW_MIDI_MIN + 12 &&
+                yin.midi <= MUSIC_LOW_MIDI_MAX + 12;
+            const bool low_trigger = demo_profile && low_band_above_gate &&
+                (band_snr_db[AUDIO_PREPROCESS_BAND_LOW] >=
+                     MUSIC_LOW_BAND_TRIGGER_SNR_DB ||
+                 (yin.valid && yin.midi < MUSIC_MELODY_FALLBACK_MIDI_MIN) ||
+                 suspicious_octave);
+            const bool run_low_spectrum = low_trigger &&
+                (++low_spectrum_hop % MUSIC_SPECTRUM_ANALYSIS_HOPS) == 0;
+            low_frequency_analyzer_analyze(
+                low_trigger, run_low_spectrum, low_band_above_gate,
+                selected_metrics->clipped, low_onset,
+                selected_preprocess->band_noise_floor[
+                    AUDIO_PREPROCESS_BAND_LOW],
+                band_snr_db, &low_frequency);
+            counters->low_yin_time_us = low_frequency.yin_time_us;
+            counters->low_spectrum_time_us =
+                low_frequency.spectrum_time_us;
+            last_low_frequency = low_frequency;
             if (chord.debug_candidate_count > 0) {
                 last_spectrum_debug = chord;
                 last_spectrum_debug_ms = block_timestamp_ms;
@@ -514,21 +718,26 @@ static void music_dsp_task(void *argument)
 #if MUSIC_USE_SINGLE_MIC_CH1
             const bool emit = music_classifier_update(&classifier, &metrics[0], &metrics[1],
                                                        analysis_active ? 0.0f : preprocess.noise_gate, 0.0f,
-                                                       1, &yin, harmonic_ratio, &chord,
-                                                       demo_profile, poly_stable_votes,
+                                                        1, &yin, harmonic_ratio, &chord,
+                                                        &low_frequency,
+                                                        demo_profile, poly_stable_votes,
                                                        block_timestamp_ms,
                                                        &result, &unknown_reason);
 #else
             const bool emit = music_classifier_update(&classifier, &metrics[0], &metrics[1],
                                                        preprocess[0].noise_gate, preprocess[1].noise_gate,
-                                                       selected_mic, &yin, harmonic_ratio, &chord,
-                                                       demo_profile, poly_stable_votes,
+                                                        selected_mic, &yin, harmonic_ratio, &chord,
+                                                        &low_frequency,
+                                                        demo_profile, poly_stable_votes,
                                                        block_timestamp_ms,
                                                        &result, &unknown_reason);
 #endif
             const bool tonal_content =
                 (yin.valid && yin.confidence >= 0.45f) ||
-                chord.debug_candidate_count >= 2;
+                chord.debug_candidate_count >= 2 ||
+                (low_frequency.ready &&
+                 low_frequency.candidate_kind !=
+                    LOW_FREQUENCY_RESULT_NONE);
             if (demo_profile && !tonal_content) {
 #if MUSIC_USE_SINGLE_MIC_CH1
                 audio_preprocess_track_ambient(&preprocess, &metrics[0]);
@@ -540,13 +749,41 @@ static void music_dsp_task(void *argument)
 #endif
             }
             if (emit) music_uart_link_submit_result(&result);
-            if (yin.valid) music_uart_link_submit_pitch(&result);
+            if (result.midi >= 0 && result.frequency_hz > 0.0f) {
+                music_uart_link_submit_pitch(&result);
+            }
             if (emit) log_result(&result, unknown_reason, &chord);
+            if (demo_profile &&
+                block_timestamp_ms - last_stream_diagnostic_ms >=
+                    MUSIC_DIAGNOSTIC_STREAM_INTERVAL_MS) {
+                last_stream_diagnostic_ms = block_timestamp_ms;
+                music_diagnostic_t diagnostic;
+                build_music_diagnostic(
+                    &yin, &chord, &low_frequency, &classifier, &result,
+                    unknown_reason, block_timestamp_ms, &diagnostic);
+                music_uart_link_submit_diagnostic(&diagnostic);
+            }
         }
 
         const uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
         if (calibrated && now_ms - last_diagnostic_ms >= MUSIC_DIAGNOSTIC_INTERVAL_MS) {
             last_diagnostic_ms = now_ms;
+            ESP_LOGI("LOW_DIAG",
+                     "yin=%d/%.2f harmonic=%.2f kind=%d reject=%s "
+                     "snr=[%.1f,%.1f,%.1f] octave=%d",
+                     last_low_frequency.yin.midi,
+                     (double)last_low_frequency.yin.confidence,
+                     (double)last_low_frequency.harmonic_ratio,
+                     (int)last_low_frequency.final_kind,
+                     low_frequency_reject_reason_name(
+                         last_low_frequency.reject_reason),
+                     (double)last_low_frequency.band_snr_db[
+                         AUDIO_PREPROCESS_BAND_LOW],
+                     (double)last_low_frequency.band_snr_db[
+                         AUDIO_PREPROCESS_BAND_MID],
+                     (double)last_low_frequency.band_snr_db[
+                         AUDIO_PREPROCESS_BAND_HIGH],
+                     last_low_frequency.octave_shift);
 #if MUSIC_USE_SINGLE_MIC_CH1
             diagnostics_log_audio(metrics[0].rms, metrics[0].peak, metrics[0].clip_rate,
                                   0.0f, 0.0f, 0.0f, 1, preprocess.noise_floor, 0.0f,
@@ -608,6 +845,11 @@ static void music_dsp_task(void *argument)
             }
         }
         counters->dsp_cycle_time_us = (uint32_t)(esp_timer_get_time() - cycle_start_us);
+        counters->dsp_cycle_sum_us += counters->dsp_cycle_time_us;
+        ++counters->dsp_cycle_count;
+        if (counters->dsp_cycle_time_us > counters->dsp_cycle_max_us) {
+            counters->dsp_cycle_max_us = counters->dsp_cycle_time_us;
+        }
         const uint32_t block_budget_us = (uint32_t)(1000000ULL * MUSIC_CAPTURE_FRAMES / MUSIC_SAMPLE_RATE_HZ);
         if (counters->dsp_cycle_time_us > block_budget_us) ++counters->dsp_deadline_miss_count;
         if (now_ms - last_performance_ms >= MUSIC_PERFORMANCE_INTERVAL_MS) {

@@ -1,14 +1,19 @@
 #include "device_api.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
+#include "board_sdcard.h"
 #include "cJSON.h"
 #include "compact_score.h"
 #include "compact_score_store.h"
 #include "dashscope_omr.h"
-#include "deepseek_advice.h"
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -16,24 +21,29 @@
 #include "esp_timer.h"
 #include "input_source_manager.h"
 #include "network_provisioning.h"
+#include "practice_advice_service.h"
 #include "score_capture.h"
 #include "score_data.h"
 #include "score_json_parser.h"
 #include "score_storage.h"
 #include "scoring_service.h"
 #include "screen_adapter.h"
+#include "s3_devices.h"
 #include "speaker_service.h"
 #include "sdkconfig.h"
 #include "usb_midi.h"
 
 #define DEVICE_API_MAX_BODY_BYTES 512
-#define DEVICE_API_MAX_QUERY_BYTES 256
+#define DEVICE_API_MAX_QUERY_BYTES 768
 #define DEVICE_API_MAX_SEARCH_BYTES 64
 #define DEVICE_API_AUDIO_PAGE_SIZE 10
 #define DEVICE_API_SCORE_PAGE_SIZE 20
 #define DEVICE_API_SCORE_MAX_BODY_BYTES (256 * 1024)
 #define DEVICE_API_SCORING_TIMEOUT_MS 10000
 #define DEVICE_API_MAX_OPEN_SOCKETS 5
+#define DEVICE_API_AUDIO_UPLOAD_CHUNK_BYTES (256 * 1024)
+#define DEVICE_API_AUDIO_UPLOAD_MAX_BYTES (64 * 1024 * 1024)
+#define DEVICE_API_PHOTO_PAGE_SIZE 6
 
 static const char *TAG = "DEVICE_API";
 static httpd_handle_t s_server;
@@ -487,6 +497,18 @@ static esp_err_t status_handler(httpd_req_t *request)
         cJSON_AddStringToObject(root, "input_source",
                                 input_source_name(input.active_input));
         cJSON_AddStringToObject(root, "scoring_profile", practice.profile);
+        practice_advice_status_t advice;
+        practice_advice_service_get_status(&advice);
+        cJSON_AddStringToObject(root, "practice_session_id",
+                                advice.session_id);
+        cJSON_AddStringToObject(root, "advice_state",
+                                practice_advice_state_name(advice.state));
+        cJSON_AddBoolToObject(root, "advice_ready",
+                              advice.state == PRACTICE_ADVICE_READY);
+        cJSON_AddStringToObject(root, "advice_message", advice.message);
+        if (advice.error[0] != '\0') {
+            cJSON_AddStringToObject(root, "advice_error", advice.error);
+        }
         if (practice.error[0] != '\0') {
             cJSON_AddStringToObject(root, "practice_error", practice.error);
             cJSON_AddStringToObject(root, "practice_message",
@@ -923,32 +945,51 @@ static esp_err_t ai_sheet_to_score_handler(httpd_req_t *request)
     return send_json(request, "200 OK", response);
 }
 
-typedef struct {
-    char *json;
-} score_result_copy_t;
-
-static esp_err_t copy_score_result(const char *json,
-                                   size_t length,
-                                   void *context)
+static cJSON *build_advice_status_json(
+    const practice_advice_status_t *status,
+    bool include_advice)
 {
-    score_result_copy_t *copy = (score_result_copy_t *)context;
-    if (json == NULL || length == 0 || copy == NULL) {
-        return ESP_ERR_INVALID_ARG;
+    cJSON *root = cJSON_CreateObject();
+    if (root == NULL) return NULL;
+    cJSON_AddBoolToObject(root, "ok", true);
+    cJSON_AddStringToObject(root, "session_id", status->session_id);
+    cJSON_AddStringToObject(root, "state",
+                            practice_advice_state_name(status->state));
+    cJSON_AddBoolToObject(root, "ready",
+                          status->state == PRACTICE_ADVICE_READY);
+    cJSON_AddStringToObject(root, "message", status->message);
+    if (status->error[0] != '\0') {
+        cJSON_AddStringToObject(root, "error_code", status->error);
     }
-    if (heap_caps_get_total_size(MALLOC_CAP_SPIRAM) > 0) {
-        copy->json = heap_caps_malloc(length + 1,
-                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (include_advice && status->state == PRACTICE_ADVICE_READY) {
+        char *advice_json = NULL;
+        if (practice_advice_service_copy_advice(&advice_json, NULL) != ESP_OK) {
+            cJSON_Delete(root);
+            return NULL;
+        }
+        cJSON *advice = cJSON_Parse(advice_json);
+        free(advice_json);
+        if (!cJSON_IsObject(advice)) {
+            cJSON_Delete(advice);
+            cJSON_Delete(root);
+            return NULL;
+        }
+        cJSON_AddItemToObject(root, "advice", advice);
     }
-    if (copy->json == NULL) {
-        copy->json = heap_caps_malloc(length + 1,
-                                      MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    return root;
+}
+
+static esp_err_t practice_advice_handler(httpd_req_t *request)
+{
+    practice_advice_status_t status;
+    practice_advice_service_get_status(&status);
+    cJSON *root = build_advice_status_json(&status, true);
+    if (root == NULL) {
+        return send_error_json(request, "500 Internal Server Error",
+                               "advice_response_build_failed",
+                               "unable to build practice advice response");
     }
-    if (copy->json == NULL) {
-        return ESP_ERR_NO_MEM;
-    }
-    memcpy(copy->json, json, length);
-    copy->json[length] = '\0';
-    return ESP_OK;
+    return send_json(request, "200 OK", root);
 }
 
 static esp_err_t ai_score_handler(httpd_req_t *request)
@@ -963,48 +1004,52 @@ static esp_err_t ai_score_handler(httpd_req_t *request)
                                    "body must be an optional JSON object");
         }
     }
-    if (!deepseek_advice_api_key_configured()) {
-        return send_error_json(request, "503 Service Unavailable",
-                               "deepseek_key_missing",
-                               "DEEPSEEK_API_KEY is not configured in the firmware");
-    }
-
-    score_result_copy_t context = {0};
-    esp_err_t err = scoring_service_with_result(copy_score_result, &context);
-    if (err != ESP_OK || context.json == NULL) {
-        heap_caps_free(context.json);
-        return send_error_json(request, "409 Conflict",
-                               "score_result_not_available",
-                               "complete a practice session before requesting AI advice");
-    }
-
-    char *advice_json = NULL;
-    deepseek_advice_error_t advice_error = deepseek_advice_generate(
-        context.json, &advice_json);
-    heap_caps_free(context.json);
-    if (advice_error != DEEPSEEK_ADVICE_OK || advice_json == NULL) {
-        const char *status = advice_error == DEEPSEEK_ADVICE_ERR_TIMEOUT
-                                 ? "504 Gateway Timeout"
-                                 : "502 Bad Gateway";
-        char message[160];
-        snprintf(message, sizeof(message),
-                 "DeepSeek practice advice failed: %s",
-                 deepseek_advice_error_name(advice_error));
+    practice_advice_status_t status;
+    practice_advice_service_get_status(&status);
+    if (status.state == PRACTICE_ADVICE_READY) {
+        char *advice_json = NULL;
+        if (practice_advice_service_copy_advice(&advice_json, NULL) != ESP_OK) {
+            return send_error_json(request, "500 Internal Server Error",
+                                   "advice_copy_failed",
+                                   "unable to copy practice advice");
+        }
+        cJSON *advice = cJSON_Parse(advice_json);
         free(advice_json);
-        return send_error_json(request, status,
-                               deepseek_advice_error_name(advice_error),
-                               message);
+        if (!cJSON_IsObject(advice)) {
+            cJSON_Delete(advice);
+            return send_error_json(request, "502 Bad Gateway",
+                                   "invalid_advice_json",
+                                   "stored practice advice is invalid");
+        }
+        return send_json(request, "200 OK", advice);
     }
-
-    cJSON *advice = cJSON_Parse(advice_json);
-    free(advice_json);
-    if (!cJSON_IsObject(advice)) {
-        cJSON_Delete(advice);
-        return send_error_json(request, "502 Bad Gateway",
-                               "invalid_advice_json",
-                               "DeepSeek returned invalid practice advice JSON");
+    if (status.state == PRACTICE_ADVICE_WAITING_SCORE ||
+        status.state == PRACTICE_ADVICE_RUNNING) {
+        cJSON *root = build_advice_status_json(&status, false);
+        if (root == NULL) {
+            return send_error_json(request, "500 Internal Server Error",
+                                   "advice_response_build_failed",
+                                   "unable to build practice advice response");
+        }
+        return send_json(request, "202 Accepted", root);
     }
-    return send_json(request, "200 OK", advice);
+    if (status.state == PRACTICE_ADVICE_SKIPPED_OFFLINE) {
+        return send_error_json(request, "409 Conflict",
+                               "advice_skipped_offline", status.message);
+    }
+    if (status.state == PRACTICE_ADVICE_FAILED) {
+        const bool key_missing =
+            strcmp(status.error, "deepseek_key_missing") == 0;
+        return send_error_json(request,
+                               key_missing ? "503 Service Unavailable"
+                                           : "502 Bad Gateway",
+                               status.error[0] != '\0'
+                                   ? status.error : "advice_failed",
+                               status.message);
+    }
+    return send_error_json(request, "409 Conflict",
+                           "advice_not_available",
+                           "complete a practice session before viewing advice");
 }
 
 static bool contains_search_text(const char *text, const char *search)
@@ -1719,9 +1764,27 @@ static esp_err_t practice_start_handler(httpd_req_t *request)
     return send_json(request, "200 OK", response);
 }
 
+typedef struct {
+    httpd_req_t *request;
+    char session_id[SCORING_SESSION_ID_MAX_LENGTH];
+} score_result_send_context_t;
+
 static esp_err_t send_score_result(const char *json,
                                    size_t length,
                                    void *context);
+
+static esp_err_t send_current_score_result(httpd_req_t *request)
+{
+    scoring_service_status_t status;
+    scoring_service_get_status(&status);
+    score_result_send_context_t context = {.request = request};
+    strlcpy(context.session_id, status.practice_session_id,
+            sizeof(context.session_id));
+    httpd_resp_set_status(request, "200 OK");
+    httpd_resp_set_type(request, "application/json; charset=utf-8");
+    httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+    return scoring_service_with_result(send_score_result, &context);
+}
 
 static esp_err_t practice_stop_handler(httpd_req_t *request)
 {
@@ -1753,17 +1816,35 @@ static esp_err_t practice_stop_handler(httpd_req_t *request)
                 : "local scoring failed");
     }
 
-    httpd_resp_set_status(request, "200 OK");
-    httpd_resp_set_type(request, "application/json; charset=utf-8");
-    httpd_resp_set_hdr(request, "Cache-Control", "no-store");
-    return scoring_service_with_result(send_score_result, request);
+    return send_current_score_result(request);
 }
 
 static esp_err_t send_score_result(const char *json,
                                    size_t length,
                                    void *context)
 {
-    return httpd_resp_send((httpd_req_t *)context, json, length);
+    score_result_send_context_t *send = context;
+    if (send == NULL || send->request == NULL || json == NULL ||
+        length < 2 || json[0] != '{') {
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t err = httpd_resp_send_chunk(
+        send->request, "{\"practice_session_id\":\"",
+        HTTPD_RESP_USE_STRLEN);
+    if (err == ESP_OK) {
+        err = httpd_resp_send_chunk(send->request, send->session_id,
+                                    HTTPD_RESP_USE_STRLEN);
+    }
+    if (err == ESP_OK) {
+        err = httpd_resp_send_chunk(send->request, "\",", 2);
+    }
+    if (err == ESP_OK) {
+        err = httpd_resp_send_chunk(send->request, json + 1, length - 1);
+    }
+    if (err == ESP_OK) {
+        err = httpd_resp_send_chunk(send->request, NULL, 0);
+    }
+    return err;
 }
 
 static esp_err_t practice_result_handler(httpd_req_t *request)
@@ -1794,11 +1875,7 @@ static esp_err_t practice_result_handler(httpd_req_t *request)
                                    : "no completed scoring result is available");
     }
 
-    httpd_resp_set_status(request, "200 OK");
-    httpd_resp_set_type(request, "application/json; charset=utf-8");
-    httpd_resp_set_hdr(request, "Cache-Control", "no-store");
-    esp_err_t err = scoring_service_with_result(send_score_result, request);
-    return err;
+    return send_current_score_result(request);
 }
 
 static esp_err_t volume_handler(httpd_req_t *request)
@@ -2047,6 +2124,367 @@ static esp_err_t file_stop_handler(httpd_req_t *request)
                                "WAV 停止命令已加入队列");
 }
 
+static bool safe_wav_upload_name(const char *name)
+{
+    if (name == NULL || name[0] == '\0' ||
+        strlen(name) >= SPEAKER_FILE_NAME_MAX ||
+        strstr(name, "..") != NULL || strchr(name, '/') != NULL ||
+        strchr(name, '\\') != NULL) {
+        return false;
+    }
+    size_t length = strlen(name);
+    return length > 4 && strcasecmp(name + length - 4, ".wav") == 0;
+}
+
+static bool audio_import_allowed(void)
+{
+    scoring_service_status_t practice = {0};
+    scoring_service_get_status(&practice);
+    if (practice.state == SCORING_SERVICE_RECORDING ||
+        practice.state == SCORING_SERVICE_PAUSED ||
+        practice.state == SCORING_SERVICE_SCORING) {
+        return false;
+    }
+    speaker_status_t audio = {0};
+    speaker_service_get_status(&audio);
+    return audio.sd_present &&
+           (audio.state == SPEAKER_STATE_STOPPED ||
+            audio.state == SPEAKER_STATE_ERROR);
+}
+
+static uint16_t read_le16(const uint8_t *value)
+{
+    return (uint16_t)value[0] | ((uint16_t)value[1] << 8);
+}
+
+static uint32_t read_le32(const uint8_t *value)
+{
+    return (uint32_t)value[0] | ((uint32_t)value[1] << 8) |
+           ((uint32_t)value[2] << 16) | ((uint32_t)value[3] << 24);
+}
+
+static bool validate_uploaded_wav(const char *path)
+{
+    FILE *file = fopen(path, "rb");
+    if (file == NULL) return false;
+    uint8_t riff[12];
+    bool valid = fread(riff, 1, sizeof(riff), file) == sizeof(riff) &&
+                 memcmp(riff, "RIFF", 4) == 0 &&
+                 memcmp(riff + 8, "WAVE", 4) == 0;
+    bool format_ok = false;
+    bool data_found = false;
+    while (valid && !(format_ok && data_found)) {
+        uint8_t chunk[8];
+        if (fread(chunk, 1, sizeof(chunk), file) != sizeof(chunk)) break;
+        uint32_t size = read_le32(chunk + 4);
+        if (memcmp(chunk, "fmt ", 4) == 0) {
+            uint8_t format[16];
+            if (size < sizeof(format) ||
+                fread(format, 1, sizeof(format), file) != sizeof(format)) {
+                valid = false;
+                break;
+            }
+            format_ok = read_le16(format) == 1 &&
+                        read_le16(format + 2) == 1 &&
+                        (read_le32(format + 4) == 16000 ||
+                         read_le32(format + 4) == 24000) &&
+                        read_le16(format + 14) == 16;
+            if (size > sizeof(format) &&
+                fseek(file, (long)(size - sizeof(format)), SEEK_CUR) != 0) {
+                valid = false;
+            }
+        } else if (memcmp(chunk, "data", 4) == 0) {
+            data_found = size > 0;
+            if (!format_ok && fseek(file, (long)size, SEEK_CUR) != 0) {
+                valid = false;
+            }
+        } else if (fseek(file, (long)size, SEEK_CUR) != 0) {
+            valid = false;
+        }
+        if (valid && (size & 1U) != 0 && fseek(file, 1, SEEK_CUR) != 0) {
+            valid = false;
+        }
+    }
+    fclose(file);
+    return valid && format_ok && data_found;
+}
+
+static esp_err_t audio_upload_handler(httpd_req_t *request)
+{
+    if (!audio_import_allowed()) {
+        return send_error_json(request, "409 Conflict", "device_busy",
+                               "练习、评分或音乐播放期间不能上传音乐");
+    }
+    if (request->content_len == 0 ||
+        request->content_len > DEVICE_API_AUDIO_UPLOAD_CHUNK_BYTES) {
+        return send_error_json(request, "413 Payload Too Large",
+                               "invalid_audio_chunk",
+                               "单个上传分块不能超过 256KB");
+    }
+
+    char query[DEVICE_API_MAX_QUERY_BYTES + 1] = {0};
+    size_t query_length = httpd_req_get_url_query_len(request);
+    if (query_length == 0 || query_length > DEVICE_API_MAX_QUERY_BYTES ||
+        httpd_req_get_url_query_str(request, query, sizeof(query)) != ESP_OK) {
+        return send_error_json(request, "400 Bad Request", "invalid_query",
+                               "缺少音乐上传参数");
+    }
+    char encoded_name[DEVICE_API_MAX_QUERY_BYTES + 1] = {0};
+    char name[SPEAKER_FILE_NAME_MAX] = {0};
+    if (httpd_query_key_value(query, "name", encoded_name,
+                              sizeof(encoded_name)) != ESP_OK ||
+        decode_query_value(encoded_name, name, sizeof(name)) != ESP_OK ||
+        !safe_wav_upload_name(name)) {
+        return send_error_json(request, "400 Bad Request", "invalid_file",
+                               "文件名必须是安全的 WAV 文件名");
+    }
+    char offset_text[24] = {0};
+    if (httpd_query_key_value(query, "offset", offset_text,
+                              sizeof(offset_text)) != ESP_OK) {
+        return send_error_json(request, "400 Bad Request", "invalid_offset",
+                               "缺少上传偏移量");
+    }
+    char *end = NULL;
+    unsigned long long parsed_offset = strtoull(offset_text, &end, 10);
+    if (offset_text[0] == '\0' || end == NULL || *end != '\0' ||
+        parsed_offset > DEVICE_API_AUDIO_UPLOAD_MAX_BYTES) {
+        return send_error_json(request, "400 Bad Request", "invalid_offset",
+                               "上传偏移量无效");
+    }
+    size_t offset = (size_t)parsed_offset;
+    if (offset + request->content_len > DEVICE_API_AUDIO_UPLOAD_MAX_BYTES) {
+        return send_error_json(request, "413 Payload Too Large",
+                               "audio_too_large", "WAV 文件不能超过 64MB");
+    }
+    char final_text[4] = {0};
+    bool final_chunk = httpd_query_key_value(query, "final", final_text,
+                                              sizeof(final_text)) == ESP_OK &&
+                       strcmp(final_text, "1") == 0;
+
+    if (mkdir(BOARD_SDCARD_WAV_DIRECTORY, 0775) != 0 && errno != EEXIST) {
+        return send_error_json(request, "500 Internal Server Error",
+                               "sd_write_failed", "无法创建 SD 音乐目录");
+    }
+    char final_path[sizeof(BOARD_SDCARD_WAV_DIRECTORY) +
+                    SPEAKER_FILE_NAME_MAX + 2];
+    char part_path[sizeof(BOARD_SDCARD_WAV_DIRECTORY) +
+                   SPEAKER_FILE_NAME_MAX + 8];
+    snprintf(final_path, sizeof(final_path), "%s/%s",
+             BOARD_SDCARD_WAV_DIRECTORY, name);
+    snprintf(part_path, sizeof(part_path), "%s/.%s.part",
+             BOARD_SDCARD_WAV_DIRECTORY, name);
+
+    struct stat info = {0};
+    if (offset > 0 &&
+        (stat(part_path, &info) != 0 || (size_t)info.st_size != offset)) {
+        return send_error_json(request, "409 Conflict", "offset_mismatch",
+                               "上传进度不匹配，请重新上传");
+    }
+    FILE *file = fopen(part_path, offset == 0 ? "wb" : "r+b");
+    if (file == NULL || (offset > 0 && fseek(file, (long)offset, SEEK_SET) != 0)) {
+        if (file != NULL) fclose(file);
+        return send_error_json(request, "500 Internal Server Error",
+                               "sd_write_failed", "无法打开 SD 临时文件");
+    }
+
+    uint8_t buffer[4096];
+    size_t received = 0;
+    bool write_ok = true;
+    while (received < request->content_len) {
+        size_t wanted = request->content_len - received;
+        if (wanted > sizeof(buffer)) wanted = sizeof(buffer);
+        int count = httpd_req_recv(request, (char *)buffer, wanted);
+        if (count == HTTPD_SOCK_ERR_TIMEOUT) continue;
+        if (count <= 0 || fwrite(buffer, 1, (size_t)count, file) != (size_t)count) {
+            write_ok = false;
+            break;
+        }
+        received += (size_t)count;
+    }
+    if (!write_ok || fflush(file) != 0) {
+        (void)ftruncate(fileno(file), (off_t)offset);
+        fclose(file);
+        return send_error_json(request, "500 Internal Server Error",
+                               "sd_write_failed", "音乐分块写入失败");
+    }
+    fclose(file);
+
+    size_t next_offset = offset + received;
+    if (final_chunk) {
+        if (!validate_uploaded_wav(part_path)) {
+            remove(part_path);
+            return send_error_json(request, "400 Bad Request", "invalid_wav",
+                                   "转码结果不是受支持的 WAV 格式");
+        }
+        remove(final_path);
+        if (rename(part_path, final_path) != 0) {
+            return send_error_json(request, "500 Internal Server Error",
+                                   "sd_write_failed", "无法完成音乐文件保存");
+        }
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    if (root != NULL) {
+        cJSON_AddBoolToObject(root, "ok", true);
+        cJSON_AddStringToObject(root, "name", name);
+        cJSON_AddNumberToObject(root, "received", next_offset);
+        cJSON_AddBoolToObject(root, "complete", final_chunk);
+    }
+    return send_json(request, "200 OK", root);
+}
+
+static bool practice_media_busy(void)
+{
+    scoring_service_status_t practice = {0};
+    scoring_service_get_status(&practice);
+    return practice.state == SCORING_SERVICE_RECORDING ||
+           practice.state == SCORING_SERVICE_PAUSED ||
+           practice.state == SCORING_SERVICE_SCORING;
+}
+
+static esp_err_t query_practice_session(httpd_req_t *request,
+                                        char *session_id,
+                                        size_t capacity,
+                                        char *query,
+                                        size_t query_capacity)
+{
+    size_t length = httpd_req_get_url_query_len(request);
+    if (length == 0 || length + 1 > query_capacity ||
+        httpd_req_get_url_query_str(request, query, query_capacity) != ESP_OK) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    char encoded[DEVICE_API_MAX_QUERY_BYTES + 1] = {0};
+    if (httpd_query_key_value(query, "session_id", encoded,
+                              sizeof(encoded)) != ESP_OK ||
+        decode_query_value(encoded, session_id, capacity) != ESP_OK ||
+        session_id[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return ESP_OK;
+}
+
+static esp_err_t practice_photos_handler(httpd_req_t *request)
+{
+    if (practice_media_busy()) {
+        return send_error_json(request, "409 Conflict", "device_busy",
+                               "练习或评分期间暂停读取照片");
+    }
+    char query[DEVICE_API_MAX_QUERY_BYTES + 1] = {0};
+    char session_id[64] = {0};
+    if (query_practice_session(request, session_id, sizeof(session_id),
+                               query, sizeof(query)) != ESP_OK) {
+        return send_error_json(request, "400 Bad Request", "invalid_session",
+                               "缺少有效的练习会话编号");
+    }
+    size_t page = 1;
+    size_t page_size = DEVICE_API_PHOTO_PAGE_SIZE;
+    if (query_size_value(query, "page", 1, 1000000, &page) != ESP_OK ||
+        query_size_value(query, "page_size", DEVICE_API_PHOTO_PAGE_SIZE,
+                         DEVICE_API_PHOTO_PAGE_SIZE, &page_size) != ESP_OK) {
+        return send_error_json(request, "400 Bad Request", "invalid_page",
+                               "照片分页参数无效");
+    }
+    uint32_t count = 0;
+    esp_err_t err = s3_camera_node_list_photos(session_id, &count);
+    if (err != ESP_OK) {
+        return send_error_json(request,
+                               err == ESP_ERR_TIMEOUT
+                                   ? "504 Gateway Timeout" : "404 Not Found",
+                               "photos_unavailable",
+                               "摄像头板离线、SD 卡不可用或没有本次照片");
+    }
+    size_t total_pages = count == 0 ? 0 :
+                         ((size_t)count + page_size - 1) / page_size;
+    if (total_pages > 0 && page > total_pages) page = total_pages;
+    size_t start = (page - 1) * page_size + 1;
+    size_t end_index = start + page_size;
+    if (end_index > (size_t)count + 1) end_index = (size_t)count + 1;
+    cJSON *root = cJSON_CreateObject();
+    if (root != NULL) {
+        cJSON_AddBoolToObject(root, "ok", true);
+        cJSON_AddStringToObject(root, "session_id", session_id);
+        cJSON_AddNumberToObject(root, "total", count);
+        cJSON_AddNumberToObject(root, "page", page);
+        cJSON_AddNumberToObject(root, "page_size", page_size);
+        cJSON_AddNumberToObject(root, "total_pages", total_pages);
+        cJSON *photos = cJSON_AddArrayToObject(root, "photos");
+        for (size_t index = start; photos != NULL && index < end_index; ++index) {
+            cJSON *item = cJSON_CreateObject();
+            if (item == NULL) break;
+            cJSON_AddNumberToObject(item, "index", index);
+            char name[16];
+            snprintf(name, sizeof(name), "I%06u.JPG", (unsigned)index);
+            cJSON_AddStringToObject(item, "name", name);
+            cJSON_AddItemToArray(photos, item);
+        }
+    }
+    return send_json(request, "200 OK", root);
+}
+
+typedef struct {
+    httpd_req_t *request;
+    bool started;
+} photo_http_context_t;
+
+static esp_err_t send_photo_http_chunk(const uint8_t *data,
+                                       size_t length,
+                                       size_t total_length,
+                                       bool first_chunk,
+                                       void *context)
+{
+    photo_http_context_t *photo = (photo_http_context_t *)context;
+    if (photo == NULL || photo->request == NULL) return ESP_ERR_INVALID_ARG;
+    if (first_chunk) {
+        (void)total_length;
+        httpd_resp_set_type(photo->request, "image/jpeg");
+        httpd_resp_set_hdr(photo->request, "Cache-Control", "no-store");
+        photo->started = true;
+    }
+    return httpd_resp_send_chunk(photo->request, (const char *)data, length);
+}
+
+static esp_err_t practice_photo_handler(httpd_req_t *request)
+{
+    if (practice_media_busy()) {
+        return send_error_json(request, "409 Conflict", "device_busy",
+                               "练习或评分期间暂停读取照片");
+    }
+    char query[DEVICE_API_MAX_QUERY_BYTES + 1] = {0};
+    char session_id[64] = {0};
+    if (query_practice_session(request, session_id, sizeof(session_id),
+                               query, sizeof(query)) != ESP_OK) {
+        return send_error_json(request, "400 Bad Request", "invalid_session",
+                               "缺少有效的练习会话编号");
+    }
+    char index_text[16] = {0};
+    if (httpd_query_key_value(query, "index", index_text,
+                              sizeof(index_text)) != ESP_OK) {
+        return send_error_json(request, "400 Bad Request", "invalid_photo",
+                               "缺少照片编号");
+    }
+    char *end = NULL;
+    unsigned long index = strtoul(index_text, &end, 10);
+    if (index == 0 || index > 999999 || end == NULL || *end != '\0') {
+        return send_error_json(request, "400 Bad Request", "invalid_photo",
+                               "照片编号无效");
+    }
+    photo_http_context_t context = {.request = request, .started = false};
+    esp_err_t err = s3_camera_node_stream_photo(
+        session_id, (uint32_t)index, send_photo_http_chunk, &context);
+    if (context.started) {
+        (void)httpd_resp_send_chunk(request, NULL, 0);
+        return ESP_OK;
+    }
+    if (err != ESP_OK) {
+        return send_error_json(request,
+                               err == ESP_ERR_TIMEOUT
+                                   ? "504 Gateway Timeout" : "404 Not Found",
+                               "photo_unavailable",
+                               "照片读取失败，请检查摄像头板和 SD 卡");
+    }
+    return ESP_OK;
+}
+
 esp_err_t device_api_start(void)
 {
     if (s_server != NULL) {
@@ -2059,7 +2497,7 @@ esp_err_t device_api_start(void)
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 36;
+    config.max_uri_handlers = 40;
     config.max_open_sockets = DEVICE_API_MAX_OPEN_SOCKETS;
     config.stack_size = 16384;
     /* Request handlers can commit NVS and access partition-backed storage.
@@ -2115,6 +2553,8 @@ esp_err_t device_api_start(void)
          .handler = practice_stop_handler},
         {.uri = "/api/result", .method = HTTP_GET,
          .handler = practice_result_handler},
+        {.uri = "/api/practice/advice", .method = HTTP_GET,
+         .handler = practice_advice_handler},
         {.uri = "/api/ai/sheet_to_score", .method = HTTP_POST,
          .handler = ai_sheet_to_score_handler},
         {.uri = "/api/ai/score", .method = HTTP_POST,
@@ -2137,12 +2577,18 @@ esp_err_t device_api_start(void)
          .handler = metronome_stop_handler},
         {.uri = "/api/audio/files", .method = HTTP_GET,
          .handler = files_handler},
+        {.uri = "/api/audio/upload", .method = HTTP_POST,
+         .handler = audio_upload_handler},
         {.uri = "/api/audio/file/play", .method = HTTP_POST,
          .handler = file_play_handler},
         {.uri = "/api/audio/file/pause", .method = HTTP_POST,
          .handler = file_pause_handler},
         {.uri = "/api/audio/file/stop", .method = HTTP_POST,
          .handler = file_stop_handler},
+        {.uri = "/api/practice/photos", .method = HTTP_GET,
+         .handler = practice_photos_handler},
+        {.uri = "/api/practice/photo", .method = HTTP_GET,
+         .handler = practice_photo_handler},
     };
     for (size_t index = 0; index < sizeof(routes) / sizeof(routes[0]); ++index) {
         err = httpd_register_uri_handler(s_server, &routes[index]);

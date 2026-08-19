@@ -115,9 +115,11 @@ void start_recording(SdStorage &storage,
                      SessionState &state,
                      bool &stopping,
                      int64_t &next_photo_ms,
-                     int64_t current_ms)
+                     int64_t current_ms,
+                     const char *practice_session_id)
 {
-    const bool session_ready = storage.start_session(current_ms);
+    const bool session_ready = storage.start_session(current_ms,
+                                                     practice_session_id);
     if (!session_ready) {
         ESP_LOGW(TAG, "recording started without SD photo storage");
     }
@@ -126,14 +128,14 @@ void start_recording(SdStorage &storage,
     next_photo_ms = current_ms + vision_config::kPhotoIntervalMs;
 }
 
-void apply_p4_practice_state(P4PracticeState p4_state,
+void apply_p4_practice_state(const P4PracticeStateEvent &p4_event,
                              SdStorage &storage,
                              SessionState &state,
                              bool &stopping,
                              int64_t &next_photo_ms,
                              int64_t current_ms)
 {
-    switch (p4_state) {
+    switch (p4_event.state) {
     case P4PracticeState::PLAYING:
         if (stopping) {
             ESP_LOGW(TAG, "P4 resumed before the previous SD session finished");
@@ -144,7 +146,8 @@ void apply_p4_practice_state(P4PracticeState p4_state,
             next_photo_ms = current_ms + vision_config::kPhotoIntervalMs;
         } else {
             start_recording(storage, state, stopping,
-                            next_photo_ms, current_ms);
+                            next_photo_ms, current_ms,
+                            p4_event.session_id);
         }
         break;
     case P4PracticeState::PAUSED:
@@ -206,6 +209,7 @@ extern "C" void app_main(void)
         ESP_LOGW(TAG, "continuing without P4 control link: %s",
                  esp_err_to_name(p4_link_result));
     }
+    p4_control_link_set_photo_storage(&storage);
 
     GestureEngine gesture_engine;
     bool stopping = false;
@@ -254,9 +258,9 @@ extern "C" void app_main(void)
                      static_cast<unsigned>(ack.command), ack.handled);
         }
 
-        P4PracticeState p4_practice_state;
-        while (p4_control_link_receive_practice_state(p4_practice_state)) {
-            apply_p4_practice_state(p4_practice_state, storage, state,
+        P4PracticeStateEvent p4_practice_event;
+        while (p4_control_link_receive_practice_state(p4_practice_event)) {
+            apply_p4_practice_state(p4_practice_event, storage, state,
                                     stopping, next_photo_ms, now_ms());
         }
 

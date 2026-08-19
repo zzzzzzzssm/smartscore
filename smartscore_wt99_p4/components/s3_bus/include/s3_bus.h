@@ -11,11 +11,15 @@ extern "C" {
 
 #define S3_MUSIC_POLY_MAX_NOTES 4
 #define S3_MUSIC_POLY_NAME_MAX 16
+#define S3_MUSIC_DIAGNOSTIC_MAX_RAW 4
+#define S3_MUSIC_DIAGNOSTIC_MAX_NOTES 3
+#define S3_MUSIC_DIAGNOSTIC_REASON_MAX 32
 
 typedef enum {
     S3_MUSIC_EVENT_NOTE_ON = 0,
     S3_MUSIC_EVENT_NOTE_OFF,
     S3_MUSIC_EVENT_POLY,
+    S3_MUSIC_EVENT_DIAGNOSTIC,
 } s3_music_event_type_t;
 
 typedef enum {
@@ -23,6 +27,21 @@ typedef enum {
     S3_MUSIC_POLY_INTERVAL,
     S3_MUSIC_POLY_CHORD,
 } s3_music_poly_kind_t;
+
+typedef enum {
+    S3_MUSIC_RESULT_UNKNOWN = 0,
+    S3_MUSIC_RESULT_SILENCE,
+    S3_MUSIC_RESULT_SINGLE,
+    S3_MUSIC_RESULT_INTERVAL,
+    S3_MUSIC_RESULT_CHORD,
+} s3_music_result_kind_t;
+
+typedef struct {
+    uint8_t source;
+    uint8_t midi;
+    float frequency_hz;
+    float confidence;
+} s3_music_diagnostic_candidate_t;
 
 typedef enum {
     S3_MUSIC_STREAM_PROFILE_STRICT = 0,
@@ -46,6 +65,18 @@ typedef struct {
     uint8_t note_count;
     uint8_t notes[S3_MUSIC_POLY_MAX_NOTES];
     char poly_name[S3_MUSIC_POLY_NAME_MAX];
+    uint8_t diagnostic_raw_count;
+    s3_music_diagnostic_candidate_t
+        diagnostic_raw[S3_MUSIC_DIAGNOSTIC_MAX_RAW];
+    s3_music_result_kind_t diagnostic_candidate_kind;
+    uint8_t diagnostic_candidate_count;
+    uint8_t diagnostic_candidate_notes[S3_MUSIC_DIAGNOSTIC_MAX_NOTES];
+    s3_music_result_kind_t diagnostic_final_kind;
+    uint8_t diagnostic_final_count;
+    uint8_t diagnostic_final_notes[S3_MUSIC_DIAGNOSTIC_MAX_NOTES];
+    int8_t diagnostic_octave_shift;
+    float diagnostic_snr_db[3];
+    char diagnostic_reject[S3_MUSIC_DIAGNOSTIC_REASON_MAX];
 } s3_music_event_t;
 
 typedef void (*s3_music_event_handler_t)(const s3_music_event_t *event,

@@ -40,6 +40,6 @@ inline constexpr gpio_num_t SDMMC_PIN_CD = GPIO_NUM_41;
 inline constexpr int P4_LINK_UART_PORT = 1;
 inline constexpr gpio_num_t P4_LINK_UART_TX = GPIO_NUM_1;
 inline constexpr gpio_num_t P4_LINK_UART_RX = GPIO_NUM_2;
-inline constexpr int P4_LINK_UART_BAUD_RATE = 115200;
+inline constexpr int P4_LINK_UART_BAUD_RATE = 921600;
 
 } // namespace board

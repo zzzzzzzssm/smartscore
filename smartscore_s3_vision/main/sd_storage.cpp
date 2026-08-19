@@ -27,6 +27,23 @@ bool ensure_directory(const char *path)
     ESP_LOGE(TAG, "mkdir(%s) failed: errno=%d", path, errno);
     return false;
 }
+
+bool valid_practice_session_id(const char *value)
+{
+    if (value == nullptr || value[0] == '\0' || std::strlen(value) >= 64) {
+        return false;
+    }
+    for (const unsigned char *cursor =
+             reinterpret_cast<const unsigned char *>(value);
+         *cursor != '\0'; ++cursor) {
+        const bool allowed = (*cursor >= 'a' && *cursor <= 'z') ||
+                             (*cursor >= 'A' && *cursor <= 'Z') ||
+                             (*cursor >= '0' && *cursor <= '9') ||
+                             *cursor == '-' || *cursor == '_';
+        if (!allowed) return false;
+    }
+    return true;
+}
 } // namespace
 
 esp_err_t SdStorage::init()
@@ -94,7 +111,8 @@ esp_err_t SdStorage::init()
     return ESP_OK;
 }
 
-bool SdStorage::start_session(int64_t start_time_ms)
+bool SdStorage::start_session(int64_t start_time_ms,
+                              const char *practice_session_id)
 {
     if (!saving_available_.load() || queue_ == nullptr || !writer_idle()) {
         return false;
@@ -119,6 +137,11 @@ bool SdStorage::start_session(int64_t start_time_ms)
     saved_count_.store(0);
     next_photo_index_ = 0;
     session_start_time_ms_ = start_time_ms;
+    practice_session_id_[0] = '\0';
+    if (valid_practice_session_id(practice_session_id)) {
+        std::snprintf(practice_session_id_, sizeof(practice_session_id_),
+                      "%s", practice_session_id);
+    }
     session_active_ = true;
     if (!write_session_file(0)) {
         session_active_ = false;
@@ -224,6 +247,100 @@ uint32_t SdStorage::saved_photo_count() const
     return saved_count_.load();
 }
 
+bool SdStorage::find_photo_session(const char *practice_session_id,
+                                   uint32_t *out_photo_count,
+                                   char *out_directory,
+                                   size_t directory_capacity) const
+{
+    if (!card_available_.load() ||
+        !valid_practice_session_id(practice_session_id) ||
+        out_photo_count == nullptr || out_directory == nullptr ||
+        directory_capacity == 0) {
+        return false;
+    }
+
+    DIR *root = opendir(vision_config::kStorageRoot);
+    if (root == nullptr) return false;
+    bool found = false;
+    while (dirent *entry = readdir(root)) {
+        uint32_t numeric_id = 0;
+        char trailing = '\0';
+        if (std::strlen(entry->d_name) != 5 ||
+            std::sscanf(entry->d_name, "S%" SCNu32 "%c",
+                        &numeric_id, &trailing) != 1 ||
+            numeric_id == 0 || numeric_id > 9999) {
+            continue;
+        }
+        char directory[vision_config::kSessionPathBufferSize] = {};
+        char metadata[vision_config::kPhotoPathBufferSize] = {};
+        if (std::snprintf(directory, sizeof(directory), "%s/%s",
+                          vision_config::kStorageRoot, entry->d_name) <= 0 ||
+            std::snprintf(metadata, sizeof(metadata), "%s/SESSION.TXT",
+                          directory) <= 0) {
+            continue;
+        }
+        FILE *file = std::fopen(metadata, "rb");
+        if (file == nullptr) continue;
+        char line[128] = {};
+        char stored_session[64] = {};
+        uint32_t photo_count = 0;
+        while (std::fgets(line, sizeof(line), file) != nullptr) {
+            if (std::strncmp(line, "practice_session_id=", 20) == 0) {
+                const char *value = line + 20;
+                const size_t length = std::strcspn(value, "\r\n");
+                if (length == 0 || length >= sizeof(stored_session)) {
+                    stored_session[0] = '\0';
+                    continue;
+                }
+                std::memcpy(stored_session, value, length);
+                stored_session[length] = '\0';
+            } else {
+                (void)std::sscanf(line, "photo_count=%" SCNu32,
+                                  &photo_count);
+            }
+        }
+        std::fclose(file);
+        if (std::strcmp(stored_session, practice_session_id) == 0) {
+            if (std::strlen(directory) + 1 > directory_capacity) break;
+            std::snprintf(out_directory, directory_capacity, "%s", directory);
+            *out_photo_count = photo_count;
+            found = true;
+            break;
+        }
+    }
+    closedir(root);
+    return found;
+}
+
+bool SdStorage::photo_file_info(const char *practice_session_id,
+                                uint32_t photo_index,
+                                char *out_path,
+                                size_t path_capacity,
+                                size_t *out_size) const
+{
+    if (photo_index == 0 || out_path == nullptr || path_capacity == 0 ||
+        out_size == nullptr) {
+        return false;
+    }
+    uint32_t photo_count = 0;
+    char directory[vision_config::kSessionPathBufferSize] = {};
+    if (!find_photo_session(practice_session_id, &photo_count,
+                            directory, sizeof(directory)) ||
+        photo_index > photo_count) {
+        return false;
+    }
+    const int length = std::snprintf(out_path, path_capacity,
+                                     "%s/I%06" PRIu32 ".JPG",
+                                     directory, photo_index);
+    if (length <= 0 || static_cast<size_t>(length) >= path_capacity) {
+        return false;
+    }
+    struct stat info = {};
+    if (stat(out_path, &info) != 0 || info.st_size <= 0) return false;
+    *out_size = static_cast<size_t>(info.st_size);
+    return true;
+}
+
 void SdStorage::writer_task_entry(void *context)
 {
     static_cast<SdStorage *>(context)->writer_task();
@@ -309,11 +426,13 @@ bool SdStorage::write_session_file(int64_t end_time_ms)
 
     const int written = std::fprintf(file,
                                      "session_id=%" PRIu32 "\n"
+                                     "practice_session_id=%s\n"
                                      "photo_interval_ms=%" PRId64 "\n"
                                      "photo_count=%" PRIu32 "\n"
                                      "start_time_ms=%" PRId64 "\n"
                                      "end_time_ms=%" PRId64 "\n",
                                      session_id_,
+                                     practice_session_id_,
                                      vision_config::kPhotoIntervalMs,
                                      saved_count_.load(),
                                      session_start_time_ms_,

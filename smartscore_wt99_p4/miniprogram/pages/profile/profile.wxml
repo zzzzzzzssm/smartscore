@@ -53,6 +53,14 @@
         </view>
         <view class="chevron">›</view>
       </view>
+      <view class="menu-item" bindtap="clearCache">
+        <view class="menu-icon cache-icon">⌫</view>
+        <view class="menu-copy">
+          <view class="menu-title">清理缓存</view>
+          <view class="hint">清除设备连接信息，保留乐谱和练习记录</view>
+        </view>
+        <view class="chevron">›</view>
+      </view>
     </view>
   </view>
 </view>

@@ -364,3 +364,23 @@
   box-sizing: border-box;
   white-space: nowrap;
 }
+
+.advice-btn.advice-running {
+  color: #b45309;
+  border-color: #f4c98d;
+  background: #fff7ed;
+}
+
+.advice-btn.advice-ready {
+  color: #ffffff;
+  border-color: #0f766e;
+  background: #0f766e;
+}
+
+.advice-btn.advice-skipped_offline,
+.advice-btn.advice-failed,
+.advice-btn.advice-sync_missed {
+  color: #b42318;
+  border-color: #fecaca;
+  background: #fff1f2;
+}

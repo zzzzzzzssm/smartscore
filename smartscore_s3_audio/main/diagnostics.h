@@ -12,6 +12,9 @@ typedef struct {
     volatile uint32_t mic1_fft_time_us;
     volatile uint32_t mic2_fft_time_us;
     volatile uint32_t chord_time_us;
+    volatile uint32_t low_yin_time_us;
+    volatile uint32_t low_spectrum_time_us;
+    volatile uint32_t diagnostic_drop_count;
     volatile uint32_t dsp_cycle_time_us;
     volatile uint32_t dsp_cycle_max_us;
     volatile uint64_t dsp_cycle_sum_us;

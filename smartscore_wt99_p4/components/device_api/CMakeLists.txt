@@ -6,8 +6,8 @@ idf_component_register(
         json
         compact_score
         dashscope_omr
-        deepseek_advice
         network_provisioning
+        practice_advice_service
         score_capture
         speaker_service
         usb_midi
@@ -17,4 +17,6 @@ idf_component_register(
         screen_legacy_storage
         input_source_manager
         heap
+        board_wt99
+        s3_bus
 )

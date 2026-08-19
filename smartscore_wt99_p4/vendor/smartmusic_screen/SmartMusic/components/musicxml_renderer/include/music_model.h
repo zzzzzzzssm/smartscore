@@ -114,6 +114,8 @@ typedef struct {
     uint8_t articulations;
     uint8_t slur_start;
     uint8_t slur_stop;
+    uint8_t gliss_start;
+    uint8_t gliss_stop;
     bool chord;
     bool grace;
 } music_note_t;

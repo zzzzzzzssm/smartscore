@@ -11,6 +11,7 @@
 #include "freertos/task.h"
 #include "input_source_manager.h"
 #include "performance_recorder.h"
+#include "practice_advice_service.h"
 #include "score_data.h"
 #include "score_engine.h"
 #include "s3_bus.h"
@@ -68,6 +69,10 @@ static void set_error_locked(esp_err_t error,
                              const char *code,
                              const char *message)
 {
+    const bool advice_session_active =
+        s_service.status.state == SCORING_SERVICE_RECORDING ||
+        s_service.status.state == SCORING_SERVICE_PAUSED ||
+        s_service.status.state == SCORING_SERVICE_SCORING;
     s_service.status.state = SCORING_SERVICE_ERROR;
     s_service.status.last_error = error;
     strlcpy(s_service.status.error,
@@ -76,6 +81,10 @@ static void set_error_locked(esp_err_t error,
     strlcpy(s_service.status.message,
             message != NULL ? message : s_service.status.error,
             sizeof(s_service.status.message));
+    if (advice_session_active) {
+        practice_advice_service_score_failed(s_service.status.error,
+                                             s_service.status.message);
+    }
 }
 
 static void scoring_task(void *argument)
@@ -96,6 +105,17 @@ static void scoring_task(void *argument)
             engine_error, sizeof(engine_error));
         score_document_release(&job.score);
         performance_snapshot_release(&job.performance);
+
+        if (err == ESP_OK) {
+            esp_err_t advice_err = practice_advice_service_submit_score(
+                result_json, result_length);
+            if (advice_err != ESP_OK &&
+                advice_err != ESP_ERR_INVALID_STATE &&
+                advice_err != ESP_ERR_NOT_SUPPORTED) {
+                ESP_LOGW(TAG, "unable to queue practice advice: %s",
+                         esp_err_to_name(advice_err));
+            }
+        }
 
         xSemaphoreTake(s_service.lock, portMAX_DELAY);
         s_service.status.target_count = target_count;
@@ -131,6 +151,12 @@ esp_err_t scoring_service_init(void)
 {
     if (s_service.lock != NULL) {
         return ESP_OK;
+    }
+    esp_err_t advice_err = practice_advice_service_init();
+    if (advice_err != ESP_OK) {
+        ESP_LOGE(TAG, "practice advice init failed: %s",
+                 esp_err_to_name(advice_err));
+        return advice_err;
     }
     memset(&s_service, 0, sizeof(s_service));
     s_service.lock = xSemaphoreCreateMutex();
@@ -222,6 +248,18 @@ esp_err_t scoring_service_start(const char *input_source,
     if (err != ESP_OK) {
         set_error_locked(err, "performance_recorder_start_failed",
                          "unable to allocate the performance buffer");
+        xSemaphoreGive(s_service.lock);
+        input_source_manager_unlock();
+        return err;
+    }
+    err = practice_advice_service_begin_session(
+        s_service.status.practice_session_id,
+        sizeof(s_service.status.practice_session_id));
+    if (err != ESP_OK) {
+        performance_recorder_abort(err, "practice_advice_start_failed",
+                                   "unable to start practice advice session");
+        set_error_locked(err, "practice_advice_start_failed",
+                         "unable to start practice advice session");
         xSemaphoreGive(s_service.lock);
         input_source_manager_unlock();
         return err;

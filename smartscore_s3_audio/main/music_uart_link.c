@@ -16,6 +16,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "diagnostics.h"
 #include "music_detector_config.h"
 
 #define MUSIC_LINK_JSON_BUFFER_SIZE 384
@@ -38,12 +39,14 @@ typedef struct {
 typedef enum {
     LINK_STATE_RESULT = 0,
     LINK_STATE_READY,
+    LINK_STATE_DIAGNOSTIC,
 } link_state_event_type_t;
 
 typedef struct {
     link_state_event_type_t type;
     union {
         music_result_t result;
+        music_diagnostic_t diagnostic;
         bool ready;
     } data;
 } link_state_event_t;
@@ -142,11 +145,11 @@ static uint32_t next_seq(music_link_state_t *state)
     return state->seq;
 }
 
-static void send_checked_json(char *json, size_t capacity, int length)
+static bool send_checked_json(char *json, size_t capacity, int length)
 {
     if (length < 0 || (size_t)length >= capacity - 1U) {
         increment_drop();
-        return;
+        return false;
     }
     json[length++] = '\n';
     json[length] = '\0';
@@ -158,6 +161,112 @@ static void send_checked_json(char *json, size_t capacity, int length)
     if (s_output_queue == NULL ||
         xQueueSend(s_output_queue, &frame, 0) != pdTRUE) {
         increment_drop();
+        return false;
+    }
+    return true;
+}
+
+static const char *diagnostic_type_name(music_result_type_t type)
+{
+    switch (type) {
+        case MUSIC_RESULT_SINGLE: return "single";
+        case MUSIC_RESULT_INTERVAL: return "interval";
+        case MUSIC_RESULT_CHORD: return "chord";
+        case MUSIC_RESULT_SILENCE: return "silence";
+        case MUSIC_RESULT_UNKNOWN:
+        default: return "unknown";
+    }
+}
+
+static bool append_diagnostic_notes(char *output, size_t capacity,
+                                    size_t *used, const int *notes,
+                                    int note_count)
+{
+    if (*used + 2 > capacity) return false;
+    output[(*used)++] = '[';
+    for (int index = 0; index < note_count; ++index) {
+        const int length = snprintf(output + *used, capacity - *used,
+                                    index == 0 ? "%d" : ",%d",
+                                    notes[index]);
+        if (length < 0 || (size_t)length >= capacity - *used) return false;
+        *used += (size_t)length;
+    }
+    if (*used + 2 > capacity) return false;
+    output[(*used)++] = ']';
+    output[*used] = '\0';
+    return true;
+}
+
+static bool append_diagnostic_raw(char *output, size_t capacity,
+                                  size_t *used,
+                                  const music_diagnostic_t *diagnostic)
+{
+    if (*used + 2 > capacity) return false;
+    output[(*used)++] = '[';
+    for (int index = 0; index < diagnostic->raw_candidate_count; ++index) {
+        const music_diagnostic_candidate_t *candidate =
+            &diagnostic->raw_candidates[index];
+        const int length = snprintf(
+            output + *used, capacity - *used,
+            index == 0 ? "[%d,%d,%.1f,%.2f]" : ",[%d,%d,%.1f,%.2f]",
+            (int)candidate->source, candidate->midi,
+            (double)finite_or_zero(candidate->frequency_hz),
+            (double)confidence_value(candidate->confidence));
+        if (length < 0 || (size_t)length >= capacity - *used) return false;
+        *used += (size_t)length;
+    }
+    if (*used + 2 > capacity) return false;
+    output[(*used)++] = ']';
+    output[*used] = '\0';
+    return true;
+}
+
+static void send_diagnostic(music_link_state_t *state,
+                            const music_diagnostic_t *diagnostic)
+{
+    if (!state->stream_enabled) return;
+    char raw[150];
+    char candidate_notes[24];
+    char final_notes[24];
+    size_t used = 0;
+    if (!append_diagnostic_raw(raw, sizeof(raw), &used, diagnostic)) {
+        ++diagnostics_counters()->diagnostic_drop_count;
+        increment_drop();
+        return;
+    }
+    used = 0;
+    if (!append_diagnostic_notes(candidate_notes, sizeof(candidate_notes),
+                                 &used, diagnostic->candidate_notes,
+                                 diagnostic->candidate_note_count)) {
+        ++diagnostics_counters()->diagnostic_drop_count;
+        increment_drop();
+        return;
+    }
+    used = 0;
+    if (!append_diagnostic_notes(final_notes, sizeof(final_notes), &used,
+                                 diagnostic->final_notes,
+                                 diagnostic->final_note_count)) {
+        ++diagnostics_counters()->diagnostic_drop_count;
+        increment_drop();
+        return;
+    }
+    char json[MUSIC_LINK_JSON_BUFFER_SIZE];
+    const int length = snprintf(
+        json, sizeof(json) - 1U,
+        "{\"v\":1,\"type\":\"diagnostic\",\"seq\":%" PRIu32
+        ",\"sid\":%" PRIu32 ",\"ts_ms\":%" PRIu32
+        ",\"raw\":%s,\"candidate_kind\":\"%s\",\"candidate\":%s"
+        ",\"final_kind\":\"%s\",\"final\":%s,\"reject\":\"%s\""
+        ",\"octave\":%d,\"snr\":[%.1f,%.1f,%.1f]}",
+        next_seq(state), state->sid, diagnostic->timestamp_ms, raw,
+        diagnostic_type_name(diagnostic->candidate_type), candidate_notes,
+        diagnostic_type_name(diagnostic->final_type), final_notes,
+        diagnostic->reject_reason, diagnostic->octave_shift,
+        (double)finite_or_zero(diagnostic->band_snr_db[0]),
+        (double)finite_or_zero(diagnostic->band_snr_db[1]),
+        (double)finite_or_zero(diagnostic->band_snr_db[2]));
+    if (!send_checked_json(json, sizeof(json), length)) {
+        ++diagnostics_counters()->diagnostic_drop_count;
     }
 }
 
@@ -703,6 +812,8 @@ static void music_link_tx_task(void *argument)
                 state.ready = state_event.data.ready;
                 if (state.ready) send_hello(&state, now_ms());
                 send_status(&state, now_ms(), state.ready ? "ready" : "audio_error");
+            } else if (state_event.type == LINK_STATE_DIAGNOSTIC) {
+                send_diagnostic(&state, &state_event.data.diagnostic);
             } else {
                 process_result(&state, &state_event.data.result);
             }
@@ -849,4 +960,17 @@ void music_uart_link_submit_pitch(const music_result_t *result)
         .rms = result->rms,
     };
     if (xQueueSend(s_pitch_queue, &event, 0) != pdTRUE) increment_drop();
+}
+
+void music_uart_link_submit_diagnostic(const music_diagnostic_t *diagnostic)
+{
+    if (s_state_queue == NULL || diagnostic == NULL) return;
+    const link_state_event_t event = {
+        .type = LINK_STATE_DIAGNOSTIC,
+        .data.diagnostic = *diagnostic,
+    };
+    if (xQueueSend(s_state_queue, &event, 0) != pdTRUE) {
+        ++diagnostics_counters()->diagnostic_drop_count;
+        increment_drop();
+    }
 }

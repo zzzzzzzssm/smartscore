@@ -69,6 +69,19 @@ static void fft_magnitude(const float *ring, size_t write_position, float *magni
     }
 }
 
+bool chord_detector_fft_magnitude_window(const float *ring,
+                                         size_t write_position,
+                                         float *magnitude,
+                                         size_t magnitude_count)
+{
+    if (!s_initialized || ring == NULL || magnitude == NULL ||
+        magnitude_count < FFT_BIN_COUNT) {
+        return false;
+    }
+    fft_magnitude(ring, write_position, magnitude);
+    return true;
+}
+
 static float estimate_noise_floor(const float *magnitude, int first_bin, int last_bin)
 {
     uint16_t histogram[NOISE_HISTOGRAM_BINS] = {0};

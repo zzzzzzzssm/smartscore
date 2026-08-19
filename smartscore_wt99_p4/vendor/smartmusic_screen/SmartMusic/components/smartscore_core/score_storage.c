@@ -518,9 +518,11 @@ esp_err_t score_storage_save_midi_auto(const midi_data_t *score,
 
     cJSON *root = cJSON_CreateObject();
     cJSON *notes = cJSON_CreateArray();
-    if (!root || !notes) {
+    cJSON *raw_events = cJSON_CreateArray();
+    if (!root || !notes || !raw_events) {
         cJSON_Delete(root);
         cJSON_Delete(notes);
+        cJSON_Delete(raw_events);
         return ESP_ERR_NO_MEM;
     }
     cJSON_AddStringToObject(root, "title", title);
@@ -532,6 +534,7 @@ esp_err_t score_storage_save_midi_auto(const midi_data_t *score,
     cJSON_AddStringToObject(root, "staff_mode",
                             grand_staff ? "grand" : "single");
     cJSON_AddItemToObject(root, "notes", notes);
+    cJSON_AddItemToObject(root, "performance_events", raw_events);
 
     double seconds_per_tick =
         60.0 / ((double)bpm * (double)ticks_per_quarter);
@@ -554,7 +557,30 @@ esp_err_t score_storage_save_midi_auto(const midi_data_t *score,
                                 source->staff == 2 ? 2 : 1);
         cJSON_AddNumberToObject(note, "voice",
                                 source->voice > 0 ? source->voice : 1);
+        cJSON_AddNumberToObject(note, "dots", source->dots);
+        cJSON_AddNumberToObject(note, "tie_flags", source->tie_flags);
+        cJSON_AddNumberToObject(note, "slur_start", source->slur_start);
+        cJSON_AddNumberToObject(note, "slur_stop", source->slur_stop);
+        cJSON_AddNumberToObject(note, "gliss_start", source->gliss_start);
+        cJSON_AddNumberToObject(note, "gliss_stop", source->gliss_stop);
         cJSON_AddItemToArray(notes, note);
+    }
+
+    for (int i = 0; i < score->raw_event_count; ++i) {
+        const midi_raw_event_t *source = &score->raw_events[i];
+        cJSON *event = cJSON_CreateObject();
+        if (!event) {
+            cJSON_Delete(root);
+            return ESP_ERR_NO_MEM;
+        }
+        cJSON_AddStringToObject(event, "type",
+            source->type == MIDI_RAW_PITCH_BEND ? "pitch_bend" :
+                                                  "control_change");
+        cJSON_AddNumberToObject(event, "tick", source->tick);
+        cJSON_AddNumberToObject(event, "channel", source->channel);
+        cJSON_AddNumberToObject(event, "data1", source->data1);
+        cJSON_AddNumberToObject(event, "value", source->value);
+        cJSON_AddItemToArray(raw_events, event);
     }
 
     char *json = cJSON_PrintUnformatted(root);

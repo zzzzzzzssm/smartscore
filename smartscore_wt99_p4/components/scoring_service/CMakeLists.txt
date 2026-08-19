@@ -4,6 +4,7 @@ idf_component_register(
     REQUIRES
         common
         performance_recorder
+        practice_advice_service
         score_data
         score_engine
         input_source_manager

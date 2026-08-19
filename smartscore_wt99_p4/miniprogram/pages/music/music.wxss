@@ -12,6 +12,13 @@
 .offline-title { margin-bottom:8rpx; color:#92400e; font-size:30rpx; font-weight:800; }
 .offline-card button { width:220rpx; min-height:64rpx; margin:20rpx 0 0; padding:0 20rpx; font-size:25rpx; line-height:64rpx; }
 .card-title { font-size:32rpx; font-weight:800; }
+.import-card { padding:24rpx; }
+.import-card .row { gap:20rpx; }
+.import-hint { max-width:470rpx; margin-top:8rpx; line-height:1.6; }
+.import-btn { flex:none; width:190rpx; min-height:70rpx; margin:0; padding:0 18rpx; font-size:25rpx; line-height:70rpx; }
+.import-progress { margin-top:22rpx; }
+.import-progress-copy { margin-bottom:10rpx; color:#0f766e; font-size:23rpx; font-weight:700; }
+.import-progress .hint { margin-top:10rpx; }
 .volume-card { padding-top:22rpx; padding-bottom:22rpx; }
 .volume-card slider { margin:18rpx 0 8rpx; }
 .volume-value { color:#0f766e; font-size:46rpx; font-weight:900; }

@@ -58,6 +58,22 @@ typedef struct {
 } note_monitor_snapshot_t;
 
 typedef struct {
+    bool valid;
+    uint8_t raw_count;
+    s3_music_diagnostic_candidate_t
+        raw[S3_MUSIC_DIAGNOSTIC_MAX_RAW];
+    s3_music_result_kind_t candidate_kind;
+    uint8_t candidate_count;
+    uint8_t candidate_notes[S3_MUSIC_DIAGNOSTIC_MAX_NOTES];
+    s3_music_result_kind_t final_kind;
+    uint8_t final_count;
+    uint8_t final_notes[S3_MUSIC_DIAGNOSTIC_MAX_NOTES];
+    int8_t octave_shift;
+    float snr_db[3];
+    char reject[S3_MUSIC_DIAGNOSTIC_REASON_MAX];
+} note_monitor_diagnostic_t;
+
+typedef struct {
     lv_ui *ui;
     lv_obj_t *hub;
     lv_obj_t *metronome;
@@ -73,6 +89,7 @@ typedef struct {
     lv_obj_t *note_monitor_value_label;
     lv_obj_t *note_monitor_kind_label;
     lv_obj_t *note_monitor_detail_label;
+    lv_obj_t *note_monitor_diagnostic_label;
     lv_obj_t *note_monitor_link_label;
     lv_timer_t *status_timer;
     uint16_t metronome_bpm;
@@ -95,6 +112,7 @@ static lv_font_t s_note_monitor_font;
 static screen_modes_context_t s_modes;
 static portMUX_TYPE s_note_monitor_lock = portMUX_INITIALIZER_UNLOCKED;
 static note_monitor_snapshot_t s_note_monitor_snapshot;
+static note_monitor_diagnostic_t s_note_monitor_diagnostic;
 static bool s_note_monitor_capture_enabled;
 static void hide_mode_status(void);
 
@@ -220,6 +238,8 @@ static void reset_note_monitor_capture(bool enabled)
 {
     portENTER_CRITICAL(&s_note_monitor_lock);
     memset(&s_note_monitor_snapshot, 0, sizeof(s_note_monitor_snapshot));
+    memset(&s_note_monitor_diagnostic, 0,
+           sizeof(s_note_monitor_diagnostic));
     s_note_monitor_capture_enabled = enabled;
     portEXIT_CRITICAL(&s_note_monitor_lock);
 }
@@ -231,6 +251,8 @@ static void stop_note_monitor(void)
     was_enabled = s_note_monitor_capture_enabled;
     s_note_monitor_capture_enabled = false;
     memset(&s_note_monitor_snapshot, 0, sizeof(s_note_monitor_snapshot));
+    memset(&s_note_monitor_diagnostic, 0,
+           sizeof(s_note_monitor_diagnostic));
     portEXIT_CRITICAL(&s_note_monitor_lock);
     if (was_enabled) {
         esp_err_t err = audio_s3_adapter_stop_session();
@@ -801,6 +823,91 @@ static void sort_midi_notes(uint8_t *notes, size_t count)
     }
 }
 
+static const char *diagnostic_source_name(uint8_t source)
+{
+    switch (source) {
+        case 0: return "YIN";
+        case 1: return "低音YIN";
+        case 2: return "低音模板";
+        case 3: return "频谱";
+        default: return "未知";
+    }
+}
+
+static const char *diagnostic_kind_name(s3_music_result_kind_t kind)
+{
+    switch (kind) {
+        case S3_MUSIC_RESULT_SINGLE: return "单音";
+        case S3_MUSIC_RESULT_INTERVAL: return "双音";
+        case S3_MUSIC_RESULT_CHORD: return "和弦";
+        case S3_MUSIC_RESULT_SILENCE: return "静音";
+        case S3_MUSIC_RESULT_UNKNOWN:
+        default: return "未知";
+    }
+}
+
+static void format_diagnostic_notes(const uint8_t *notes, uint8_t count,
+                                    char *output, size_t capacity)
+{
+    size_t used = 0;
+    for (uint8_t index = 0; index < count; ++index) {
+        char name[12];
+        midi_note_name(notes[index], name, sizeof(name));
+        const int written = snprintf(output + used, capacity - used,
+                                     index == 0 ? "%s" : "·%s", name);
+        if (written < 0 || (size_t)written >= capacity - used) return;
+        used += (size_t)written;
+    }
+    if (used == 0 && capacity > 1) snprintf(output, capacity, "—");
+}
+
+static void update_note_monitor_diagnostic(
+    const note_monitor_diagnostic_t *diagnostic)
+{
+    if (s_modes.note_monitor_diagnostic_label == NULL ||
+        !lv_obj_is_valid(s_modes.note_monitor_diagnostic_label)) {
+        return;
+    }
+    if (!diagnostic->valid) {
+        lv_label_set_text(s_modes.note_monitor_diagnostic_label,
+                          "原始候选：等待诊断数据\n最终结果：—\n拒绝原因：—");
+        return;
+    }
+    char raw[300] = {0};
+    size_t used = 0;
+    for (uint8_t index = 0; index < diagnostic->raw_count; ++index) {
+        const s3_music_diagnostic_candidate_t *candidate =
+            &diagnostic->raw[index];
+        char name[12];
+        midi_note_name(candidate->midi, name, sizeof(name));
+        const int written = snprintf(
+            raw + used, sizeof(raw) - used,
+            index == 0 ? "%s %s %.0f%%" : " | %s %s %.0f%%",
+            diagnostic_source_name(candidate->source), name,
+            (double)(candidate->confidence * 100.0f));
+        if (written < 0 || (size_t)written >= sizeof(raw) - used) break;
+        used += (size_t)written;
+    }
+    if (used == 0) snprintf(raw, sizeof(raw), "—");
+    char final_notes[64] = {0};
+    format_diagnostic_notes(diagnostic->final_notes,
+                            diagnostic->final_count,
+                            final_notes, sizeof(final_notes));
+    char text[512];
+    snprintf(text, sizeof(text),
+             "原始候选：%s\n最终结果：%s %s  SNR低/中/高 %.1f/%.1f/%.1f dB\n"
+             "拒绝原因：%s%s",
+             raw, diagnostic_kind_name(diagnostic->final_kind), final_notes,
+             (double)diagnostic->snr_db[0],
+             (double)diagnostic->snr_db[1],
+             (double)diagnostic->snr_db[2],
+             diagnostic->reject[0] ? diagnostic->reject : "unknown",
+             diagnostic->octave_shift == 0
+                 ? "" : diagnostic->octave_shift < 0
+                     ? "  八度修正↓" : "  八度修正↑");
+    lv_label_set_text(s_modes.note_monitor_diagnostic_label, text);
+}
+
 static void update_note_monitor(void)
 {
     if (!s_modes.note_monitor_visible ||
@@ -810,9 +917,12 @@ static void update_note_monitor(void)
     }
 
     note_monitor_snapshot_t snapshot;
+    note_monitor_diagnostic_t diagnostic;
     portENTER_CRITICAL(&s_note_monitor_lock);
     snapshot = s_note_monitor_snapshot;
+    diagnostic = s_note_monitor_diagnostic;
     portEXIT_CRITICAL(&s_note_monitor_lock);
+    update_note_monitor_diagnostic(&diagnostic);
 
     audio_s3_adapter_status_t adapter = {0};
     audio_s3_adapter_get_status(&adapter);
@@ -973,8 +1083,8 @@ static void create_note_monitor_screen(void)
                232, 82, 560, 36, LV_TEXT_ALIGN_CENTER);
 
     lv_obj_t *panel = lv_obj_create(s_modes.note_monitor);
-    lv_obj_set_pos(panel, 90, 135);
-    lv_obj_set_size(panel, 844, 330);
+    lv_obj_set_pos(panel, 90, 125);
+    lv_obj_set_size(panel, 844, 380);
     lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(panel, lv_color_hex(0xFFFDF8), 0);
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
@@ -983,7 +1093,7 @@ static void create_note_monitor_screen(void)
     lv_obj_set_style_radius(panel, 18, 0);
 
     s_modes.note_monitor_value_label = make_label(
-        panel, "—", 35, 45, 774, 82, LV_TEXT_ALIGN_CENTER);
+        panel, "—", 35, 24, 774, 72, LV_TEXT_ALIGN_CENTER);
     s_note_monitor_font = lv_font_montserratMedium_34;
     s_note_monitor_font.fallback = ui_font();
     lv_obj_set_style_text_font(s_modes.note_monitor_value_label,
@@ -994,18 +1104,26 @@ static void create_note_monitor_screen(void)
                            LV_LABEL_LONG_DOT);
 
     s_modes.note_monitor_kind_label = make_label(
-        panel, "等待演奏", 235, 145, 374, 42, LV_TEXT_ALIGN_CENTER);
+        panel, "等待演奏", 235, 104, 374, 38, LV_TEXT_ALIGN_CENTER);
     lv_obj_set_style_text_color(s_modes.note_monitor_kind_label,
                                 lv_color_hex(COLOR_ACCENT), 0);
     s_modes.note_monitor_detail_label = make_label(
         panel, "请在 Audio S3 麦克风前弹奏单音或和弦",
-        55, 210, 734, 55, LV_TEXT_ALIGN_CENTER);
+        55, 150, 734, 48, LV_TEXT_ALIGN_CENTER);
     lv_label_set_long_mode(s_modes.note_monitor_detail_label,
                            LV_LABEL_LONG_WRAP);
+    s_modes.note_monitor_diagnostic_label = make_label(
+        panel,
+        "原始候选：等待诊断数据\n最终结果：—\n拒绝原因：—",
+        28, 214, 788, 138, LV_TEXT_ALIGN_LEFT);
+    lv_label_set_long_mode(s_modes.note_monitor_diagnostic_label,
+                           LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(s_modes.note_monitor_diagnostic_label,
+                                lv_color_hex(COLOR_MUTED), 0);
 
     s_modes.note_monitor_link_label = make_label(
         s_modes.note_monitor, "正在等待 Audio S3 连接…",
-        160, 500, 704, 40, LV_TEXT_ALIGN_CENTER);
+        160, 525, 704, 40, LV_TEXT_ALIGN_CENTER);
     lv_obj_set_style_text_color(s_modes.note_monitor_link_label,
                                 lv_color_hex(COLOR_MUTED), 0);
 }
@@ -1148,6 +1266,33 @@ void screen_modes_handle_audio_s3_event(const s3_music_event_t *event)
     }
 
     note_monitor_snapshot_t *snapshot = &s_note_monitor_snapshot;
+    if (event->type == S3_MUSIC_EVENT_DIAGNOSTIC) {
+        note_monitor_diagnostic_t *diagnostic =
+            &s_note_monitor_diagnostic;
+        memset(diagnostic, 0, sizeof(*diagnostic));
+        diagnostic->valid = true;
+        diagnostic->raw_count = event->diagnostic_raw_count;
+        memcpy(diagnostic->raw, event->diagnostic_raw,
+               sizeof(diagnostic->raw));
+        diagnostic->candidate_kind = event->diagnostic_candidate_kind;
+        diagnostic->candidate_count = event->diagnostic_candidate_count;
+        memcpy(diagnostic->candidate_notes,
+               event->diagnostic_candidate_notes,
+               sizeof(diagnostic->candidate_notes));
+        diagnostic->final_kind = event->diagnostic_final_kind;
+        diagnostic->final_count = event->diagnostic_final_count;
+        memcpy(diagnostic->final_notes, event->diagnostic_final_notes,
+               sizeof(diagnostic->final_notes));
+        diagnostic->octave_shift = event->diagnostic_octave_shift;
+        memcpy(diagnostic->snr_db, event->diagnostic_snr_db,
+               sizeof(diagnostic->snr_db));
+        memcpy(diagnostic->reject, event->diagnostic_reject,
+               sizeof(diagnostic->reject));
+        snapshot->sid = event->sid;
+        snapshot->seq = event->seq;
+        portEXIT_CRITICAL(&s_note_monitor_lock);
+        return;
+    }
     if (event->type == S3_MUSIC_EVENT_POLY) {
         if (event->note_count < 2 ||
             event->note_count > S3_MUSIC_POLY_MAX_NOTES) {

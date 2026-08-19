@@ -13,6 +13,7 @@ idf_component_register(
         input_source_manager
         json
         music_display
+        practice_advice_view
         score_data
         scoring_service
         s3_bus
