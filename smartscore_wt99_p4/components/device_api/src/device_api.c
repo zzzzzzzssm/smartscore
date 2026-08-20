@@ -19,6 +19,8 @@
 #include "esp_log.h"
 #include "esp_random.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "input_source_manager.h"
 #include "network_provisioning.h"
 #include "practice_advice_service.h"
@@ -44,6 +46,7 @@
 #define DEVICE_API_AUDIO_UPLOAD_CHUNK_BYTES (256 * 1024)
 #define DEVICE_API_AUDIO_UPLOAD_MAX_BYTES (64 * 1024 * 1024)
 #define DEVICE_API_PHOTO_PAGE_SIZE 6
+#define DEVICE_API_SCORE_RESULT_CHUNK_BYTES 4096
 
 static const char *TAG = "DEVICE_API";
 static httpd_handle_t s_server;
@@ -666,6 +669,122 @@ static esp_err_t score_upload_handler(httpd_req_t *request)
     return send_json(request, "200 OK", root);
 }
 
+typedef struct {
+    uint32_t event_index;
+    uint32_t start_ms;
+    uint16_t staff;
+    uint16_t voice;
+    uint8_t flags;
+    size_t representative;
+} compact_playback_event_group_t;
+
+static void compact_playback_notation_links(
+    const compact_score_playback_t *playback,
+    uint8_t *tie_flags,
+    uint8_t *slur_start,
+    uint8_t *slur_stop,
+    uint8_t *gliss_start,
+    uint8_t *gliss_stop)
+{
+    if (playback == NULL || playback->notes == NULL ||
+        playback->note_count == 0 || tie_flags == NULL ||
+        slur_start == NULL || slur_stop == NULL ||
+        gliss_start == NULL || gliss_stop == NULL) {
+        return;
+    }
+    compact_playback_event_group_t *groups = heap_caps_calloc(
+        playback->note_count, sizeof(*groups),
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (groups == NULL) {
+        groups = calloc(playback->note_count, sizeof(*groups));
+    }
+    if (groups == NULL) return;
+
+    size_t group_count = 0;
+    for (size_t index = 0; index < playback->note_count; ++index) {
+        const compact_score_playback_note_t *note =
+            &playback->notes[index];
+        size_t group = 0;
+        while (group < group_count &&
+               groups[group].event_index != note->event_index) {
+            ++group;
+        }
+        if (group == group_count) {
+            groups[group] = (compact_playback_event_group_t){
+                .event_index = note->event_index,
+                .start_ms = note->start_ms,
+                .staff = note->staff,
+                .voice = note->voice,
+                .flags = note->flags,
+                .representative = index,
+            };
+            ++group_count;
+        } else if (note->midi >
+                   playback->notes[groups[group].representative].midi) {
+            groups[group].representative = index;
+        }
+    }
+
+    uint16_t next_slur_id = 1;
+    uint16_t next_gliss_id = 1;
+    for (size_t group = 0; group < group_count; ++group) {
+        if ((groups[group].flags & 0x0bU) == 0) continue;
+        size_t target = group_count;
+        for (size_t candidate = group + 1; candidate < group_count;
+             ++candidate) {
+            if (groups[candidate].staff == groups[group].staff &&
+                groups[candidate].voice == groups[group].voice &&
+                (groups[candidate].start_ms > groups[group].start_ms ||
+                 groups[candidate].event_index >
+                     groups[group].event_index)) {
+                target = candidate;
+                break;
+            }
+        }
+        if (target == group_count) continue;
+
+        if ((groups[group].flags & 0x01U) != 0) {
+            for (size_t start_index = 0;
+                 start_index < playback->note_count; ++start_index) {
+                const compact_score_playback_note_t *start_note =
+                    &playback->notes[start_index];
+                if (start_note->event_index != groups[group].event_index)
+                    continue;
+                for (size_t stop_index = 0;
+                     stop_index < playback->note_count; ++stop_index) {
+                    const compact_score_playback_note_t *stop_note =
+                        &playback->notes[stop_index];
+                    if (stop_note->event_index ==
+                            groups[target].event_index &&
+                        stop_note->midi == start_note->midi) {
+                        tie_flags[start_index] |= 0x01U;
+                        tie_flags[stop_index] |= 0x02U;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if ((groups[group].flags & 0x02U) != 0 &&
+            next_slur_id <= UINT8_MAX) {
+            const size_t start_index = groups[group].representative;
+            const size_t stop_index = groups[target].representative;
+            slur_start[start_index] = (uint8_t)next_slur_id;
+            slur_stop[stop_index] = (uint8_t)next_slur_id;
+            ++next_slur_id;
+        }
+        if ((groups[group].flags & 0x08U) != 0 &&
+            next_gliss_id <= UINT8_MAX) {
+            const size_t start_index = groups[group].representative;
+            const size_t stop_index = groups[target].representative;
+            gliss_start[start_index] = (uint8_t)next_gliss_id;
+            gliss_stop[stop_index] = (uint8_t)next_gliss_id;
+            ++next_gliss_id;
+        }
+    }
+    heap_caps_free(groups);
+}
+
 static esp_err_t ai_sheet_to_score_handler(httpd_req_t *request)
 {
     if (!dashscope_omr_api_key_configured()) {
@@ -798,6 +917,23 @@ static esp_err_t ai_sheet_to_score_handler(httpd_req_t *request)
     bool screen_prepared = false;
     char *legacy_json = NULL;
     if (playback_ready) {
+        uint8_t *notation_links = heap_caps_calloc(
+            playback.note_count, 5U, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (notation_links == NULL) {
+            notation_links = calloc(playback.note_count, 5U);
+        }
+        uint8_t *tie_flags = notation_links;
+        uint8_t *slur_start = notation_links != NULL ?
+                              notation_links + playback.note_count : NULL;
+        uint8_t *slur_stop = notation_links != NULL ?
+                             notation_links + playback.note_count * 2U : NULL;
+        uint8_t *gliss_start = notation_links != NULL ?
+                               notation_links + playback.note_count * 3U : NULL;
+        uint8_t *gliss_stop = notation_links != NULL ?
+                              notation_links + playback.note_count * 4U : NULL;
+        compact_playback_notation_links(&playback, tie_flags,
+                                        slur_start, slur_stop,
+                                        gliss_start, gliss_stop);
         cJSON *legacy = cJSON_CreateObject();
         cJSON *notes = cJSON_AddArrayToObject(legacy, "notes");
         if (legacy != NULL && notes != NULL) {
@@ -831,6 +967,28 @@ static esp_err_t ai_sheet_to_score_handler(httpd_req_t *request)
                 cJSON_AddNumberToObject(item, "voice", note->voice);
                 cJSON_AddNumberToObject(item, "event_index",
                                         note->event_index);
+                cJSON_AddNumberToObject(item, "notation_flags",
+                                        note->flags);
+                if (tie_flags != NULL && tie_flags[index] != 0) {
+                    cJSON_AddNumberToObject(item, "tie_flags",
+                                            tie_flags[index]);
+                }
+                if (slur_start != NULL && slur_start[index] != 0) {
+                    cJSON_AddNumberToObject(item, "slur_start",
+                                            slur_start[index]);
+                }
+                if (slur_stop != NULL && slur_stop[index] != 0) {
+                    cJSON_AddNumberToObject(item, "slur_stop",
+                                            slur_stop[index]);
+                }
+                if (gliss_start != NULL && gliss_start[index] != 0) {
+                    cJSON_AddNumberToObject(item, "gliss_start",
+                                            gliss_start[index]);
+                }
+                if (gliss_stop != NULL && gliss_stop[index] != 0) {
+                    cJSON_AddNumberToObject(item, "gliss_stop",
+                                            gliss_stop[index]);
+                }
                 cJSON_AddItemToArray(notes, item);
             }
             if (legacy != NULL) {
@@ -840,6 +998,7 @@ static esp_err_t ai_sheet_to_score_handler(httpd_req_t *request)
         } else {
             cJSON_Delete(legacy);
         }
+        heap_caps_free(notation_links);
         if (legacy_json == NULL) {
             playback_ready = false;
             playback_error.code = COMPACT_SCORE_ERR_NO_MEMORY;
@@ -1839,7 +1998,20 @@ static esp_err_t send_score_result(const char *json,
         err = httpd_resp_send_chunk(send->request, "\",", 2);
     }
     if (err == ESP_OK) {
-        err = httpd_resp_send_chunk(send->request, json + 1, length - 1);
+        size_t offset = 1;
+        while (err == ESP_OK && offset < length) {
+            size_t chunk_length = length - offset;
+            if (chunk_length > DEVICE_API_SCORE_RESULT_CHUNK_BYTES) {
+                chunk_length = DEVICE_API_SCORE_RESULT_CHUNK_BYTES;
+            }
+            err = httpd_resp_send_chunk(send->request, json + offset,
+                                        chunk_length);
+            offset += chunk_length;
+            if (err == ESP_OK && offset < length) {
+                /* Bound each TCP/SDIO burst and let the transport drain. */
+                vTaskDelay(1);
+            }
+        }
     }
     if (err == ESP_OK) {
         err = httpd_resp_send_chunk(send->request, NULL, 0);
@@ -2497,7 +2669,7 @@ esp_err_t device_api_start(void)
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 40;
+    config.max_uri_handlers = 41;
     config.max_open_sockets = DEVICE_API_MAX_OPEN_SOCKETS;
     config.stack_size = 16384;
     /* Request handlers can commit NVS and access partition-backed storage.

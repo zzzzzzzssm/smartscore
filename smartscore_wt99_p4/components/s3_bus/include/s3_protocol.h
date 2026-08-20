@@ -6,6 +6,7 @@
 
 #define S3_PROTOCOL_POLY_MAX_NOTES 4
 #define S3_PROTOCOL_POLY_NAME_MAX 16
+#define S3_PROTOCOL_NOTE_SET_MAX_NOTES 4
 #define S3_PROTOCOL_DIAGNOSTIC_MAX_RAW 4
 #define S3_PROTOCOL_DIAGNOSTIC_MAX_NOTES 3
 #define S3_PROTOCOL_DIAGNOSTIC_REASON_MAX 32
@@ -20,6 +21,7 @@ typedef enum {
     S3_MUSIC_MESSAGE_NOTE_OFF,
     S3_MUSIC_MESSAGE_POLY,
     S3_MUSIC_MESSAGE_DIAGNOSTIC,
+    S3_MUSIC_MESSAGE_NOTES,
 } s3_music_message_type_t;
 
 typedef enum {
@@ -49,6 +51,8 @@ typedef struct {
     uint32_t sid;
     uint32_t ts_ms;
     uint32_t duration_ms;
+    uint32_t state_id;
+    uint32_t version;
     uint8_t midi;
     uint8_t velocity;
     float frequency_hz;
@@ -62,6 +66,13 @@ typedef struct {
     uint8_t note_count;
     uint8_t notes[S3_PROTOCOL_POLY_MAX_NOTES];
     char poly_name[S3_PROTOCOL_POLY_NAME_MAX];
+    uint8_t note_set_count;
+    uint8_t midis[S3_PROTOCOL_NOTE_SET_MAX_NOTES];
+    uint8_t velocities[S3_PROTOCOL_NOTE_SET_MAX_NOTES];
+    float confidences[S3_PROTOCOL_NOTE_SET_MAX_NOTES];
+    float set_confidence;
+    bool degraded_mic;
+    bool overflow;
     uint8_t diagnostic_raw_count;
     s3_protocol_diagnostic_candidate_t
         diagnostic_raw[S3_PROTOCOL_DIAGNOSTIC_MAX_RAW];

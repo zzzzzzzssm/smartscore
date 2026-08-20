@@ -13,6 +13,8 @@ LV_FONT_DECLARE(lv_font_SimpMusicBasePSMTModified_72)
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <limits.h>
+#include <stdint.h>
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -36,6 +38,8 @@ static bool s_latest_snapshot_allow_empty;
 /* ── 内部状态 ── */
 static midi_data_t s_midi_data;
 static bool s_midi_parsed = false;
+static bool s_numbered_inference_evaluated;
+static uint8_t s_numbered_inferred_categories;
 static int s_current_page = 0;
 static int s_total_pages = 1;
 static leland_score_view_t *s_staff_view;
@@ -48,19 +52,70 @@ static lv_obj_t *s_navigation_event_target;
 static lv_obj_t *s_read_only_back_button;
 static lv_obj_t *s_read_only_notation_button;
 static lv_obj_t *s_read_only_notation_label;
+static lv_obj_t *s_read_only_playback_button;
+static lv_obj_t *s_read_only_playback_label;
+static music_display_playback_state_t s_read_only_playback_state;
+static music_display_playback_button_cb_t s_playback_button_callback;
+static void *s_playback_button_user_data;
 static music_display_note_selection_cb_t s_note_selection_callback;
 static void *s_note_selection_user_data;
 
 #define MUSIC_MAX_RESULT_SLOTS 1024
 #define MUSIC_LINES_PER_PAGE 2
 #define MUSIC_MEASURES_PER_SYSTEM 2
-#define MUSIC_MAX_NOTE_SPANS_PER_PAGE 384
+#define MUSIC_MAX_NOTE_SPANS_PER_PAGE MAX_NOTES
+#define MUSIC_MAX_NUMBERED_MARKERS_PER_PAGE MAX_NOTES
+#define MUSIC_NUMBERED_TEXT_BUFFER_SIZE 2048
+#define MUSIC_NUMBERED_MAX_OCTAVE_DOTS 5
+#define MUSIC_NUMBERED_MAX_REDUCTION_LINES 3
+#define MUSIC_NUMBERED_MAX_AUGMENTATION_DOTS 3
+#define MUSIC_NUMBERED_DOT_RADIUS_PX 3
+#define MUSIC_NUMBERED_DOT_GAP_PX 4
+#define MUSIC_NUMBERED_DOT_STEP_PX 10
+#define MUSIC_NUMBERED_AUGMENTATION_GAP_PX 6
+#define MUSIC_NUMBERED_AUGMENTATION_STEP_PX 10
+#define MUSIC_NUMBERED_CONNECTION_SEGMENTS 14
+#define MUSIC_NUMBERED_CONNECTION_TYPES 3
+#define MUSIC_NUMBERED_ROW_HEIGHT_PX 190
+#define MUSIC_NUMBERED_ROW_PADDING_Y_PX 44
+/* Stable reference planes for the 90 px SimpMusic font. Digits 1-7 share
+ * top=10 and bottom=59 even though their individual bitmap boxes differ. */
+#define MUSIC_NUMBERED_DIGIT_TOP_FROM_LINE_PX 10
+#define MUSIC_NUMBERED_DIGIT_BOTTOM_FROM_LINE_PX 59
+#define MUSIC_NUMBERED_REDUCTION_LINE_DEPTH_PX 7
 #define MUSIC_STATUS_UNKNOWN 0xff
-#define MUSIC_PAGE_TURN_GRACE_MS 500
+#define MUSIC_PAGE_TURN_LOOKAHEAD_MS 250
 #define MUSIC_DISPLAY_GREEN_PITCH_TOLERANCE 2
 #define MUSIC_DISPLAY_RED_PITCH_THRESHOLD 6
 
+enum {
+    MUSIC_NUMBERED_INFERRED_DOTS = 1U << 0,
+    MUSIC_NUMBERED_INFERRED_TIES = 1U << 1,
+};
+
+_Static_assert(
+    MUSIC_NUMBERED_ROW_PADDING_Y_PX +
+    MUSIC_NUMBERED_DIGIT_TOP_FROM_LINE_PX -
+    MUSIC_NUMBERED_DOT_GAP_PX -
+    2 * MUSIC_NUMBERED_DOT_RADIUS_PX -
+    (MUSIC_NUMBERED_MAX_OCTAVE_DOTS - 1) *
+        MUSIC_NUMBERED_DOT_STEP_PX >= 0,
+    "upper octave dots must remain inside the numbered row");
+_Static_assert(
+    MUSIC_NUMBERED_ROW_PADDING_Y_PX +
+    MUSIC_NUMBERED_DIGIT_BOTTOM_FROM_LINE_PX +
+    MUSIC_NUMBERED_MAX_REDUCTION_LINES *
+        MUSIC_NUMBERED_REDUCTION_LINE_DEPTH_PX +
+    MUSIC_NUMBERED_DOT_GAP_PX +
+    2 * MUSIC_NUMBERED_DOT_RADIUS_PX +
+    (MUSIC_NUMBERED_MAX_OCTAVE_DOTS - 1) *
+        MUSIC_NUMBERED_DOT_STEP_PX < MUSIC_NUMBERED_ROW_HEIGHT_PX,
+    "lower octave dots must remain inside the numbered row");
+
 static uint8_t s_note_status[MUSIC_MAX_RESULT_SLOTS];
+static char s_numbered_text_buffer[MUSIC_NUMBERED_TEXT_BUFFER_SIZE];
+static midi_numbered_note_ref_t s_numbered_note_refs[MAX_NOTES];
+static uint32_t s_numbered_page_end_tick;
 
 /* ── 逐音符 span 追踪 ── */
 typedef struct {
@@ -69,12 +124,49 @@ typedef struct {
     int slot_index;
 } music_note_span_ref_t;
 
+typedef struct {
+    lv_obj_t *group;
+    lv_span_t *span;
+    int slot_index;
+    int8_t octave;
+    uint8_t reduction_line_count;
+    int16_t cell_left_x;
+    int16_t cell_right_x;
+    int16_t center_x;
+    int16_t digit_top_y;
+    int16_t digit_bottom_y;
+    int16_t upper_ink_y;
+    int16_t lower_ink_y;
+    int16_t nearest_center_y;
+    bool positioned;
+} music_numbered_marker_ref_t;
+
+enum {
+    MUSIC_NUMBERED_CONNECTION_TIE = 0,
+    MUSIC_NUMBERED_CONNECTION_SLUR,
+    MUSIC_NUMBERED_CONNECTION_GLISS,
+};
+
 static music_note_span_ref_t s_page_note_spans[MUSIC_MAX_NOTE_SPANS_PER_PAGE];
+static music_numbered_marker_ref_t
+    s_page_numbered_markers[MUSIC_MAX_NUMBERED_MARKERS_PER_PAGE];
+static int16_t s_page_marker_by_note[MAX_NOTES];
+static int16_t s_numbered_connection_stop
+    [MUSIC_NUMBERED_CONNECTION_TYPES][MAX_NOTES];
+static int16_t s_numbered_open_connection[2][UINT8_MAX + 1];
+static uint32_t s_numbered_row_start_tick[MUSIC_LINES_PER_PAGE];
+static uint32_t s_numbered_row_end_tick[MUSIC_LINES_PER_PAGE];
+static uint8_t s_numbered_row_staff[MUSIC_LINES_PER_PAGE];
 static int s_page_note_span_count;
+static int s_page_numbered_marker_count;
+static bool s_page_numbered_marker_overflow_logged;
 static int s_page_first_slot = -1;
 static int s_page_last_slot = -1;
 static int s_expected_first_slot = -1;
 static int s_expected_last_slot = -1;
+
+static bool score_measure_ticks_locked(uint64_t *measure_ticks);
+static void draw_numbered_overlays_cb(lv_event_t *event);
 
 /* ── 动态乐谱行 spangroup（创建在 music_screen_cont_1 内）── */
 static lv_obj_t *s_line_groups[MUSIC_LINES_PER_PAGE];
@@ -93,13 +185,27 @@ static void ensure_line_groups(void)
     for (int i = 0; i < MUSIC_LINES_PER_PAGE; i++) {
         s_line_groups[i] = lv_spangroup_create(parent);
         lv_obj_set_pos(s_line_groups[i], 42, 25 + i * 220);
-        lv_obj_set_size(s_line_groups[i], 929, 190);
+        lv_obj_set_size(s_line_groups[i], 929,
+                        MUSIC_NUMBERED_ROW_HEIGHT_PX);
         lv_spangroup_set_align(s_line_groups[i], LV_TEXT_ALIGN_LEFT);
         lv_spangroup_set_overflow(s_line_groups[i], LV_SPAN_OVERFLOW_CLIP);
         lv_spangroup_set_mode(s_line_groups[i], LV_SPAN_MODE_BREAK);
         lv_obj_set_style_bg_opa(s_line_groups[i], 0, LV_PART_MAIN|LV_STATE_DEFAULT);
         lv_obj_set_style_border_width(s_line_groups[i], 0, LV_PART_MAIN|LV_STATE_DEFAULT);
         lv_obj_set_style_pad_all(s_line_groups[i], 0, LV_PART_MAIN|LV_STATE_DEFAULT);
+        /* Reserve vertical ink space for the full MIDI octave range. Five
+         * stacked dots remain inside the row instead of relying on an
+         * ancestor's clipping policy. */
+        lv_obj_set_style_pad_top(s_line_groups[i],
+                                 MUSIC_NUMBERED_ROW_PADDING_Y_PX,
+                                 LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_pad_bottom(s_line_groups[i],
+                                    MUSIC_NUMBERED_ROW_PADDING_Y_PX,
+                                    LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_add_flag(s_line_groups[i], LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+        lv_obj_add_event_cb(s_line_groups[i],
+                            draw_numbered_overlays_cb,
+                            LV_EVENT_DRAW_MAIN_END, NULL);
         lv_obj_add_flag(s_line_groups[i], LV_OBJ_FLAG_HIDDEN);
 
         s_line_prefixes[i] = lv_label_create(parent);
@@ -154,6 +260,10 @@ static void navigation_gesture_event_cb(lv_event_t *event)
 static void read_only_back_event_cb(lv_event_t *event)
 {
     (void)event;
+    if (s_playback_button_callback) {
+        s_playback_button_callback(MUSIC_DISPLAY_PLAYBACK_STOP,
+                                   s_playback_button_user_data);
+    }
     s_read_only_active = false;
     if (s_read_only_back_button &&
         lv_obj_is_valid(s_read_only_back_button))
@@ -161,6 +271,9 @@ static void read_only_back_event_cb(lv_event_t *event)
     if (s_read_only_notation_button &&
         lv_obj_is_valid(s_read_only_notation_button))
         lv_obj_add_flag(s_read_only_notation_button, LV_OBJ_FLAG_HIDDEN);
+    if (s_read_only_playback_button &&
+        lv_obj_is_valid(s_read_only_playback_button))
+        lv_obj_add_flag(s_read_only_playback_button, LV_OBJ_FLAG_HIDDEN);
     if (!score_ui_flow_return_to_preparation(&guider_ui)) {
         score_ui_flow_open_choose(&guider_ui);
     }
@@ -170,6 +283,10 @@ static void read_only_notation_event_cb(lv_event_t *event)
 {
     (void)event;
     if (!s_read_only_active || s_creator_active || !s_midi_parsed) return;
+    if (s_playback_button_callback) {
+        s_playback_button_callback(MUSIC_DISPLAY_PLAYBACK_STOP,
+                                   s_playback_button_user_data);
+    }
 
     s_notation_type =
         s_notation_type == MUSIC_DISPLAY_NOTATION_STAFF
@@ -177,6 +294,46 @@ static void read_only_notation_event_cb(lv_event_t *event)
             : MUSIC_DISPLAY_NOTATION_STAFF;
     s_current_page = 0;
     apply_midi_data_to_ui();
+}
+
+static void read_only_playback_event_cb(lv_event_t *event)
+{
+    (void)event;
+    if (!s_read_only_active || s_creator_active ||
+        !s_playback_button_callback) {
+        return;
+    }
+    s_playback_button_callback(MUSIC_DISPLAY_PLAYBACK_TOGGLE,
+                               s_playback_button_user_data);
+}
+
+static void update_read_only_playback_label(void)
+{
+    if (!s_read_only_playback_label ||
+        !lv_obj_is_valid(s_read_only_playback_label)) {
+        return;
+    }
+    const char *text = "播放";
+    if (s_read_only_playback_state == MUSIC_DISPLAY_PLAYBACK_PREPARING) {
+        text = "准备中";
+    } else if (s_read_only_playback_state ==
+               MUSIC_DISPLAY_PLAYBACK_PLAYING) {
+        text = "暂停";
+    } else if (s_read_only_playback_state ==
+               MUSIC_DISPLAY_PLAYBACK_PAUSED) {
+        text = "继续";
+    }
+    lv_label_set_text(s_read_only_playback_label, text);
+    if (s_read_only_playback_button &&
+        lv_obj_is_valid(s_read_only_playback_button)) {
+        if (s_read_only_playback_state ==
+            MUSIC_DISPLAY_PLAYBACK_PREPARING) {
+            lv_obj_add_state(s_read_only_playback_button, LV_STATE_DISABLED);
+        } else {
+            lv_obj_clear_state(s_read_only_playback_button,
+                               LV_STATE_DISABLED);
+        }
+    }
 }
 
 static void update_read_only_back_button(void)
@@ -229,17 +386,46 @@ static void update_read_only_back_button(void)
                             LV_EVENT_CLICKED, NULL);
     }
 
+    if (!s_read_only_playback_button ||
+        !lv_obj_is_valid(s_read_only_playback_button)) {
+        s_read_only_playback_button =
+            lv_button_create(guider_ui.music_screen);
+        /* The score title occupies the centre of the top bar. Keep playback
+         * in the otherwise unused lower-left footer so long titles remain
+         * readable in read-only mode. */
+        lv_obj_set_pos(s_read_only_playback_button, 16, 552);
+        lv_obj_set_size(s_read_only_playback_button, 120, 48);
+        lv_obj_set_style_radius(s_read_only_playback_button, 8, 0);
+        lv_obj_set_style_bg_color(s_read_only_playback_button,
+                                  lv_color_hex(0x0284C7), 0);
+        lv_obj_set_style_border_width(s_read_only_playback_button, 0, 0);
+        s_read_only_playback_label =
+            lv_label_create(s_read_only_playback_button);
+        const lv_font_t *font = app_font_chinese_22();
+        if (font)
+            lv_obj_set_style_text_font(s_read_only_playback_label, font, 0);
+        lv_obj_set_style_text_color(s_read_only_playback_label,
+                                    lv_color_hex(0xFFFFFF), 0);
+        lv_obj_center(s_read_only_playback_label);
+        lv_obj_add_event_cb(s_read_only_playback_button,
+                            read_only_playback_event_cb,
+                            LV_EVENT_CLICKED, NULL);
+    }
+
     if (s_read_only_active && !s_creator_active) {
         lv_obj_clear_flag(s_read_only_back_button, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(s_read_only_notation_button, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(s_read_only_playback_button, LV_OBJ_FLAG_HIDDEN);
         lv_label_set_text(
             s_read_only_notation_label,
             s_notation_type == MUSIC_DISPLAY_NOTATION_STAFF
                 ? "\xE5\x88\x87\xE6\x8D\xA2\xE7\xAE\x80\xE8\xB0\xB1"
                 : "\xE5\x88\x87\xE6\x8D\xA2\xE4\xBA\x94\xE7\xBA\xBF\xE8\xB0\xB1");
+        update_read_only_playback_label();
     } else {
         lv_obj_add_flag(s_read_only_back_button, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_read_only_notation_button, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_read_only_playback_button, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -254,8 +440,8 @@ static bool take_latest_snapshot(midi_data_t **snapshot, int *notation_type,
                                  bool *allow_empty);
 static void handle_gesture(music_msg_type_t gesture);
 static void render_colored_line(lv_obj_t *group, const char *line,
-                                uint32_t start_tick, uint32_t end_tick,
-                                uint8_t staff);
+                                const midi_numbered_note_ref_t *refs,
+                                size_t ref_count);
 static bool update_note_span_color(int slot_index, uint8_t status);
 static void reset_page_span_index(void);
 static void remember_page_note_span(lv_obj_t *group, lv_span_t *span, int slot_index);
@@ -315,6 +501,445 @@ static lv_color_t color_for_status(uint8_t status)
     }
 }
 
+static lv_color_t numbered_note_display_color(int slot_index)
+{
+    const uint8_t status =
+        slot_index >= 0 && slot_index < MUSIC_MAX_RESULT_SLOTS ?
+        s_note_status[slot_index] : MUSIC_STATUS_UNKNOWN;
+    if (status == MUSIC_STATUS_UNKNOWN &&
+        slot_index >= s_expected_first_slot &&
+        slot_index <= s_expected_last_slot)
+        return lv_color_hex(0x0284C7);
+    return color_for_status(status);
+}
+
+static bool span_area_has_size(const lv_area_t *area)
+{
+    return area && area->x2 > area->x1 && area->y2 > area->y1;
+}
+
+static void consider_note_cell_area(const lv_area_t *candidate,
+                                    int expected_width,
+                                    int expected_height,
+                                    lv_area_t *best,
+                                    int *best_score)
+{
+    if (!span_area_has_size(candidate) || !best || !best_score) return;
+    const int width = candidate->x2 - candidate->x1;
+    const int height = candidate->y2 - candidate->y1;
+    const int width_error = width > expected_width ?
+                            width - expected_width : expected_width - width;
+    const int height_error = height > expected_height ?
+                             height - expected_height : expected_height - height;
+    const int score = width_error * 4 + height_error;
+    if (score >= *best_score) return;
+    *best = *candidate;
+    *best_score = score;
+}
+
+static bool span_note_cell_area(lv_obj_t *group, const lv_span_t *span,
+                                int expected_width, int expected_height,
+                                lv_area_t *area)
+{
+    if (!group || !span || expected_width <= 0 || expected_height <= 0 ||
+        !area)
+        return false;
+    const lv_span_coords_t coords =
+        lv_spangroup_get_span_coords(group, span);
+
+    /* A mapped note owns exactly one ASCII glyph. At a wrap boundary LVGL
+     * can expose several span regions, so select the region closest to one
+     * glyph cell instead of blindly preferring trailing/middle/heading. */
+    int best_score = INT_MAX;
+    consider_note_cell_area(&coords.heading, expected_width,
+                            expected_height, area, &best_score);
+    consider_note_cell_area(&coords.trailing, expected_width,
+                            expected_height, area, &best_score);
+    consider_note_cell_area(&coords.middle, expected_width,
+                            expected_height, area, &best_score);
+    return best_score != INT_MAX;
+}
+
+static void refresh_numbered_marker_positions(lv_obj_t *group)
+{
+    if (!group) return;
+    lv_obj_update_layout(group);
+    const int content_width = lv_obj_get_content_width(group);
+    if (content_width <= 0) return;
+    /* In LVGL 9 a fixed-height spangroup does not necessarily run its
+     * self-size calculation during lv_obj_update_layout(). Span coordinates
+     * depend on trailing_pos, which is populated by this explicit measure.
+     * Without it every newly-created note span can report a zero area. */
+    (void)lv_spangroup_get_expand_height(group, content_width);
+    const lv_font_t *font = &lv_font_SimpMusicBasePSMTModified_90;
+    lv_font_glyph_dsc_t reference = {0};
+    if (!lv_font_get_glyph_dsc(font, &reference, '5', 0) ||
+        reference.adv_w <= 0)
+        return;
+    for (int i = 0; i < s_page_numbered_marker_count; ++i) {
+        music_numbered_marker_ref_t *marker =
+            &s_page_numbered_markers[i];
+        if (marker->group != group || !marker->span) continue;
+        marker->positioned = false;
+        lv_area_t cell;
+        if (!span_note_cell_area(group, marker->span, reference.adv_w,
+                                 font->line_height, &cell))
+            continue;
+        const int cell_width = cell.x2 - cell.x1;
+        const int digit_top =
+            cell.y1 + MUSIC_NUMBERED_DIGIT_TOP_FROM_LINE_PX;
+        uint8_t reduction_lines = marker->reduction_line_count;
+        if (reduction_lines > MUSIC_NUMBERED_MAX_REDUCTION_LINES)
+            reduction_lines = MUSIC_NUMBERED_MAX_REDUCTION_LINES;
+        const int visible_bottom =
+            cell.y1 + MUSIC_NUMBERED_DIGIT_BOTTOM_FROM_LINE_PX +
+            reduction_lines * MUSIC_NUMBERED_REDUCTION_LINE_DEPTH_PX;
+        int octave_dots = marker->octave < 0 ? -marker->octave :
+                          marker->octave;
+        if (octave_dots > MUSIC_NUMBERED_MAX_OCTAVE_DOTS)
+            octave_dots = MUSIC_NUMBERED_MAX_OCTAVE_DOTS;
+        marker->cell_left_x = (int16_t)cell.x1;
+        marker->cell_right_x = (int16_t)cell.x2;
+        marker->center_x = (int16_t)(cell.x1 + cell_width / 2);
+        marker->digit_top_y = (int16_t)digit_top;
+        marker->digit_bottom_y = (int16_t)(cell.y1 +
+            MUSIC_NUMBERED_DIGIT_BOTTOM_FROM_LINE_PX);
+        marker->nearest_center_y = (int16_t)(marker->octave > 0 ?
+            digit_top - MUSIC_NUMBERED_DOT_GAP_PX -
+                MUSIC_NUMBERED_DOT_RADIUS_PX :
+            visible_bottom + MUSIC_NUMBERED_DOT_GAP_PX +
+                MUSIC_NUMBERED_DOT_RADIUS_PX);
+        marker->upper_ink_y = (int16_t)(marker->octave > 0 ?
+            marker->nearest_center_y - MUSIC_NUMBERED_DOT_RADIUS_PX -
+                (octave_dots - 1) * MUSIC_NUMBERED_DOT_STEP_PX :
+            digit_top);
+        marker->lower_ink_y = (int16_t)(marker->octave < 0 ?
+            marker->nearest_center_y + MUSIC_NUMBERED_DOT_RADIUS_PX +
+                (octave_dots - 1) * MUSIC_NUMBERED_DOT_STEP_PX :
+            visible_bottom);
+        marker->positioned = true;
+    }
+}
+
+static int numbered_row_index(lv_obj_t *group)
+{
+    for (int i = 0; i < MUSIC_LINES_PER_PAGE; ++i) {
+        if (s_line_groups[i] == group) return i;
+    }
+    return -1;
+}
+
+static const music_numbered_marker_ref_t *numbered_marker_for_note(
+    int note_index, lv_obj_t *group)
+{
+    if (note_index < 0 || note_index >= MAX_NOTES) return NULL;
+    const int marker_index = s_page_marker_by_note[note_index];
+    if (marker_index < 0 || marker_index >= s_page_numbered_marker_count)
+        return NULL;
+    const music_numbered_marker_ref_t *marker =
+        &s_page_numbered_markers[marker_index];
+    return marker->group == group && marker->positioned ? marker : NULL;
+}
+
+static void draw_numbered_line(lv_layer_t *layer, int x1, int y1,
+                               int x2, int y2, int width,
+                               lv_color_t color)
+{
+    lv_draw_line_dsc_t line;
+    lv_draw_line_dsc_init(&line);
+    line.color = color;
+    line.width = width > 0 ? width : 1;
+    line.opa = LV_OPA_COVER;
+    line.p1 = (lv_point_precise_t){.x = x1, .y = y1};
+    line.p2 = (lv_point_precise_t){.x = x2, .y = y2};
+    lv_draw_line(layer, &line);
+}
+
+static void draw_numbered_curve(lv_layer_t *layer, int x1, int y1,
+                                int x2, int y2, int apex_y,
+                                lv_color_t color)
+{
+    int previous_x = x1;
+    int previous_y = y1;
+    for (int segment = 1; segment <= MUSIC_NUMBERED_CONNECTION_SEGMENTS;
+         ++segment) {
+        const int inverse = MUSIC_NUMBERED_CONNECTION_SEGMENTS - segment;
+        const int denominator = MUSIC_NUMBERED_CONNECTION_SEGMENTS *
+                                MUSIC_NUMBERED_CONNECTION_SEGMENTS;
+        const int x = x1 + (x2 - x1) * segment /
+                           MUSIC_NUMBERED_CONNECTION_SEGMENTS;
+        const int y = (inverse * inverse * y1 +
+                       2 * inverse * segment * apex_y +
+                       segment * segment * y2) / denominator;
+        draw_numbered_line(layer, previous_x, previous_y, x, y, 2, color);
+        previous_x = x;
+        previous_y = y;
+    }
+}
+
+static void draw_numbered_dot(lv_layer_t *layer, int center_x, int center_y,
+                              int radius, lv_color_t color)
+{
+    lv_draw_rect_dsc_t dot;
+    lv_draw_rect_dsc_init(&dot);
+    dot.bg_opa = LV_OPA_COVER;
+    dot.bg_color = color;
+    dot.border_opa = LV_OPA_TRANSP;
+    dot.radius = LV_RADIUS_CIRCLE;
+    const lv_area_t area = {
+        .x1 = center_x - radius,
+        .y1 = center_y - radius,
+        .x2 = center_x + radius - 1,
+        .y2 = center_y + radius - 1,
+    };
+    lv_draw_rect(layer, &dot, &area);
+}
+
+static void numbered_connection_ink_bounds(lv_obj_t *group, int x1, int x2,
+                                           int *top, int *bottom)
+{
+    if (!top || !bottom) return;
+    *top = MUSIC_NUMBERED_ROW_HEIGHT_PX;
+    *bottom = 0;
+    if (x2 < x1) {
+        const int swap = x1;
+        x1 = x2;
+        x2 = swap;
+    }
+    for (int i = 0; i < s_page_numbered_marker_count; ++i) {
+        const music_numbered_marker_ref_t *marker =
+            &s_page_numbered_markers[i];
+        if (marker->group != group || !marker->positioned ||
+            marker->center_x < x1 || marker->center_x > x2)
+            continue;
+        if (marker->upper_ink_y < *top) *top = marker->upper_ink_y;
+        if (marker->lower_ink_y > *bottom) *bottom = marker->lower_ink_y;
+    }
+    if (*top == MUSIC_NUMBERED_ROW_HEIGHT_PX) {
+        *top = MUSIC_NUMBERED_ROW_PADDING_Y_PX +
+               MUSIC_NUMBERED_DIGIT_TOP_FROM_LINE_PX;
+        *bottom = MUSIC_NUMBERED_ROW_PADDING_Y_PX +
+                  MUSIC_NUMBERED_DIGIT_BOTTOM_FROM_LINE_PX;
+    }
+}
+
+static uint8_t normalized_numbered_staff(const midi_note_t *note)
+{
+    return note && note->staff == 2 ? 2 : 1;
+}
+
+static uint8_t normalized_numbered_voice(const midi_note_t *note)
+{
+    return note && note->voice != 0 ? note->voice : 1;
+}
+
+static void build_numbered_connection_index(void)
+{
+    memset(s_numbered_connection_stop, 0xff,
+           sizeof(s_numbered_connection_stop));
+    memset(s_numbered_open_connection, 0xff,
+           sizeof(s_numbered_open_connection));
+    int16_t *slur_start = s_numbered_open_connection[0];
+    int16_t *gliss_start = s_numbered_open_connection[1];
+
+    int note_count = s_midi_data.note_count;
+    if (note_count > MAX_NOTES) note_count = MAX_NOTES;
+    for (int i = 0; i < note_count; ++i) {
+        const midi_note_t *note = &s_midi_data.notes[i];
+
+        if (note->slur_stop != 0 && slur_start[note->slur_stop] >= 0) {
+            s_numbered_connection_stop[MUSIC_NUMBERED_CONNECTION_SLUR]
+                                        [slur_start[note->slur_stop]] =
+                (int16_t)i;
+            slur_start[note->slur_stop] = -1;
+        }
+        if (note->slur_start != 0)
+            slur_start[note->slur_start] = (int16_t)i;
+
+        if (note->gliss_stop != 0 && gliss_start[note->gliss_stop] >= 0) {
+            s_numbered_connection_stop[MUSIC_NUMBERED_CONNECTION_GLISS]
+                                        [gliss_start[note->gliss_stop]] =
+                (int16_t)i;
+            gliss_start[note->gliss_stop] = -1;
+        }
+        if (note->gliss_start != 0)
+            gliss_start[note->gliss_start] = (int16_t)i;
+
+        if ((note->tie_flags & MIDI_NOTE_TIE_START) == 0) continue;
+        for (int j = i + 1; j < note_count; ++j) {
+            const midi_note_t *stop = &s_midi_data.notes[j];
+            if ((stop->tie_flags & MIDI_NOTE_TIE_STOP) == 0 ||
+                stop->note != note->note ||
+                normalized_numbered_staff(stop) !=
+                    normalized_numbered_staff(note) ||
+                normalized_numbered_voice(stop) !=
+                    normalized_numbered_voice(note))
+                continue;
+            s_numbered_connection_stop[MUSIC_NUMBERED_CONNECTION_TIE][i] =
+                (int16_t)j;
+            break;
+        }
+    }
+}
+
+static void draw_numbered_connections(lv_obj_t *group, lv_layer_t *layer,
+                                      const lv_area_t *group_area)
+{
+    const int row = numbered_row_index(group);
+    if (row < 0 || !group_area ||
+        s_numbered_row_end_tick[row] <= s_numbered_row_start_tick[row])
+        return;
+    const int content_width = lv_obj_get_content_width(group);
+    const lv_color_t color = lv_color_hex(0x171717);
+    int note_count = s_midi_data.note_count;
+    if (note_count > MAX_NOTES) note_count = MAX_NOTES;
+
+    for (int type = 0; type < MUSIC_NUMBERED_CONNECTION_TYPES; ++type) {
+        for (int start_index = 0; start_index < note_count; ++start_index) {
+            const int stop_index =
+                s_numbered_connection_stop[type][start_index];
+            if (stop_index < 0 || stop_index >= note_count) continue;
+            const midi_note_t *start = &s_midi_data.notes[start_index];
+            const midi_note_t *stop = &s_midi_data.notes[stop_index];
+            const uint8_t start_staff = normalized_numbered_staff(start);
+            const uint8_t stop_staff = normalized_numbered_staff(stop);
+            if ((start_staff != s_numbered_row_staff[row] &&
+                 stop_staff != s_numbered_row_staff[row]) ||
+                start->start_tick >= s_numbered_row_end_tick[row] ||
+                stop->start_tick < s_numbered_row_start_tick[row])
+                continue;
+
+            const music_numbered_marker_ref_t *start_marker =
+                numbered_marker_for_note(start_index, group);
+            const music_numbered_marker_ref_t *stop_marker =
+                numbered_marker_for_note(stop_index, group);
+            int x1 = start_marker ? start_marker->center_x : 4;
+            int x2 = stop_marker ? stop_marker->center_x : content_width - 4;
+            if (x2 <= x1 + 3) continue;
+
+            if (type == MUSIC_NUMBERED_CONNECTION_GLISS) {
+                int y1 = start_marker ? start_marker->digit_top_y - 2 :
+                         MUSIC_NUMBERED_ROW_PADDING_Y_PX + 12;
+                int direction = stop->note > start->note ? -1 :
+                                stop->note < start->note ? 1 : 0;
+                int y2 = stop_marker ? stop_marker->digit_top_y - 2 : y1;
+                y2 += direction * 10;
+                const int absolute_x1 = group_area->x1 + x1;
+                const int absolute_y1 = group_area->y1 + y1;
+                const int absolute_x2 = group_area->x1 + x2;
+                const int absolute_y2 = group_area->y1 + y2;
+                draw_numbered_line(layer, absolute_x1, absolute_y1,
+                                   absolute_x2, absolute_y2, 2, color);
+                if (stop_marker) {
+                    draw_numbered_line(layer, absolute_x2, absolute_y2,
+                                       absolute_x2 - 7,
+                                       absolute_y2 - direction * 5 - 3,
+                                       2, color);
+                    draw_numbered_line(layer, absolute_x2, absolute_y2,
+                                       absolute_x2 - 7,
+                                       absolute_y2 - direction * 5 + 3,
+                                       2, color);
+                }
+                continue;
+            }
+
+            int ink_top = 0;
+            int ink_bottom = 0;
+            numbered_connection_ink_bounds(group, x1, x2,
+                                           &ink_top, &ink_bottom);
+            int lane = type == MUSIC_NUMBERED_CONNECTION_TIE ? 0 :
+                       1 + ((start->slur_start != 0 ?
+                             start->slur_start : start_index) & 1);
+            const int needed = 10 + lane * 8;
+            const int top_clearance = ink_top - 2;
+            const int bottom_clearance =
+                MUSIC_NUMBERED_ROW_HEIGHT_PX - ink_bottom - 2;
+            const bool below = top_clearance < needed &&
+                               bottom_clearance > top_clearance;
+            int y1 = below ? ink_bottom + 3 : ink_top - 3;
+            if (y1 < 2) y1 = 2;
+            if (y1 > MUSIC_NUMBERED_ROW_HEIGHT_PX - 3)
+                y1 = MUSIC_NUMBERED_ROW_HEIGHT_PX - 3;
+            int y2 = y1;
+            int apex_y = below ? y1 + needed : y1 - needed;
+            if (apex_y < 2) apex_y = 2;
+            if (apex_y > MUSIC_NUMBERED_ROW_HEIGHT_PX - 3)
+                apex_y = MUSIC_NUMBERED_ROW_HEIGHT_PX - 3;
+            draw_numbered_curve(layer,
+                group_area->x1 + x1, group_area->y1 + y1,
+                group_area->x1 + x2, group_area->y1 + y2,
+                group_area->y1 + apex_y, color);
+        }
+    }
+}
+
+static void draw_numbered_overlays_cb(lv_event_t *event)
+{
+    lv_obj_t *group = lv_event_get_target(event);
+    lv_layer_t *layer = lv_event_get_layer(event);
+    if (!group || !layer) return;
+
+    lv_area_t group_area;
+    lv_obj_get_coords(group, &group_area);
+
+    for (int i = 0; i < s_page_numbered_marker_count; ++i) {
+        const music_numbered_marker_ref_t *marker =
+            &s_page_numbered_markers[i];
+        if (marker->group != group || !marker->positioned)
+            continue;
+        const int center_x = group_area.x1 + marker->center_x;
+        int dot_count = marker->octave > 0 ? marker->octave :
+                        -marker->octave;
+        if (dot_count > MUSIC_NUMBERED_MAX_OCTAVE_DOTS)
+            dot_count = MUSIC_NUMBERED_MAX_OCTAVE_DOTS;
+        const int direction = marker->octave > 0 ? -1 : 1;
+        const int nearest_center =
+            group_area.y1 + marker->nearest_center_y;
+
+        const lv_color_t note_color =
+            numbered_note_display_color(marker->slot_index);
+        for (int level = 0; level < dot_count; ++level) {
+            const int center_y = nearest_center + direction * level *
+                                 MUSIC_NUMBERED_DOT_STEP_PX;
+            draw_numbered_dot(layer, center_x, center_y,
+                              MUSIC_NUMBERED_DOT_RADIUS_PX, note_color);
+        }
+
+        if (marker->reduction_line_count > 1) {
+            uint8_t line_count = marker->reduction_line_count;
+            if (line_count > MUSIC_NUMBERED_MAX_REDUCTION_LINES)
+                line_count = MUSIC_NUMBERED_MAX_REDUCTION_LINES;
+            for (uint8_t line = 2; line <= line_count; ++line) {
+                const int y = group_area.y1 + marker->digit_bottom_y +
+                    line * MUSIC_NUMBERED_REDUCTION_LINE_DEPTH_PX;
+                draw_numbered_line(layer,
+                    group_area.x1 + marker->cell_left_x + 3, y,
+                    group_area.x1 + marker->cell_right_x - 3, y,
+                    2, note_color);
+            }
+        }
+
+        if (marker->slot_index >= 0 &&
+            marker->slot_index < s_midi_data.note_count) {
+            uint8_t augmentation_dots =
+                s_midi_data.notes[marker->slot_index].dots;
+            if (augmentation_dots > MUSIC_NUMBERED_MAX_AUGMENTATION_DOTS)
+                augmentation_dots = MUSIC_NUMBERED_MAX_AUGMENTATION_DOTS;
+            const int y = group_area.y1 +
+                (marker->digit_top_y + marker->digit_bottom_y) / 2;
+            for (uint8_t dot = 0; dot < augmentation_dots; ++dot) {
+                const int x = group_area.x1 + marker->cell_right_x +
+                    MUSIC_NUMBERED_AUGMENTATION_GAP_PX +
+                    dot * MUSIC_NUMBERED_AUGMENTATION_STEP_PX;
+                draw_numbered_dot(layer, x, y,
+                                  MUSIC_NUMBERED_DOT_RADIUS_PX, note_color);
+            }
+        }
+    }
+
+    draw_numbered_connections(group, layer, &group_area);
+}
+
 static void clear_spangroup(lv_obj_t *group)
 {
     if (!group) return;
@@ -336,9 +961,37 @@ static lv_span_t *add_text_span(lv_obj_t *group, const char *text, lv_color_t co
     return span;
 }
 
+static lv_span_t *add_text_span_range(lv_obj_t *group, const char *text,
+                                      size_t length, lv_color_t color)
+{
+    lv_span_t *last = NULL;
+    while (text && length > 0) {
+        char chunk[64];
+        size_t chunk_length = length;
+        if (chunk_length >= sizeof(chunk)) chunk_length = sizeof(chunk) - 1U;
+        memcpy(chunk, text, chunk_length);
+        chunk[chunk_length] = '\0';
+        last = add_text_span(group, chunk, color);
+        text += chunk_length;
+        length -= chunk_length;
+    }
+    return last;
+}
+
 static bool token_is_note_glyph(char ch)
 {
     return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z');
+}
+
+static bool numbered_note_ref_matches_text(
+    const char *line, size_t line_length,
+    const midi_numbered_note_ref_t *ref)
+{
+    if (!line || !ref || ref->byte_length == 0) return false;
+    size_t offset = ref->byte_offset;
+    size_t length = ref->byte_length;
+    if (offset > line_length || length > line_length - offset) return false;
+    return length == 1U && token_is_note_glyph(line[offset]);
 }
 
 static lv_obj_t *line_group_for_index(int line_idx)
@@ -348,34 +1001,60 @@ static lv_obj_t *line_group_for_index(int line_idx)
     return s_line_groups[line_idx];
 }
 
-static int next_note_index_for_range(int cursor, uint32_t start_tick,
-                                     uint32_t end_tick, uint8_t staff)
-{
-    for (int i = cursor; i < s_midi_data.note_count; ++i) {
-        const midi_note_t *note = &s_midi_data.notes[i];
-        uint8_t note_staff = note->staff == 2 ? 2 : 1;
-        if (note->start_tick >= end_tick) break;
-        if (note->start_tick >= start_tick &&
-            (!staff || note_staff == staff)) return i;
-    }
-    return -1;
-}
-
 static void reset_page_span_index(void)
 {
     s_page_note_span_count = 0;
+    s_page_numbered_marker_count = 0;
+    s_page_numbered_marker_overflow_logged = false;
+    memset(s_page_marker_by_note, 0xff, sizeof(s_page_marker_by_note));
+    memset(s_numbered_connection_stop, 0xff,
+           sizeof(s_numbered_connection_stop));
+    memset(s_numbered_row_start_tick, 0,
+           sizeof(s_numbered_row_start_tick));
+    memset(s_numbered_row_end_tick, 0,
+           sizeof(s_numbered_row_end_tick));
+    memset(s_numbered_row_staff, 0, sizeof(s_numbered_row_staff));
     s_page_first_slot = -1;
     s_page_last_slot = -1;
+    s_numbered_page_end_tick = 0;
 }
 
 static void remember_page_note_span(lv_obj_t *group, lv_span_t *span, int slot_index)
 {
-    if (!group || !span || slot_index < 0) return;
+    if (slot_index < 0) return;
+    if (s_page_first_slot < 0 || slot_index < s_page_first_slot)
+        s_page_first_slot = slot_index;
+    if (slot_index > s_page_last_slot) s_page_last_slot = slot_index;
+    if (!group || !span) return;
     if (s_page_note_span_count >= MUSIC_MAX_NOTE_SPANS_PER_PAGE) return;
     s_page_note_spans[s_page_note_span_count++] = (music_note_span_ref_t){
         .group = group, .span = span, .slot_index = slot_index };
-    if (s_page_first_slot < 0 || slot_index < s_page_first_slot) s_page_first_slot = slot_index;
-    if (slot_index > s_page_last_slot) s_page_last_slot = slot_index;
+}
+
+static void remember_numbered_marker(lv_obj_t *group, lv_span_t *span,
+                                     int slot_index, int8_t octave,
+                                     uint8_t reduction_line_count)
+{
+    if (!group || !span) return;
+    if (s_page_numbered_marker_count >=
+        MUSIC_MAX_NUMBERED_MARKERS_PER_PAGE) {
+        if (!s_page_numbered_marker_overflow_logged) {
+            ESP_LOGW(TAG, "numbered marker cache full");
+            s_page_numbered_marker_overflow_logged = true;
+        }
+        return;
+    }
+    const int marker_index = s_page_numbered_marker_count++;
+    s_page_numbered_markers[marker_index] =
+        (music_numbered_marker_ref_t){
+            .group = group,
+            .span = span,
+            .slot_index = slot_index,
+            .octave = octave,
+            .reduction_line_count = reduction_line_count,
+        };
+    if (slot_index >= 0 && slot_index < MAX_NOTES)
+        s_page_marker_by_note[slot_index] = (int16_t)marker_index;
 }
 
 static bool current_page_may_contain_slot(int slot_index)
@@ -412,8 +1091,8 @@ static bool update_note_span_color(int slot_index, uint8_t status)
 
 /* ── 逐 Token 着色渲染一行简谱 ── */
 static void render_colored_line(lv_obj_t *group, const char *line,
-                                uint32_t start_tick, uint32_t end_tick,
-                                uint8_t staff)
+                                const midi_numbered_note_ref_t *refs,
+                                size_t ref_count)
 {
     clear_spangroup(group);
     if (!group) return;
@@ -423,57 +1102,116 @@ static void render_colored_line(lv_obj_t *group, const char *line,
         return;
     }
 
-    int note_cursor = 0;
-    const char *p = line;
-    char token[64];
-    bool first = true;
+    const size_t line_length = strlen(line);
+    size_t text_cursor = 0;
+    for (size_t i = 0; refs && i < ref_count; ++i) {
+        const midi_numbered_note_ref_t *ref = &refs[i];
+        const size_t offset = ref->byte_offset;
+        const size_t length = ref->byte_length;
+        const int note_idx = ref->note_index;
 
-    while (*p) {
-        /* 跳过空格 */
-        while (*p == ' ') { p++; }
-        if (!*p) break;
-
-        /* 提取一个 token（直到空格或结尾） */
-        int ti = 0;
-        while (*p && *p != ' ' && ti < (int)sizeof(token) - 1) {
-            token[ti++] = *p++;
+        /* A malformed entry stays plain text.  Do not consume the cursor so
+         * a later valid offset can still be rendered with the right index. */
+        if (offset < text_cursor || note_idx >= s_midi_data.note_count ||
+            !numbered_note_ref_matches_text(line, line_length, ref)) {
+            continue;
         }
-        token[ti] = '\0';
-        if (ti == 0) continue;
+        add_text_span_range(group, line + text_cursor,
+                            offset - text_cursor,
+                            lv_color_hex(0x000000));
 
-        /* 在 token 之间加空格 span（保留原始排版） */
-        if (!first) {
-            add_text_span(group, " ", lv_color_hex(0x000000));
+        uint8_t status = note_idx < MUSIC_MAX_RESULT_SLOTS ?
+                         s_note_status[note_idx] :
+                         MUSIC_STATUS_UNKNOWN;
+        lv_span_t *span = add_text_span_range(
+            group, line + offset, length, color_for_status(status));
+        if (span && status == MUSIC_STATUS_UNKNOWN &&
+            note_idx >= s_expected_first_slot &&
+            note_idx <= s_expected_last_slot) {
+            lv_style_t *style = lv_span_get_style(span);
+            lv_style_set_text_color(style, lv_color_hex(0x0284C7));
+            lv_style_set_text_decor(style, LV_TEXT_DECOR_UNDERLINE);
         }
-        first = false;
-
-        /* 判断这是否是一个音符 glyph 开头 */
-        if (ti > 0 && token_is_note_glyph(token[0])) {
-            int note_idx = next_note_index_for_range(note_cursor, start_tick,
-                                                     end_tick, staff);
-            if (note_idx >= 0) note_cursor = note_idx + 1;
-            uint8_t status = (note_idx >= 0 &&
-                              note_idx < MUSIC_MAX_RESULT_SLOTS) ?
-                             s_note_status[note_idx] :
-                             MUSIC_STATUS_UNKNOWN;
-            lv_span_t *span = add_text_span(group, token, color_for_status(status));
-            if (span && note_idx >= 0) {
-                if (status == MUSIC_STATUS_UNKNOWN &&
-                    note_idx >= s_expected_first_slot &&
-                    note_idx <= s_expected_last_slot) {
-                    lv_style_t *style = lv_span_get_style(span);
-                    lv_style_set_text_color(style, lv_color_hex(0x0284C7));
-                    lv_style_set_text_decor(style, LV_TEXT_DECOR_UNDERLINE);
-                }
-                remember_page_note_span(group, span, note_idx);
-            }
-        } else {
-            /* 小节线 | 或其他分隔符 */
-            add_text_span(group, token, lv_color_hex(0x000000));
-        }
+        remember_page_note_span(group, span, note_idx);
+        remember_numbered_marker(group, span, note_idx, ref->octave,
+                                 ref->reduction_line_count);
+        text_cursor = offset + length;
     }
+    add_text_span_range(group, line + text_cursor,
+                        line_length - text_cursor,
+                        lv_color_hex(0x000000));
 
     lv_spangroup_refr_mode(group);
+}
+
+static void center_numbered_row(lv_obj_t *group, int line_index,
+                                bool grand_staff)
+{
+    if (!group || line_index < 0 || line_index >= MUSIC_LINES_PER_PAGE)
+        return;
+    const int base_x = grand_staff ? 90 : 42;
+    const int maximum_width = grand_staff ? 875 : 929;
+    uint32_t used_width =
+        lv_spangroup_get_expand_width(group, (uint32_t)maximum_width);
+    int row_width = used_width >= (uint32_t)maximum_width ?
+                    maximum_width : (int)used_width + 2;
+    if (row_width < 1) row_width = 1;
+    if (row_width > maximum_width) row_width = maximum_width;
+    const int row_x = base_x + (maximum_width - row_width) / 2;
+    lv_obj_set_pos(group, row_x, 25 + line_index * 220);
+    lv_obj_set_size(group, row_width, MUSIC_NUMBERED_ROW_HEIGHT_PX);
+    lv_obj_update_layout(group);
+    const int content_width = lv_obj_get_content_width(group);
+    if (content_width > 0)
+        (void)lv_spangroup_get_expand_height(group, content_width);
+}
+
+static void reset_numbered_legacy_inference_state(void)
+{
+    s_numbered_inference_evaluated = false;
+    s_numbered_inferred_categories = 0;
+}
+
+static void clear_numbered_legacy_inference(void)
+{
+    if (s_numbered_inferred_categories == 0) return;
+    for (int index = 0; index < s_midi_data.note_count; ++index) {
+        midi_note_t *note = &s_midi_data.notes[index];
+        if ((s_numbered_inferred_categories &
+             MUSIC_NUMBERED_INFERRED_DOTS) != 0) {
+            note->dots = 0;
+        }
+        if ((s_numbered_inferred_categories &
+             MUSIC_NUMBERED_INFERRED_TIES) != 0) {
+            note->tie_flags = 0;
+        }
+    }
+    reset_numbered_legacy_inference_state();
+}
+
+static void prepare_numbered_legacy_inference(void)
+{
+    if (s_numbered_inference_evaluated ||
+        !s_midi_data.numbered_legacy_inference_allowed) {
+        return;
+    }
+
+    midi_numbered_inference_stats_t inferred = {0};
+    s_numbered_inference_evaluated = true;
+    if (!midi_numbered_infer_legacy_marks(&s_midi_data, &inferred)) {
+        ESP_LOGW(TAG, "numbered legacy inference: invalid score or meter");
+        return;
+    }
+    if (inferred.inferred_dots != 0)
+        s_numbered_inferred_categories |= MUSIC_NUMBERED_INFERRED_DOTS;
+    if (inferred.inferred_ties != 0)
+        s_numbered_inferred_categories |= MUSIC_NUMBERED_INFERRED_TIES;
+    ESP_LOGI(TAG,
+             "numbered inferred: ties=%u slurs=%u gliss=%u dotted=%u",
+             (unsigned)inferred.inferred_ties,
+             (unsigned)inferred.inferred_slurs,
+             (unsigned)inferred.inferred_glissandi,
+             (unsigned)inferred.inferred_dots);
 }
 
 /* ── 刷新简谱显示（使用逐音符着色渲染） ── */
@@ -513,26 +1251,56 @@ static void update_notation_display(void)
         reset_page_span_index();
         bool grand_staff = score_has_lower_staff();
         configure_numbered_rows(grand_staff);
-        int measure_ticks = s_midi_data.ticks_per_quarter *
-                            s_midi_data.time_sig_num;
+        uint64_t measure_ticks = 0;
+        if (!score_measure_ticks_locked(&measure_ticks)) {
+            ESP_LOGE(TAG, "invalid meter for numbered notation paging");
+            return;
+        }
         for (int line = 0; line < MUSIC_LINES_PER_PAGE; ++line) {
             lv_obj_t *group = line_group_for_index(line);
             if (!group) continue;
+            /* Span coordinates are needed immediately for octave overlays;
+             * LVGL skips layout work for hidden objects. */
+            lv_obj_clear_flag(group, LV_OBJ_FLAG_HIDDEN);
             int start_measure = grand_staff ?
                 s_current_page * MUSIC_MEASURES_PER_SYSTEM :
                 (s_current_page * MUSIC_LINES_PER_PAGE + line) *
                     MUSIC_MEASURES_PER_SYSTEM;
             uint8_t staff = grand_staff ? (uint8_t)(line + 1) : 1;
-            char notation[512];
-            bool has_line = midi_generate_measure_range(
-                &s_midi_data, notation, sizeof(notation), start_measure,
-                MUSIC_MEASURES_PER_SYSTEM, staff);
-            uint32_t start_tick = (uint32_t)start_measure * measure_ticks;
-            uint32_t end_tick = start_tick +
-                (uint32_t)MUSIC_MEASURES_PER_SYSTEM * measure_ticks;
-            render_colored_line(group, has_line ? notation : " ",
-                                start_tick, end_tick, staff);
-            lv_obj_clear_flag(group, LV_OBJ_FLAG_HIDDEN);
+            size_t note_ref_count = 0;
+            bool notation_truncated = false;
+            bool has_line = midi_generate_measure_range_mapped(
+                &s_midi_data,
+                s_numbered_text_buffer, sizeof(s_numbered_text_buffer),
+                start_measure, MUSIC_MEASURES_PER_SYSTEM, staff,
+                s_numbered_note_refs, MAX_NOTES, &note_ref_count,
+                &notation_truncated);
+            if (notation_truncated) {
+                ESP_LOGW(TAG,
+                         "numbered notation truncated: page=%d line=%d refs=%u",
+                         s_current_page, line, (unsigned)note_ref_count);
+            }
+            uint64_t start_tick = (uint64_t)start_measure * measure_ticks;
+            uint64_t end_tick = start_tick +
+                (uint64_t)MUSIC_MEASURES_PER_SYSTEM * measure_ticks;
+            s_numbered_row_start_tick[line] = start_tick > UINT32_MAX ?
+                                              UINT32_MAX :
+                                              (uint32_t)start_tick;
+            if (end_tick > UINT32_MAX) end_tick = UINT32_MAX;
+            s_numbered_row_end_tick[line] = (uint32_t)end_tick;
+            s_numbered_row_staff[line] = staff;
+            if ((uint32_t)end_tick > s_numbered_page_end_tick)
+                s_numbered_page_end_tick = (uint32_t)end_tick;
+            render_colored_line(
+                group, has_line ? s_numbered_text_buffer : " ",
+                has_line ? s_numbered_note_refs : NULL,
+                has_line ? note_ref_count : 0);
+            center_numbered_row(group, line, grand_staff);
+            refresh_numbered_marker_positions(group);
+        }
+        build_numbered_connection_index();
+        for (int line = 0; line < MUSIC_LINES_PER_PAGE; ++line) {
+            if (s_line_groups[line]) lv_obj_invalidate(s_line_groups[line]);
         }
     } else if (s_staff_view) {
         leland_score_view_show_page(s_staff_view, s_current_page, false);
@@ -598,17 +1366,19 @@ static bool score_has_lower_staff(void)
 
 static int score_total_measures(void)
 {
-    int measure_ticks = s_midi_data.ticks_per_quarter *
-                        s_midi_data.time_sig_num;
-    if (measure_ticks <= 0 || s_midi_data.note_count <= 0) return 1;
-    uint32_t end_tick = 0;
+    uint64_t measure_ticks = 0;
+    if (!score_measure_ticks_locked(&measure_ticks) ||
+        s_midi_data.note_count <= 0)
+        return 1;
+    uint64_t end_tick = 0;
     for (int i = 0; i < s_midi_data.note_count; ++i) {
-        uint32_t end = s_midi_data.notes[i].start_tick +
-                       s_midi_data.notes[i].duration;
+        uint64_t end = (uint64_t)s_midi_data.notes[i].start_tick +
+                       (uint64_t)s_midi_data.notes[i].duration;
         if (end > end_tick) end_tick = end;
     }
-    int measures = (int)((end_tick + (uint32_t)measure_ticks - 1) /
-                         (uint32_t)measure_ticks);
+    uint64_t measure_count = end_tick / measure_ticks +
+        (end_tick % measure_ticks != 0 ? 1U : 0U);
+    int measures = measure_count > INT_MAX ? INT_MAX : (int)measure_count;
     return measures > 0 ? measures : 1;
 }
 
@@ -629,7 +1399,8 @@ static void configure_numbered_rows(bool grand_staff)
         if (!s_line_groups[i]) continue;
         lv_obj_set_pos(s_line_groups[i], grand_staff ? 90 : 42,
                        25 + i * 220);
-        lv_obj_set_size(s_line_groups[i], grand_staff ? 875 : 929, 190);
+        lv_obj_set_size(s_line_groups[i], grand_staff ? 875 : 929,
+                        MUSIC_NUMBERED_ROW_HEIGHT_PX);
         if (s_line_prefixes[i]) {
             if (grand_staff)
                 lv_obj_clear_flag(s_line_prefixes[i], LV_OBJ_FLAG_HIDDEN);
@@ -660,12 +1431,14 @@ static void apply_midi_data_to_ui(void)
     }
 
     if (s_notation_type == MUSIC_DISPLAY_NOTATION_NUMBERED) {
+        prepare_numbered_legacy_inference();
         if (s_staff_view) leland_score_view_set_hidden(s_staff_view, true);
         lv_obj_scroll_to_y(guider_ui.music_screen_cont_1, 0, LV_ANIM_OFF);
         s_total_pages = numbered_page_count();
         ESP_LOGI(TAG, "rendering numbered notation (%d pages)",
                  s_total_pages);
     } else {
+        clear_numbered_legacy_inference();
         if (!s_staff_view && guider_ui.music_screen_cont_1) {
             s_staff_view = leland_score_view_create(
                 guider_ui.music_screen_cont_1);
@@ -680,14 +1453,33 @@ static void apply_midi_data_to_ui(void)
             return;
         }
 
+        /* A repeated practice can reuse byte-identical MIDI and make the
+         * Leland view skip rebuilding. Clear feedback stored in the existing
+         * scene before that fast path so a new attempt always starts clean. */
+        leland_score_view_clear_note_colors(s_staff_view);
+        leland_score_view_set_paginated(s_staff_view, !s_creator_active);
         leland_score_view_set_hidden(s_staff_view, false);
         char render_error[128] = {0};
         if (!leland_score_view_set_midi(s_staff_view, &s_midi_data,
                                         render_error,
                                         sizeof(render_error))) {
             ESP_LOGE(TAG, "Leland score layout failed: %s", render_error);
+            /* A normal preview must never expose the previously rendered
+             * score when its own layout fails.  The retained scene is useful
+             * for Creator live-update recovery, so leave that path unchanged
+             * and only hide stale content outside Creator Mode. */
+            if (!s_creator_active) {
+                leland_score_view_set_hidden(s_staff_view, true);
+                if (guider_ui.music_screen_status_label) {
+                    lv_label_set_text(guider_ui.music_screen_status_label,
+                                      "乐谱排版失败");
+                }
+            }
             return;
         }
+        leland_score_view_set_note_guide(s_staff_view,
+                                         s_expected_first_slot,
+                                         s_expected_last_slot);
         s_total_pages = leland_score_view_page_count(s_staff_view);
         ESP_LOGI(TAG, "rendering staff notation (%d pages)", s_total_pages);
     }
@@ -713,10 +1505,17 @@ static void apply_midi_data_to_ui(void)
     /* 调性 + 拍号 + BPM */
     if (guider_ui.music_screen_tonality_text) {
         char tonality_str[64];
-        midi_tonality_to_string(s_midi_data.tonality_sf, s_midi_data.tonality_minor,
-                                tonality_str, sizeof(tonality_str));
+        if (s_midi_data.tonality_forced) {
+            midi_tonality_to_string(s_midi_data.tonality_sf,
+                                    s_midi_data.tonality_minor,
+                                    tonality_str, sizeof(tonality_str));
+        } else {
+            snprintf(tonality_str, sizeof(tonality_str), "调号=未定");
+        }
         int len = strlen(tonality_str);
-        int denom = 1 << s_midi_data.time_sig_den;
+        int denom = s_midi_data.time_sig_den >= 0 &&
+                    s_midi_data.time_sig_den <= 6 ?
+                    1 << s_midi_data.time_sig_den : 4;
         snprintf(tonality_str + len, sizeof(tonality_str) - len, " %d/%d",
                  s_midi_data.time_sig_num, denom);
         len = strlen(tonality_str);
@@ -792,6 +1591,7 @@ static void handle_midi_data(const uint8_t *data, size_t len)
     s_midi_data = *result;
     free(result);
     s_midi_parsed = true;
+    reset_numbered_legacy_inference_state();
     s_current_page = 0;
     reset_note_status();
     s_midi_data.title[0] = '\0';
@@ -806,6 +1606,7 @@ static void handle_parsed_midi(midi_data_t *md)
     if (!md) return;
     s_midi_data = *md;
     s_midi_parsed = true;
+    reset_numbered_legacy_inference_state();
     s_current_page = 0;
     reset_note_status();
     free(md);
@@ -838,8 +1639,18 @@ static void apply_empty_snapshot_to_ui(void)
                           "Creator Mode");
     if (guider_ui.music_screen_tonality_text) {
         char info[64];
-        int denominator = 1 << s_midi_data.time_sig_den;
-        snprintf(info, sizeof(info), "C major  %d/%d  BPM=%d",
+        if (s_midi_data.tonality_forced) {
+            midi_tonality_to_string(s_midi_data.tonality_sf,
+                                    s_midi_data.tonality_minor,
+                                    info, sizeof(info));
+        } else {
+            snprintf(info, sizeof(info), "调号=未定");
+        }
+        const int denominator = s_midi_data.time_sig_den >= 0 &&
+                                s_midi_data.time_sig_den <= 6 ?
+                                1 << s_midi_data.time_sig_den : 4;
+        const size_t length = strlen(info);
+        snprintf(info + length, sizeof(info) - length, " %d/%d  BPM=%d",
                  s_midi_data.time_sig_num, denominator, s_midi_data.bpm);
         lv_label_set_text(guider_ui.music_screen_tonality_text, info);
     }
@@ -858,6 +1669,7 @@ static void handle_midi_snapshot(midi_data_t *md, int notation_type,
     }
     s_notation_type = notation_type;
     s_midi_data = *md;
+    reset_numbered_legacy_inference_state();
     s_current_page = 0;
     reset_note_status();
     bool empty = s_midi_data.note_count <= 0;
@@ -960,20 +1772,63 @@ void music_display_set_expected_note_group(int first_target_index,
     if (s_staff_view) {
         leland_score_view_set_note_guide(s_staff_view, first, last);
     }
+    /* Numbered notation stores its guide in span styles. Staff notation now
+     * moves independent cached overlay rectangles, so touching every span
+     * and line group here would reintroduce unnecessary LVGL work. */
+    if (s_notation_type == MUSIC_DISPLAY_NOTATION_NUMBERED) {
+        for (int i = 0; i < s_page_note_span_count; ++i) {
+            music_note_span_ref_t *ref = &s_page_note_spans[i];
+            if (!ref->span || ref->slot_index < 0 ||
+                ref->slot_index >= MUSIC_MAX_RESULT_SLOTS) {
+                continue;
+            }
+            apply_note_span_style(ref, s_note_status[ref->slot_index]);
+        }
+        for (int line = 0; line < MUSIC_LINES_PER_PAGE; ++line) {
+            if (s_line_groups[line] && lv_obj_is_valid(s_line_groups[line])) {
+                lv_spangroup_refr_mode(s_line_groups[line]);
+                lv_obj_invalidate(s_line_groups[line]);
+            }
+        }
+    }
+    bsp_display_unlock();
+}
+
+void music_display_reset_note_feedback(void)
+{
+    bsp_display_lock(portMAX_DELAY);
+    reset_note_status();
+    s_expected_first_slot = -1;
+    s_expected_last_slot = -1;
+    s_current_page = 0;
+    if (s_staff_view) {
+        leland_score_view_clear_note_colors(s_staff_view);
+        leland_score_view_set_note_guide(s_staff_view, -1, -1);
+    }
     for (int i = 0; i < s_page_note_span_count; ++i) {
-        music_note_span_ref_t *ref = &s_page_note_spans[i];
-        if (!ref->span || ref->slot_index < 0 ||
-            ref->slot_index >= MUSIC_MAX_RESULT_SLOTS) {
-            continue;
-        }
-        apply_note_span_style(ref, s_note_status[ref->slot_index]);
+        apply_note_span_style(&s_page_note_spans[i], MUSIC_STATUS_UNKNOWN);
     }
-    for (int line = 0; line < MUSIC_LINES_PER_PAGE; ++line) {
-        if (s_line_groups[line] && lv_obj_is_valid(s_line_groups[line])) {
-            lv_spangroup_refr_mode(s_line_groups[line]);
-            lv_obj_invalidate(s_line_groups[line]);
-        }
+    if (s_midi_parsed) update_notation_display();
+    bsp_display_unlock();
+}
+
+void music_display_reset_read_only_playback_view(void)
+{
+    bsp_display_lock(portMAX_DELAY);
+    s_expected_first_slot = -1;
+    s_expected_last_slot = -1;
+    s_current_page = 0;
+    if (s_staff_view) {
+        leland_score_view_set_note_guide(s_staff_view, -1, -1);
     }
+    for (int i = 0; i < s_page_note_span_count; ++i) {
+        const int slot = s_page_note_spans[i].slot_index;
+        const uint8_t status = slot >= 0 && slot < MUSIC_MAX_RESULT_SLOTS
+                                   ? s_note_status[slot]
+                                   : MUSIC_STATUS_UNKNOWN;
+        apply_note_span_style(&s_page_note_spans[i], status);
+    }
+    if (s_midi_parsed) update_notation_display();
     bsp_display_unlock();
 }
 
@@ -1015,18 +1870,24 @@ static bool current_page_end_time_ms_locked(int64_t *page_end_ms)
         return false;
     }
 
-    int first_note_idx;
-    int last_note_idx;
-    if (!current_page_note_range_locked(&first_note_idx, &last_note_idx)) {
-        return false;
-    }
-
     uint64_t max_end_tick = 0;
-    for (int i = first_note_idx; i <= last_note_idx; ++i) {
-        const midi_note_t *note = &s_midi_data.notes[i];
-        uint64_t note_end_tick =
-            (uint64_t)note->start_tick + (uint64_t)note->duration;
-        if (note_end_tick > max_end_tick) max_end_tick = note_end_tick;
+    if (s_notation_type == MUSIC_DISPLAY_NOTATION_NUMBERED &&
+        s_numbered_page_end_tick > 0) {
+        /* Keep trailing rests/extensions on screen for their full measures. */
+        max_end_tick = s_numbered_page_end_tick;
+    } else {
+        int first_note_idx;
+        int last_note_idx;
+        if (!current_page_note_range_locked(&first_note_idx,
+                                            &last_note_idx)) {
+            return false;
+        }
+        for (int i = first_note_idx; i <= last_note_idx; ++i) {
+            const midi_note_t *note = &s_midi_data.notes[i];
+            uint64_t note_end_tick =
+                (uint64_t)note->start_tick + (uint64_t)note->duration;
+            if (note_end_tick > max_end_tick) max_end_tick = note_end_tick;
+        }
     }
 
     uint64_t ticks_per_minute =
@@ -1038,19 +1899,101 @@ static bool current_page_end_time_ms_locked(int64_t *page_end_ms)
     return true;
 }
 
+static bool score_measure_ticks_locked(uint64_t *measure_ticks)
+{
+    if (!measure_ticks || s_midi_data.ticks_per_quarter <= 0 ||
+        s_midi_data.time_sig_num <= 0 || s_midi_data.time_sig_den < 0 ||
+        s_midi_data.time_sig_den > 6)
+        return false;
+    const uint64_t denominator = UINT64_C(1) << s_midi_data.time_sig_den;
+    const uint64_t beats = (uint64_t)s_midi_data.time_sig_num;
+    if (beats > UINT64_MAX / 4U) return false;
+    const uint64_t quarter_units = beats * 4U;
+    if ((uint64_t)s_midi_data.ticks_per_quarter >
+        UINT64_MAX / quarter_units)
+        return false;
+    const uint64_t numerator =
+        (uint64_t)s_midi_data.ticks_per_quarter * quarter_units;
+    if (denominator == 0 || numerator == 0 ||
+        numerator % denominator != 0)
+        return false;
+    *measure_ticks = numerator / denominator;
+    return *measure_ticks > 0;
+}
+
+static bool score_tick_time_ms_locked(uint64_t tick, int64_t *time_ms)
+{
+    if (!time_ms || s_midi_data.bpm <= 0 ||
+        s_midi_data.ticks_per_quarter <= 0)
+        return false;
+    const uint64_t ticks_per_minute =
+        (uint64_t)s_midi_data.bpm *
+        (uint64_t)s_midi_data.ticks_per_quarter;
+    if (ticks_per_minute == 0 || tick > UINT64_MAX / 60000U)
+        return false;
+    const uint64_t milliseconds = tick * 60000U / ticks_per_minute;
+    if (milliseconds > INT64_MAX) return false;
+    *time_ms = (int64_t)milliseconds;
+    return true;
+}
+
+/* Use the next logical page's first measure rather than the last audible
+ * note on the current page.  Measure time remains available across long
+ * rests and empty systems, and a sustained note crossing a page boundary no
+ * longer holds the old page until its eventual Note Off. */
+static bool next_page_start_time_ms_locked(int64_t *page_start_ms)
+{
+    if (!page_start_ms || s_current_page < 0 ||
+        s_current_page >= s_total_pages - 1)
+        return false;
+
+    uint64_t start_tick = 0;
+    if (s_notation_type == MUSIC_DISPLAY_NOTATION_STAFF) {
+        if (!s_staff_view ||
+            !leland_score_view_get_page_start_tick(
+                s_staff_view, s_current_page + 1, &start_tick))
+            return false;
+    } else {
+        uint64_t measure_ticks;
+        if (!score_measure_ticks_locked(&measure_ticks)) return false;
+        const uint64_t measures_per_page = score_has_lower_staff() ?
+            MUSIC_MEASURES_PER_SYSTEM :
+            MUSIC_MEASURES_PER_SYSTEM * MUSIC_LINES_PER_PAGE;
+        const uint64_t next_measure =
+            (uint64_t)(s_current_page + 1) * measures_per_page;
+        if (next_measure > UINT64_MAX / measure_ticks) return false;
+        start_tick = next_measure * measure_ticks;
+    }
+    return score_tick_time_ms_locked(start_tick, page_start_ms);
+}
+
 void music_display_check_time_page_turn(int64_t score_time_ms)
 {
     if (score_time_ms < 0) return;
 
     bsp_display_lock(portMAX_DELAY);
     int advanced_pages = 0;
-    while (s_practice_active && !s_practice_paused &&
-           !s_creator_active && !s_read_only_active &&
+    const bool timed_navigation =
+        (s_practice_active && !s_practice_paused &&
+         !s_creator_active && !s_read_only_active) ||
+        (s_read_only_active &&
+         s_read_only_playback_state == MUSIC_DISPLAY_PLAYBACK_PLAYING);
+    while (timed_navigation &&
            s_current_page < s_total_pages - 1) {
-        int64_t page_end_ms;
-        if (!current_page_end_time_ms_locked(&page_end_ms) ||
-            score_time_ms <= page_end_ms + MUSIC_PAGE_TURN_GRACE_MS) {
-            break;
+        int64_t page_start_ms;
+        if (next_page_start_time_ms_locked(&page_start_ms)) {
+            int64_t turn_time_ms = page_start_ms -
+                MUSIC_PAGE_TURN_LOOKAHEAD_MS;
+            if (turn_time_ms < 0) turn_time_ms = 0;
+            if (score_time_ms < turn_time_ms) break;
+        } else {
+            /* Malformed legacy data may not expose a page measure boundary.
+             * Retain a note-end fallback, but do not reintroduce the old
+             * fixed 500 ms delay. */
+            int64_t page_end_ms;
+            if (!current_page_end_time_ms_locked(&page_end_ms) ||
+                score_time_ms < page_end_ms)
+                break;
         }
         s_current_page++;
         update_notation_display();
@@ -1164,6 +2107,126 @@ static void music_display_task(void *arg)
     }
 }
 
+static char key_ascii_upper(char value)
+{
+    return value >= 'a' && value <= 'z' ?
+           (char)(value - ('a' - 'A')) : value;
+}
+
+static bool key_name_equal(const char *left, const char *right)
+{
+    if (!left || !right) return false;
+    while (*left && *right) {
+        if (key_ascii_upper(*left) != key_ascii_upper(*right)) return false;
+        ++left;
+        ++right;
+    }
+    return *left == '\0' && *right == '\0';
+}
+
+static bool key_word_starts_with(const char *text, const char *word)
+{
+    if (!text || !word) return false;
+    while (*word) {
+        if (!*text || key_ascii_upper(*text) != key_ascii_upper(*word))
+            return false;
+        ++text;
+        ++word;
+    }
+    return true;
+}
+
+static bool parse_legacy_key_signature(const char *text, int *fifths,
+                                       bool *minor)
+{
+    static const char *const major_tonics[15] = {
+        "Cb", "Gb", "Db", "Ab", "Eb", "Bb", "F", "C",
+        "G", "D", "A", "E", "B", "F#", "C#",
+    };
+    static const char *const minor_tonics[15] = {
+        "Ab", "Eb", "Bb", "F", "C", "G", "D", "A",
+        "E", "B", "F#", "C#", "G#", "D#", "A#",
+    };
+
+    if (!text || !fifths || !minor) return false;
+    const char *cursor = strchr(text, '=');
+    cursor = cursor ? cursor + 1 : text;
+    while (*cursor == ' ' || *cursor == '\t') ++cursor;
+
+    const char letter = key_ascii_upper(*cursor);
+    if (letter < 'A' || letter > 'G') return false;
+    ++cursor;
+
+    char tonic[3] = {letter, '\0', '\0'};
+    if (*cursor == '#') {
+        tonic[1] = '#';
+        ++cursor;
+    } else if (*cursor == 'b' || *cursor == 'B') {
+        tonic[1] = 'b';
+        ++cursor;
+    } else if (strncmp(cursor, "\xE2\x99\xAF", 3) == 0) {
+        tonic[1] = '#';
+        cursor += 3;
+    } else if (strncmp(cursor, "\xE2\x99\xAD", 3) == 0) {
+        tonic[1] = 'b';
+        cursor += 3;
+    }
+
+    while (*cursor == ' ' || *cursor == '\t') ++cursor;
+    bool is_minor = key_word_starts_with(cursor, "minor") ||
+                    key_word_starts_with(cursor, "min") ||
+                    (cursor[0] == 'm' &&
+                     (cursor[1] == '\0' || cursor[1] == ' ' ||
+                      cursor[1] == '\t'));
+    if (strstr(cursor, "\xE5\xB0\x8F\xE8\xB0\x83") != NULL)
+        is_minor = true;
+
+    const char *const *tonics = is_minor ? minor_tonics : major_tonics;
+    for (int sf = -7; sf <= 7; ++sf) {
+        if (!key_name_equal(tonic, tonics[sf + 7])) continue;
+        *fifths = sf;
+        *minor = is_minor;
+        return true;
+    }
+    return false;
+}
+
+static void read_json_key_signature(const cJSON *root, int *fifths,
+                                    bool *minor, bool *explicit_key)
+{
+    *fifths = 0;
+    *minor = false;
+    *explicit_key = false;
+
+    cJSON *key = cJSON_GetObjectItemCaseSensitive(root, "key");
+    cJSON *explicit_value =
+        cJSON_GetObjectItemCaseSensitive(root, "key_explicit");
+    const bool has_explicit_value = cJSON_IsBool(explicit_value);
+    /* An explicit open-key marker wins over compatibility fields that an
+     * older writer may have left behind in the same document. */
+    if (has_explicit_value && cJSON_IsFalse(explicit_value)) return;
+    if (cJSON_IsString(key) &&
+        parse_legacy_key_signature(key->valuestring, fifths, minor)) {
+        *explicit_key = true;
+    }
+
+    cJSON *numeric_fifths =
+        cJSON_GetObjectItemCaseSensitive(root, "key_fifths");
+    if (!cJSON_IsNumber(numeric_fifths) ||
+        numeric_fifths->valuedouble != numeric_fifths->valueint ||
+        numeric_fifths->valueint < -7 || numeric_fifths->valueint > 7) {
+        if (has_explicit_value)
+            *explicit_key = cJSON_IsTrue(explicit_value);
+        return;
+    }
+
+    *fifths = numeric_fifths->valueint;
+    cJSON *numeric_minor =
+        cJSON_GetObjectItemCaseSensitive(root, "key_minor");
+    if (cJSON_IsBool(numeric_minor)) *minor = cJSON_IsTrue(numeric_minor);
+    *explicit_key = has_explicit_value ? cJSON_IsTrue(explicit_value) : true;
+}
+
 /* ── 从标准乐谱 JSON 生成显示 ── */
 bool music_display_apply_score_json_with_options(
     const char *json, const music_display_score_options_t *options)
@@ -1185,14 +2248,25 @@ bool music_display_apply_score_json_with_options(
         cJSON_Delete(root);
         return false;
     }
+    const int source_note_count = cJSON_GetArraySize(notes_arr);
+    if (source_note_count > MAX_NOTES) {
+        ESP_LOGE(TAG,
+                 "apply_score_json: score has %d notes, preview limit is %d",
+                 source_note_count, MAX_NOTES);
+        cJSON_Delete(root);
+        return false;
+    }
 
     /* Read metadata */
     cJSON *bpm_j   = cJSON_GetObjectItemCaseSensitive(root, "bpm");
     cJSON *ts_j    = cJSON_GetObjectItemCaseSensitive(root, "time_signature");
-    cJSON *key_j   = cJSON_GetObjectItemCaseSensitive(root, "key");
     cJSON *title_j = cJSON_GetObjectItemCaseSensitive(root, "title");
     cJSON *tpq_j   = cJSON_GetObjectItemCaseSensitive(root,
                                                       "ticks_per_quarter");
+    cJSON *source_j = cJSON_GetObjectItemCaseSensitive(root, "source");
+    const bool creator_source = cJSON_IsString(source_j) &&
+                                source_j->valuestring != NULL &&
+                                strcmp(source_j->valuestring, "creator") == 0;
 
     int source_bpm = cJSON_IsNumber(bpm_j) ? bpm_j->valueint : 120;
     if (source_bpm < 1) source_bpm = 120;
@@ -1215,26 +2289,10 @@ bool music_display_apply_score_json_with_options(
         ts_den_pow = options->time_sig_den == 8 ? 3 : 2;
     }
 
-    int sf = 0;
-    bool minor = false;
-    if (cJSON_IsString(key_j)) {
-        const char *ks = key_j->valuestring;
-        const char *eq = strchr(ks, '=');
-        const char *kn = eq ? eq + 1 : ks;
-        /* "major" also starts with 'm'; only an explicit minor spelling or
-         * compact notation such as "Am" denotes a minor key. */
-        minor = strstr(kn, "minor") != NULL || strstr(kn, "Minor") != NULL;
-        size_t key_len = strlen(kn);
-        if (!minor && key_len >= 2 && kn[key_len - 1] == 'm') minor = true;
-        while (*kn == ' ' || *kn == '#' || *kn == 'b' || *kn == 'B') kn++;
-        if      (kn[0] == 'C') sf = 0;
-        else if (kn[0] == 'G') sf = kn[1] == '#' ? 0 : 1;
-        else if (kn[0] == 'D') sf = 2;
-        else if (kn[0] == 'A') sf = 3;
-        else if (kn[0] == 'E') sf = 4;
-        else if (kn[0] == 'B') sf = kn[1] == '#' ? 0 : 5;
-        else if (kn[0] == 'F') sf = kn[1] == '#' ? 6 : -1;
-    }
+    int sf;
+    bool minor;
+    bool explicit_key;
+    read_json_key_signature(root, &sf, &minor, &explicit_key);
 
     midi_data_t *md = heap_caps_calloc(1, sizeof(midi_data_t),
                                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -1248,6 +2306,8 @@ bool music_display_apply_score_json_with_options(
     md->time_sig_den      = ts_den_pow;
     md->tonality_sf       = sf;
     md->tonality_minor    = minor;
+    md->tonality_forced   = explicit_key;
+    md->numbered_legacy_inference_allowed = !creator_source;
     md->title[0] = '\0';
     if (cJSON_IsString(title_j)) {
         const char *src = title_j->valuestring;
@@ -1349,8 +2409,25 @@ bool music_display_apply_score_json_with_options(
     if (count == 0) { free(md); return false; }
 
     qsort(md->notes, (size_t)count, sizeof(midi_note_t), compare_midi_note_start);
+    unsigned tie_count = 0;
+    unsigned slur_count = 0;
+    unsigned gliss_count = 0;
+    unsigned dot_count = 0;
+    for (int index = 0; index < count; ++index) {
+        const midi_note_t *note = &md->notes[index];
+        if ((note->tie_flags & MIDI_NOTE_TIE_START) != 0) ++tie_count;
+        if (note->slur_start != 0) ++slur_count;
+        if (note->gliss_start != 0) ++gliss_count;
+        if (note->dots != 0) ++dot_count;
+    }
     ESP_LOGI(TAG, "apply_score_json: %d notes, BPM=%d, TS=%d/%d",
              count, bpm_val, ts_num, 1 << ts_den_pow);
+    ESP_LOGI(TAG,
+             "numbered metadata: ties=%u slurs=%u gliss=%u dotted=%u",
+             tie_count, slur_count, gliss_count, dot_count);
+    if (creator_source) {
+        ESP_LOGI(TAG, "numbered legacy inference: skipped source=creator");
+    }
 
     music_msg_t msg = {
         .type = MUSIC_MSG_MIDI_DATA,
@@ -1419,7 +2496,43 @@ void music_display_set_read_only(bool active)
         s_creator_active = false;
         s_practice_active = false;
         s_practice_paused = false;
+    } else {
+        s_read_only_playback_state = MUSIC_DISPLAY_PLAYBACK_STOPPED;
     }
+}
+
+void music_display_set_playback_button_callback(
+    music_display_playback_button_cb_t callback, void *user_data)
+{
+    s_playback_button_callback = callback;
+    s_playback_button_user_data = user_data;
+}
+
+void music_display_set_read_only_playback_state(
+    music_display_playback_state_t state, const char *message)
+{
+    bsp_display_lock(portMAX_DELAY);
+    s_read_only_playback_state = state;
+    update_read_only_playback_label();
+    if (s_read_only_active && guider_ui.music_screen_status_label &&
+        lv_obj_is_valid(guider_ui.music_screen_status_label)) {
+        if (message && message[0]) {
+            lv_label_set_text(guider_ui.music_screen_status_label, message);
+        } else if (state == MUSIC_DISPLAY_PLAYBACK_PLAYING) {
+            lv_label_set_text(guider_ui.music_screen_status_label,
+                              "正在播放");
+        } else if (state == MUSIC_DISPLAY_PLAYBACK_PAUSED) {
+            lv_label_set_text(guider_ui.music_screen_status_label,
+                              "播放已暂停");
+        } else if (state == MUSIC_DISPLAY_PLAYBACK_PREPARING) {
+            lv_label_set_text(guider_ui.music_screen_status_label,
+                              "正在准备播放");
+        } else {
+            lv_label_set_text(guider_ui.music_screen_status_label,
+                              "只读浏览");
+        }
+    }
+    bsp_display_unlock();
 }
 
 void music_display_set_practice_navigation_state(bool active, bool paused)
@@ -1434,7 +2547,9 @@ bool music_display_request_page_turn(
 {
     if (s_creator_active || !s_queue || !s_midi_parsed) return false;
     if (source == MUSIC_DISPLAY_PAGE_SOURCE_TOUCH &&
-        s_practice_active && !s_practice_paused) {
+        ((s_practice_active && !s_practice_paused) ||
+         (s_read_only_active &&
+          s_read_only_playback_state == MUSIC_DISPLAY_PLAYBACK_PLAYING))) {
         return false;
     }
     if (source != MUSIC_DISPLAY_PAGE_SOURCE_TOUCH &&

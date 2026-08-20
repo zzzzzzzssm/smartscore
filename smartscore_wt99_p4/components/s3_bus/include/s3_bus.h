@@ -11,6 +11,7 @@ extern "C" {
 
 #define S3_MUSIC_POLY_MAX_NOTES 4
 #define S3_MUSIC_POLY_NAME_MAX 16
+#define S3_MUSIC_NOTE_SET_MAX_NOTES 4
 #define S3_MUSIC_DIAGNOSTIC_MAX_RAW 4
 #define S3_MUSIC_DIAGNOSTIC_MAX_NOTES 3
 #define S3_MUSIC_DIAGNOSTIC_REASON_MAX 32
@@ -46,6 +47,7 @@ typedef struct {
 typedef enum {
     S3_MUSIC_STREAM_PROFILE_STRICT = 0,
     S3_MUSIC_STREAM_PROFILE_DEMO,
+    S3_MUSIC_STREAM_PROFILE_PERFORMANCE,
 } s3_music_stream_profile_t;
 
 typedef struct {
@@ -94,6 +96,8 @@ typedef struct {
     uint32_t last_sender_ts_ms;
     uint32_t last_sid;
     uint32_t last_seq;
+    uint32_t last_state_id;
+    uint32_t ack_state_id;
     uint32_t polls_sent;
     uint32_t tx_commands;
     uint32_t tx_failures;
@@ -103,6 +107,10 @@ typedef struct {
     uint32_t oversized_lines;
     uint32_t duplicate_frames;
     uint32_t dropped_events;
+    uint32_t atomic_set_retries;
+    uint8_t active_note_count;
+    bool degraded_mic;
+    bool overflow;
 } s3_bus_status_t;
 
 /**

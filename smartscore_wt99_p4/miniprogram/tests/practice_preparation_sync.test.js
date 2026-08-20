@@ -1,6 +1,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const performanceChart = require('../utils/performance_chart');
 
 const requests = [];
 const toasts = [];
@@ -145,10 +146,18 @@ async function run() {
   assert.strictEqual(page.data.isRecording, false);
   assert.ok(toasts.includes('屏幕已显示乐谱'));
 
+  page.data.currentScore = {
+    notes: [{ midi: 60, start: 0, duration: 0.5 }]
+  };
   page.startPractice();
   await new Promise((resolve) => setImmediate(resolve));
   assert.strictEqual(page.data.status, '正在记录');
   assert.strictEqual(page.data.isRecording, true);
+  assert.deepStrictEqual(page.data.performanceTargetNotes, [
+    { midi: 60, start: 0, duration: 0.5 }
+  ]);
+  page.data.currentScore.notes[0].midi = 72;
+  assert.strictEqual(page.data.performanceTargetNotes[0].midi, 60);
   assert.ok(toasts.includes('已开始跟谱'));
 
   page.data.isRecording = false;
@@ -172,10 +181,7 @@ async function run() {
   assert.strictEqual(page.data.result.totalScore, '-');
   assert.ok(toasts.includes('已重新开始'));
 
-  page.data.currentScore = {
-    notes: [{ midi: 72, start: 99, duration: 1 }]
-  };
-  const resultTargets = page.buildTargetNotes({
+  const resultTargets = performanceChart.buildDetailTargets({
     details: [
       { ref_index: 2, target_midi: 62, target_start: 1, target_duration: 0.5 },
       { ref_index: 1, target_midi: 60, target_start: 0, target_duration: 0.5 },
@@ -195,6 +201,7 @@ async function run() {
   assert.ok(wxml.includes('预览乐谱'));
   assert.ok(wxml.includes('开始演奏跟谱'));
   assert.ok(wxml.includes('重新练习'));
+  assert.ok(wxml.includes('<performance-chart'));
   assert.ok(!wxml.includes('使用方式'));
 
   console.log('practice preparation sync tests passed');

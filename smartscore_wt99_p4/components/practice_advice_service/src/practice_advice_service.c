@@ -13,6 +13,7 @@
 #include "freertos/task.h"
 #include "network_provisioning.h"
 #include "practice_advice_state.h"
+#include "sdkconfig.h"
 
 #define PRACTICE_ADVICE_TASK_STACK_BYTES 12288
 #define PRACTICE_ADVICE_TASK_PRIORITY 3
@@ -194,10 +195,20 @@ esp_err_t practice_advice_service_init(void)
 
     practice_advice_state_init(&s_service.core);
     s_service.boot_id = esp_random();
-    if (xTaskCreate(practice_advice_worker, "practice_advice",
-                    PRACTICE_ADVICE_TASK_STACK_BYTES, NULL,
-                    PRACTICE_ADVICE_TASK_PRIORITY,
-                    &s_service.worker) != pdPASS) {
+#if defined(CONFIG_SPIRAM) && \
+    defined(CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM)
+    BaseType_t task_created = xTaskCreateWithCaps(
+        practice_advice_worker, "practice_advice",
+        PRACTICE_ADVICE_TASK_STACK_BYTES, NULL,
+        PRACTICE_ADVICE_TASK_PRIORITY, &s_service.worker,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
+    BaseType_t task_created = xTaskCreate(
+        practice_advice_worker, "practice_advice",
+        PRACTICE_ADVICE_TASK_STACK_BYTES, NULL,
+        PRACTICE_ADVICE_TASK_PRIORITY, &s_service.worker);
+#endif
+    if (task_created != pdPASS) {
         vSemaphoreDelete(s_service.lock);
         memset(&s_service, 0, sizeof(s_service));
         return ESP_ERR_NO_MEM;

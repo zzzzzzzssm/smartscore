@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
 #include "esp_log.h"
 
 /* ---- 工具函数 ---- */
@@ -148,6 +149,9 @@ bool midi_parse(const uint8_t *data, size_t len, midi_data_t *out)
                     if (sf < -7) sf = -7;
                     out->tonality_sf = sf;
                     out->tonality_minor = (meta_data[1] != 0);
+                    /* Standard MIDI FF 59 is explicit score metadata, not an
+                     * auto-detection hint. Preserve it during normalization. */
+                    out->tonality_forced = true;
                 } else if (meta_type == 0x58 && meta_len == 4) {
                     /* Time Signature: FF 58 04 nn dd cc bb */
                     out->time_sig_num = meta_data[0];
@@ -415,14 +419,17 @@ void midi_note_to_jianpu(int midi_note, int sf, int *number, int *octave)
  *
  *  四分音符: 1 2 3 4 5 6 7
  *  八分音符: q w e r t y u
- *  减时线/延长线: -
+ *  休止符: 0；延长线: -
  *
  *  格式约定: 每拍输出一个"token+空格"
  *    token 类型:
  *      "N"   — 四分音符 (N∈{1-7})
- *      "-"   — 休止符 / 延长线
- *      "ab"  — 两个八分音符 (a,b∈{q,w,e,r,t,y,u})
- *      "a"   — 单个八分音符 (后续默认为隐式半拍休止)
+ *      "0"   — 静音拍位
+ *      "-"   — 前一音仍在持续
+ *      "abc" — 同拍内的一个或多个起音，各自使用独立字形
+ *               (八分音符使用 q,w,e,r,t,y,u)
+ *  八度点不再伪装成文本逗号，而是随 mapped note reference 以有符号
+ *  octave 元数据输出，由显示层在数字正上方/正下方精确绘制。
  *
  *  小节格式示例:
  *    4/4 四个四分音符:   | 1 2 3 4 |
@@ -430,11 +437,13 @@ void midi_note_to_jianpu(int midi_note, int sf, int *number, int *octave)
  *    2/4 两个四分音符:   | 1 2 |
  *    2/4 二分音符:       | 5 - |
  *    2/4 两个八分+四分:  | qe 1 |
- *    2/4 两个八分+休止:  | qr - |
+ *    2/4 两个八分+休止:  | qr 0 |
+ *    同拍和弦/多起音也不会被生成器丢弃
  * ─────────────────────────────────────────────────── */
 
 /* ── 单个音符 → SimpMusic 字符 ── */
-static void note_char(int midi_note, bool eighth, char *out, size_t n)
+static void note_char(int midi_note, bool eighth, char *out, size_t n,
+                      int8_t *octave_offset)
 {
     static const int   idx[] = {0,0,1,1,2,3,3,4,4,5,5,6};
     static const char *qn[]  = {"1","2","3","4","5","6","7"};
@@ -442,8 +451,248 @@ static void note_char(int midi_note, bool eighth, char *out, size_t n)
     int ni  = idx[midi_note % 12];
     int oct = (midi_note / 12) - 1;
     const char *ch = eighth ? en[ni] : qn[ni];
-    if (oct < 4) snprintf(out, n, ",%s", ch);
-    else         snprintf(out, n, "%s", ch);
+    snprintf(out, n, "%s", ch);
+    if (octave_offset) *octave_offset = (int8_t)(oct - 4);
+}
+
+static uint8_t numbered_reduction_line_count(uint32_t duration,
+                                             uint32_t beat_ticks)
+{
+    if (beat_ticks == 0 || duration >= beat_ticks) return 0;
+    if ((uint64_t)duration * 2U >= beat_ticks) return 1;
+    if ((uint64_t)duration * 4U >= beat_ticks) return 2;
+    return 3;
+}
+
+static bool numbered_meter_ticks(const midi_data_t *d,
+                                 uint32_t *beat_ticks,
+                                 uint32_t *measure_ticks)
+{
+    if (!d || d->ticks_per_quarter <= 0 || d->time_sig_num <= 0)
+        return false;
+    int denominator_power = d->time_sig_den;
+    if (denominator_power < 0 || denominator_power > 6)
+        denominator_power = 2;
+    const uint32_t denominator = 1U << denominator_power;
+    const uint64_t beat = (uint64_t)(uint32_t)d->ticks_per_quarter * 4U /
+                          denominator;
+    const uint64_t measure = beat * (uint32_t)d->time_sig_num;
+    if (beat == 0 || beat > UINT32_MAX || measure == 0 ||
+        measure > UINT32_MAX)
+        return false;
+    if (beat_ticks) *beat_ticks = (uint32_t)beat;
+    if (measure_ticks) *measure_ticks = (uint32_t)measure;
+    return true;
+}
+
+static uint8_t numbered_note_staff(const midi_note_t *note)
+{
+    return note && note->staff == 2 ? 2U : 1U;
+}
+
+static uint8_t numbered_note_voice(const midi_note_t *note)
+{
+    return note && note->voice != 0 ? note->voice : 1U;
+}
+
+static uint64_t numbered_tick_distance(uint64_t a, uint64_t b)
+{
+    return a >= b ? a - b : b - a;
+}
+
+static uint8_t numbered_infer_dot_count(uint32_t duration,
+                                        uint32_t ticks_per_quarter,
+                                        uint32_t tolerance)
+{
+    static const uint8_t one_dot_num[] = {6, 3, 3, 3, 3, 3, 3};
+    static const uint8_t one_dot_den[] = {1, 1, 2, 4, 8, 16, 32};
+    static const uint8_t two_dot_num[] = {7, 7, 7, 7, 7, 7, 7};
+    static const uint8_t two_dot_den[] = {1, 2, 4, 8, 16, 32, 64};
+    uint64_t best_distance = UINT64_MAX;
+    uint8_t best_dots = 0;
+
+    for (size_t index = 0;
+         index < sizeof(one_dot_num) / sizeof(one_dot_num[0]); ++index) {
+        const uint64_t one_numerator =
+            (uint64_t)ticks_per_quarter * one_dot_num[index];
+        const uint64_t one_candidate =
+            (one_numerator + one_dot_den[index] / 2U) /
+            one_dot_den[index];
+        const uint64_t one_distance =
+            numbered_tick_distance(duration, one_candidate);
+        if (one_candidate != 0 && one_distance <= tolerance &&
+            one_distance < best_distance) {
+            best_distance = one_distance;
+            best_dots = 1;
+        }
+
+        const uint64_t two_numerator =
+            (uint64_t)ticks_per_quarter * two_dot_num[index];
+        const uint64_t two_candidate =
+            (two_numerator + two_dot_den[index] / 2U) /
+            two_dot_den[index];
+        const uint64_t two_distance =
+            numbered_tick_distance(duration, two_candidate);
+        if (two_candidate != 0 && two_distance <= tolerance &&
+            two_distance < best_distance) {
+            best_distance = two_distance;
+            best_dots = 2;
+        }
+    }
+    return best_dots;
+}
+
+static int numbered_find_unique_boundary_note(const midi_data_t *data,
+                                               uint32_t boundary,
+                                               uint8_t staff,
+                                               uint8_t voice,
+                                               uint8_t pitch,
+                                               bool find_start)
+{
+    int found = -1;
+    for (int index = 0; index < data->note_count; ++index) {
+        const midi_note_t *note = &data->notes[index];
+        if (numbered_note_staff(note) != staff ||
+            numbered_note_voice(note) != voice || note->note != pitch) {
+            continue;
+        }
+        const uint64_t note_end =
+            (uint64_t)note->start_tick + note->duration;
+        const bool matches = find_start ? note->start_tick == boundary :
+                             note_end == boundary;
+        if (!matches) continue;
+        if (found >= 0) return -1;
+        found = index;
+    }
+    return found;
+}
+
+bool midi_numbered_infer_legacy_marks(
+    midi_data_t *data, midi_numbered_inference_stats_t *stats)
+{
+    midi_numbered_inference_stats_t result = {0};
+    if (stats) *stats = result;
+    if (!data || data->note_count <= 0 || data->note_count > MAX_NOTES ||
+        data->ticks_per_quarter <= 0) {
+        return false;
+    }
+
+    uint32_t measure_ticks = 0;
+    if (!numbered_meter_ticks(data, NULL, &measure_ticks)) return false;
+
+    bool has_dots = false;
+    bool has_ties = false;
+    for (int index = 0; index < data->note_count; ++index) {
+        const midi_note_t *note = &data->notes[index];
+        if (note->duration == 0 ||
+            (uint64_t)note->start_tick + note->duration > UINT32_MAX ||
+            (index > 0 && note->start_tick <
+             data->notes[index - 1].start_tick)) {
+            return false;
+        }
+        has_dots = has_dots || note->dots != 0;
+        has_ties = has_ties || note->tie_flags != 0;
+    }
+
+    if (!has_dots) {
+        uint32_t tolerance = (uint32_t)data->ticks_per_quarter / 96U;
+        if (tolerance == 0) tolerance = 1;
+        for (int index = 0; index < data->note_count; ++index) {
+            midi_note_t *note = &data->notes[index];
+            note->dots = numbered_infer_dot_count(
+                note->duration, (uint32_t)data->ticks_per_quarter, tolerance);
+            if (note->dots != 0) ++result.inferred_dots;
+        }
+    }
+
+    if (!has_ties) {
+        for (int index = 0; index < data->note_count; ++index) {
+            midi_note_t *left = &data->notes[index];
+            const uint64_t end =
+                (uint64_t)left->start_tick + left->duration;
+            if (end == 0 || end > UINT32_MAX || end % measure_ticks != 0)
+                continue;
+            const uint8_t staff = numbered_note_staff(left);
+            const uint8_t voice = numbered_note_voice(left);
+            const int unique_left = numbered_find_unique_boundary_note(
+                data, (uint32_t)end, staff, voice, left->note, false);
+            const int unique_right = numbered_find_unique_boundary_note(
+                data, (uint32_t)end, staff, voice, left->note, true);
+            if (unique_left != index || unique_right < 0) continue;
+            left->tie_flags |= MIDI_NOTE_TIE_START;
+            data->notes[unique_right].tie_flags |= MIDI_NOTE_TIE_STOP;
+            ++result.inferred_ties;
+        }
+    }
+
+    /* Slurs and glissandi remain explicit-only. */
+    if (stats) *stats = result;
+    return true;
+}
+
+typedef struct {
+    char *buf;
+    size_t size;
+    size_t pos;
+    midi_numbered_note_ref_t *refs;
+    size_t ref_capacity;
+    size_t ref_count;
+    bool truncated;
+} numbered_writer_t;
+
+static bool numbered_writer_append(numbered_writer_t *writer,
+                                   const char *text, size_t length)
+{
+    if (!writer || !text || writer->truncated) return false;
+    if (length == 0) return true;
+    if (writer->pos >= writer->size ||
+        length > writer->size - writer->pos - 1U) {
+        writer->truncated = true;
+        return false;
+    }
+    memcpy(writer->buf + writer->pos, text, length);
+    writer->pos += length;
+    writer->buf[writer->pos] = '\0';
+    return true;
+}
+
+static bool numbered_writer_append_note(numbered_writer_t *writer,
+                                        const char *glyph,
+                                        int note_index,
+                                        int8_t octave,
+                                        uint8_t reduction_line_count)
+{
+    if (!writer || !glyph || writer->truncated) return false;
+    const size_t length = strlen(glyph);
+    const bool map_note = writer->refs != NULL;
+    if (length == 0 || length > UINT8_MAX || note_index < 0 ||
+        note_index > UINT16_MAX || writer->pos > UINT16_MAX ||
+        (map_note && writer->ref_count >= writer->ref_capacity)) {
+        writer->truncated = true;
+        return false;
+    }
+
+    /* Check both fixed-capacity outputs before changing either one. */
+    if (writer->pos >= writer->size ||
+        length > writer->size - writer->pos - 1U) {
+        writer->truncated = true;
+        return false;
+    }
+    const size_t offset = writer->pos;
+    memcpy(writer->buf + writer->pos, glyph, length);
+    writer->pos += length;
+    writer->buf[writer->pos] = '\0';
+
+    if (map_note) {
+        writer->refs[writer->ref_count++] = (midi_numbered_note_ref_t){
+            .byte_offset = (uint16_t)offset,
+            .note_index = (uint16_t)note_index,
+            .byte_length = (uint8_t)length,
+            .reduction_line_count = reduction_line_count,
+            .octave = octave,
+        };
+    }
+    return true;
 }
 
 /* ───────────────────────────────────────────────────
@@ -461,102 +710,120 @@ static void note_char(int midi_note, bool eighth, char *out, size_t n)
  *    每个拍位 = token + 一个空格
  * ─────────────────────────────────────────────────── */
 static void fill_measures(const midi_data_t *d, char *buf, size_t sz,
-                          int start_meas, int meas_cnt, uint8_t staff_filter)
+                          int start_meas, int meas_cnt, uint8_t staff_filter,
+                          midi_numbered_note_ref_t *refs,
+                          size_t ref_capacity, size_t *ref_count,
+                          bool *truncated)
 {
-    int pos          = 0;
-    int beat_ticks   = d->ticks_per_quarter;          /* 一拍的 tick 数 */
-    int beats        = d->time_sig_num;               /* 每小节拍数 */
-    int measure_ticks = beat_ticks * beats;           /* 一小节 tick 数 */
+    if (ref_count) *ref_count = 0;
+    if (truncated) *truncated = false;
+    if (!d || !buf || sz == 0) return;
+    buf[0] = '\0';
+
+    numbered_writer_t writer = {
+        .buf = buf,
+        .size = sz,
+        .refs = refs,
+        .ref_capacity = ref_capacity,
+    };
+    uint32_t beat_ticks = 0;
+    uint32_t measure_ticks = 0;
+    const int beats = d->time_sig_num;
+    if (!numbered_meter_ticks(d, &beat_ticks, &measure_ticks)) return;
 
     /* ── ni: 音符扫描游标，指向第一个 start_tick >= 当前范围起点的音符 ── */
     int ni = 0;
-    uint32_t range_start = (uint32_t)start_meas * measure_ticks;
+    const uint64_t range_start_64 =
+        (uint64_t)(uint32_t)start_meas * measure_ticks;
+    if (range_start_64 > UINT32_MAX) return;
+    const uint32_t range_start = (uint32_t)range_start_64;
+    uint64_t sounding_until = 0;
+    for (int i = 0; i < d->note_count &&
+                    d->notes[i].start_tick < range_start; ++i) {
+        const uint8_t note_staff = d->notes[i].staff == 2 ? 2 : 1;
+        if (staff_filter && note_staff != staff_filter) continue;
+        const uint64_t end = (uint64_t)d->notes[i].start_tick +
+                             d->notes[i].duration;
+        if (end > range_start && end > sounding_until)
+            sounding_until = end;
+    }
     while (ni < d->note_count && d->notes[ni].start_tick < range_start) ni++;
 
-    for (int m = start_meas; m < start_meas + meas_cnt; m++) {
+    for (int m = start_meas;
+         m < start_meas + meas_cnt && !writer.truncated; m++) {
 
-        uint32_t mstart = (uint32_t)m * measure_ticks;
+        const uint64_t mstart_64 = (uint64_t)(uint32_t)m * measure_ticks;
+        if (mstart_64 > UINT32_MAX) break;
+        const uint32_t mstart = (uint32_t)mstart_64;
 
         /* 小节起始线 */
-        pos += snprintf(buf + pos, sz - pos, "| ");
+        if (!numbered_writer_append(&writer, "| ", 2U)) break;
 
-        /* ── covered_until: 延长音覆盖到的 tick，此 tick 之前的拍位自动填 "- " ── */
-        uint32_t covered_until = 0;
+        for (int b = 0; b < beats && !writer.truncated; b++) {
 
-        for (int b = 0; b < beats; b++) {
+            const uint64_t btick_64 =
+                (uint64_t)mstart + (uint32_t)b * beat_ticks;
+            if (btick_64 > UINT32_MAX) break;
+            const uint32_t btick = (uint32_t)btick_64;
+            const uint64_t bend_64 = btick_64 + beat_ticks;
+            const uint32_t bend = bend_64 > UINT32_MAX ?
+                                  UINT32_MAX : (uint32_t)bend_64;
+            bool has_onset = false;
 
-            uint32_t btick = mstart + (uint32_t)b * beat_ticks;
-            uint32_t bend  = btick + beat_ticks;
-
-            /* ① 被前一个延长音覆盖 → 填延长线 */
-            if (btick < covered_until) {
-                pos += snprintf(buf + pos, sz - pos, "- ");
-                continue;
-            }
-
-            /* ② 收集当前拍位 [btick, bend) 内开始的音符（最多 2 个） */
-            int  found[2] = {-1, -1};
-            int  fcnt = 0;
-
-            for (int i = ni; i < d->note_count && d->notes[i].start_tick < bend; i++) {
+            /* Emit every onset in this beat.  This is deliberately done even
+             * when an earlier note is still sounding: a sustained note must
+             * not hide a new melody note or chord tone from score following. */
+            for (int i = ni;
+                 i < d->note_count && d->notes[i].start_tick < bend; i++) {
                 uint8_t note_staff = d->notes[i].staff == 2 ? 2 : 1;
-                if (d->notes[i].start_tick >= btick && fcnt < 2 &&
-                    (!staff_filter || note_staff == staff_filter)) {
-                    found[fcnt++] = i;
+                if (d->notes[i].start_tick < btick ||
+                    (staff_filter && note_staff != staff_filter)) {
+                    continue;
                 }
+                char glyph[8];
+                int8_t octave = 0;
+                const uint8_t reduction_lines =
+                    numbered_reduction_line_count(d->notes[i].duration,
+                                                  beat_ticks);
+                const bool eighth = reduction_lines > 0;
+                note_char(d->notes[i].note, eighth, glyph, sizeof(glyph),
+                          &octave);
+                if (!numbered_writer_append_note(&writer, glyph, i,
+                                                 octave,
+                                                 reduction_lines)) break;
+                uint8_t dots = d->notes[i].dots;
+                if (dots > 3U) dots = 3U;
+                for (uint8_t dot = 0; dot < dots; ++dot) {
+                    if (!numbered_writer_append(&writer, " ", 1U)) break;
+                }
+                const uint64_t note_end =
+                    (uint64_t)d->notes[i].start_tick +
+                    d->notes[i].duration;
+                if (note_end > sounding_until) sounding_until = note_end;
+                has_onset = true;
             }
 
-            /* ③ 无音符 → 休止符 */
-            if (fcnt == 0) {
-                pos += snprintf(buf + pos, sz - pos, "- ");
-                /* 推进 ni 到当前拍之后 */
-                while (ni < d->note_count && d->notes[ni].start_tick < bend) ni++;
-                continue;
-            }
-
-            /* 推进 ni 越过本拍内所有已收集的音符 */
+            /* Advance past all source notes in this beat, including notes on
+             * the other staff.  Their own filtered row scans the same range. */
             while (ni < d->note_count && d->notes[ni].start_tick < bend) ni++;
+            if (writer.truncated) break;
 
-            /* ④ 处理音符 */
-            const midi_note_t *n1 = &d->notes[found[0]];
-            bool n1_is_8th = (n1->duration < (uint32_t)beat_ticks);
-
-            if (fcnt == 2) {
-                /* ── 两个音符落在同一拍 ── */
-                const midi_note_t *n2 = &d->notes[found[1]];
-
-                if (!n1_is_8th) {
-                    /* 第一个音是四分或更长 → 忽略第二个（视为下一拍的音） */
-                    char c[8];
-                    note_char(n1->note, false, c, sizeof(c));
-                    pos += snprintf(buf + pos, sz - pos, "%s ", c);
-                    covered_until = n1->start_tick + n1->duration;
-                } else {
-                    /* 两个八分音符 → 紧凑拼接 "ab " */
-                    char c1[8], c2[8];
-                    note_char(n1->note, true, c1, sizeof(c1));
-                    note_char(n2->note, true, c2, sizeof(c2));
-                    pos += snprintf(buf + pos, sz - pos, "%s%s ", c1, c2);
-                    covered_until = bend;
-                }
-            } else if (n1_is_8th) {
-                /* ── 单个八分音符 → 隐式后半拍休止 ── */
-                char c[8];
-                note_char(n1->note, true, c, sizeof(c));
-                pos += snprintf(buf + pos, sz - pos, "%s ", c);
-                covered_until = bend;
-            } else {
-                /* ── 四分音符或更长 → 可能的延长音 ── */
-                char c[8];
-                note_char(n1->note, false, c, sizeof(c));
-                pos += snprintf(buf + pos, sz - pos, "%s ", c);
-                covered_until = n1->start_tick + n1->duration;
+            /* Standard Jianpu distinguishes silence (0) from a note that is
+             * still sounding through this beat slot (-). */
+            if (!has_onset) {
+                const char *token = btick_64 < sounding_until ? "- " : "0 ";
+                if (!numbered_writer_append(&writer, token, 2U)) break;
+            } else if (!numbered_writer_append(&writer, " ", 1U)) {
+                break;
             }
         } /* for each beat */
     } /* for each measure */
 
-    if (pos >= (int)sz) pos = (int)sz - 1;
-    buf[pos] = '\0';
+    if (!writer.truncated && writer.pos > 0)
+        (void)numbered_writer_append(&writer, "|", 1U);
+
+    if (ref_count) *ref_count = writer.ref_count;
+    if (truncated) *truncated = writer.truncated;
 }
 
 /* ───────────────────────────────────────────────────
@@ -566,9 +833,7 @@ static void fill_measures(const midi_data_t *d, char *buf, size_t sz,
  *  计算最优每行小节数。
  *
  *  字符宽度估算（SimpMusic 36px 字体，440px 行宽 ≈ 24 字符）：
- *    每拍 token:
- *      四分/休止/延长: "N " 或 "- " → 2 字符
- *      两个八分音符:   "ab "      → 3 字符
+ *    每拍 token 包含该拍的全部起音；八度点不占用横向字符宽度。
  *    小节前缀: "| " → 2 字符
  *
  *  保险起见限制 20 字符/行（75% 行宽利用率）。
@@ -579,9 +844,13 @@ int midi_calc_measures_per_line(const midi_data_t *d)
 
 #define SAFE_CHARS_PER_LINE 30
 
-    int beat_ticks   = d->ticks_per_quarter;
-    int beats        = d->time_sig_num;
-    int measure_ticks = beat_ticks * beats;
+    uint32_t beat_ticks = 0;
+    uint32_t measure_ticks_u32 = 0;
+    const int beats = d->time_sig_num;
+    if (!numbered_meter_ticks(d, &beat_ticks, &measure_ticks_u32) ||
+        measure_ticks_u32 > INT_MAX)
+        return 1;
+    const int measure_ticks = (int)measure_ticks_u32;
 
     /* 总小节数 */
     int total_measures = midi_total_measures_for_ticks(d, measure_ticks);
@@ -598,47 +867,26 @@ int midi_calc_measures_per_line(const midi_data_t *d)
         int ni_m = ni; /* 本小节专用游标 */
 
         int width = 2;    /* "| " */
-        uint32_t covered_until = 0;
 
         for (int b = 0; b < beats; b++) {
             uint32_t btick = mstart + (uint32_t)b * beat_ticks;
             uint32_t bend  = btick + beat_ticks;
 
-            /* 延长音覆盖 */
-            if (btick < covered_until) {
-                width += 2; /* "- " */
-                continue;
-            }
-
-            /* 收集本拍内开始的音符 */
-            int fcnt = 0;
-            int first_idx = -1;
+            /* Count every visible onset. Octave dots are vertical overlays
+             * and therefore do not consume horizontal text width. */
+            int beat_width = 0;
             for (int i = ni_m; i < d->note_count && d->notes[i].start_tick < bend; i++) {
-                if (d->notes[i].start_tick >= btick && fcnt < 2) {
-                    if (fcnt == 0) first_idx = i;
-                    fcnt++;
+                if (d->notes[i].start_tick >= btick) {
+                    beat_width++;
+                    uint8_t dots = d->notes[i].dots;
+                    beat_width += dots > 3U ? 3 : dots;
                 }
             }
 
             /* 推进游标 */
             while (ni_m < d->note_count && d->notes[ni_m].start_tick < bend) ni_m++;
 
-            if (fcnt == 0) {
-                /* 休止符 */
-                width += 2; /* "- " */
-            } else if (fcnt == 2 && first_idx >= 0 &&
-                       d->notes[first_idx].duration < (uint32_t)beat_ticks) {
-                /* 两个八分音符 → 3 字符 */
-                width += 3; /* "ab " */
-                covered_until = bend;
-            } else {
-                /* 四分或更长 → 2 字符 */
-                width += 2; /* "N " */
-                if (first_idx >= 0) {
-                    covered_until = d->notes[first_idx].start_tick
-                                  + d->notes[first_idx].duration;
-                }
-            }
+            width += beat_width > 0 ? beat_width + 1 : 2;
         }
 
         if (width > max_width) max_width = width;
@@ -663,7 +911,11 @@ int midi_get_page_count(const midi_data_t *d, int lines_per_page)
     if (!d || d->note_count == 0) return 1;
 
     int mpl = midi_calc_measures_per_line(d);
-    int measure_ticks = d->ticks_per_quarter * d->time_sig_num;
+    uint32_t measure_ticks_u32 = 0;
+    if (!numbered_meter_ticks(d, NULL, &measure_ticks_u32) ||
+        measure_ticks_u32 > INT_MAX)
+        return 1;
+    int measure_ticks = (int)measure_ticks_u32;
     int total_measures = midi_total_measures_for_ticks(d, measure_ticks);
 
     int total_lines = (total_measures + mpl - 1) / mpl;
@@ -691,7 +943,11 @@ bool midi_generate_line(const midi_data_t *d, char *buf, size_t sz,
     if (d->note_count == 0) { snprintf(buf, sz, " "); return true; }
 
     int mpl = midi_calc_measures_per_line(d);
-    int measure_ticks = d->ticks_per_quarter * d->time_sig_num;
+    uint32_t measure_ticks_u32 = 0;
+    if (!numbered_meter_ticks(d, NULL, &measure_ticks_u32) ||
+        measure_ticks_u32 > INT_MAX)
+        return false;
+    int measure_ticks = (int)measure_ticks_u32;
     int total_measures = midi_total_measures_for_ticks(d, measure_ticks);
 
     int start_m = (page * lines_per_page + line_idx) * mpl;
@@ -706,24 +962,38 @@ bool midi_generate_line(const midi_data_t *d, char *buf, size_t sz,
         cnt = total_measures - start_m;
     }
 
-    fill_measures(d, buf, sz, start_m, cnt, 0);
+    fill_measures(d, buf, sz, start_m, cnt, 0,
+                  NULL, 0, NULL, NULL);
     return true;
 }
 
-bool midi_generate_measure_range(const midi_data_t *d,
-                                 char *buf, size_t sz,
-                                 int start_measure, int measure_count,
-                                 uint8_t staff)
+bool midi_generate_measure_range_mapped(
+    const midi_data_t *d,
+    char *buf, size_t sz,
+    int start_measure, int measure_count,
+    uint8_t staff,
+    midi_numbered_note_ref_t *refs, size_t ref_capacity,
+    size_t *ref_count,
+    bool *truncated)
 {
+    if (ref_count) *ref_count = 0;
+    if (truncated) *truncated = false;
     if (!d || !buf || sz == 0 || start_measure < 0 || measure_count <= 0)
         return false;
+    if ((refs == NULL && ref_capacity != 0) ||
+        (refs != NULL && (ref_capacity == 0 || ref_count == NULL))) {
+        return false;
+    }
     if (d->note_count == 0) {
         snprintf(buf, sz, " ");
         return true;
     }
 
-    int measure_ticks = d->ticks_per_quarter * d->time_sig_num;
-    if (measure_ticks <= 0) return false;
+    uint32_t measure_ticks_u32 = 0;
+    if (!numbered_meter_ticks(d, NULL, &measure_ticks_u32) ||
+        measure_ticks_u32 > INT_MAX)
+        return false;
+    int measure_ticks = (int)measure_ticks_u32;
     int total_measures = midi_total_measures_for_ticks(d, measure_ticks);
     if (start_measure >= total_measures) {
         buf[0] = '\0';
@@ -732,6 +1002,17 @@ bool midi_generate_measure_range(const midi_data_t *d,
     if (start_measure + measure_count > total_measures)
         measure_count = total_measures - start_measure;
     fill_measures(d, buf, sz, start_measure, measure_count,
-                  staff == 2 ? 2 : staff == 1 ? 1 : 0);
+                  staff == 2 ? 2 : staff == 1 ? 1 : 0,
+                  refs, ref_capacity, ref_count, truncated);
     return true;
+}
+
+bool midi_generate_measure_range(const midi_data_t *d,
+                                 char *buf, size_t sz,
+                                 int start_measure, int measure_count,
+                                 uint8_t staff)
+{
+    return midi_generate_measure_range_mapped(
+        d, buf, sz, start_measure, measure_count, staff,
+        NULL, 0, NULL, NULL);
 }

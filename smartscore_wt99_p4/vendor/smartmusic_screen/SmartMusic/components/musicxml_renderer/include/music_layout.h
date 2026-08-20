@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#define MUSIC_SCENE_MAX_ITEMS 4096
+#define MUSIC_SCENE_MAX_ITEMS 8192
 #define MUSIC_SCENE_MAX_SYSTEMS MUSIC_MAX_MEASURES
 #define MUSIC_SCENE_COLOR_DEFAULT UINT32_C(0xFFFFFFFF)
 
@@ -70,6 +70,13 @@ typedef struct {
     music_sp_t ledger_line_thickness;
     music_sp_t ledger_line_extension;
     music_sp_t minimum_note_spacing;
+    /* Optional fixed-height page grid. A zero height preserves continuous
+     * layout. When enabled, complete systems move to the next page instead
+     * of being split by a viewport boundary. */
+    music_sp_t page_height;
+    music_sp_t page_vertical_offset;
+    music_sp_t page_top_padding;
+    music_sp_t page_bottom_padding;
     uint8_t max_measures_per_system; /* 0 lets content width decide. */
 } music_layout_config_t;
 
@@ -80,6 +87,11 @@ typedef struct {
     uint16_t item_count;
     music_sp_t top;
     music_sp_t bottom;
+    /* Full visible bounds, including ledger lines, stems, articulations and
+     * accidentals outside the staff.  Fixed-page views use these bounds to
+     * center complete systems without clipping their ink. */
+    music_sp_t ink_top;
+    music_sp_t ink_bottom;
 } music_scene_system_t;
 
 typedef struct {

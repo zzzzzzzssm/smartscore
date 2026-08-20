@@ -68,6 +68,19 @@ static bool json_optional_float(const cJSON *object,
     return true;
 }
 
+static bool json_optional_bool(const cJSON *object, const char *name,
+                               bool default_value, bool *out_value)
+{
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(object, name);
+    if (item == NULL) {
+        *out_value = default_value;
+        return true;
+    }
+    if (!cJSON_IsBool(item)) return false;
+    *out_value = cJSON_IsTrue(item);
+    return true;
+}
+
 static bool json_optional_u32(const cJSON *object,
                               const char *name,
                               uint32_t *out_value,
@@ -294,6 +307,62 @@ static bool parse_poly_fields(const cJSON *root,
     return true;
 }
 
+static bool parse_note_set(const cJSON *root, s3_music_message_t *message)
+{
+    const cJSON *midis = cJSON_GetObjectItemCaseSensitive(root, "midis");
+    const cJSON *velocities =
+        cJSON_GetObjectItemCaseSensitive(root, "velocities");
+    const cJSON *confidences =
+        cJSON_GetObjectItemCaseSensitive(root, "confidences");
+    if (!cJSON_IsArray(midis) || !cJSON_IsArray(velocities) ||
+        !cJSON_IsArray(confidences)) {
+        return false;
+    }
+
+    const int count = cJSON_GetArraySize(midis);
+    if (count < 0 || count > S3_PROTOCOL_NOTE_SET_MAX_NOTES ||
+        cJSON_GetArraySize(velocities) != count ||
+        cJSON_GetArraySize(confidences) != count) {
+        return false;
+    }
+    for (int index = 0; index < count; ++index) {
+        const cJSON *midi = cJSON_GetArrayItem(midis, index);
+        const cJSON *velocity = cJSON_GetArrayItem(velocities, index);
+        const cJSON *confidence = cJSON_GetArrayItem(confidences, index);
+        if (!cJSON_IsNumber(midi) || !isfinite(midi->valuedouble) ||
+            midi->valuedouble < 36.0 || midi->valuedouble > 96.0 ||
+            floor(midi->valuedouble) != midi->valuedouble ||
+            !cJSON_IsNumber(velocity) || !isfinite(velocity->valuedouble) ||
+            velocity->valuedouble < 1.0 || velocity->valuedouble > 127.0 ||
+            floor(velocity->valuedouble) != velocity->valuedouble ||
+            !cJSON_IsNumber(confidence) ||
+            !isfinite(confidence->valuedouble) ||
+            confidence->valuedouble < 0.0 || confidence->valuedouble > 1.0) {
+            return false;
+        }
+        const uint8_t midi_value = (uint8_t)midi->valuedouble;
+        if (index > 0 && midi_value <= message->midis[index - 1]) {
+            return false;
+        }
+        message->midis[index] = midi_value;
+        message->velocities[index] = (uint8_t)velocity->valuedouble;
+        message->confidences[index] = (float)confidence->valuedouble;
+    }
+
+    bool set_confidence_present = false;
+    if (!json_optional_float(root, "set_confidence", 0.0f, 1.0f,
+                             &message->set_confidence,
+                             &set_confidence_present) ||
+        !set_confidence_present ||
+        !json_required_bool(root, "degraded_mic",
+                            &message->degraded_mic) ||
+        !json_optional_bool(root, "overflow", false, &message->overflow)) {
+        return false;
+    }
+    message->note_set_count = (uint8_t)count;
+    return true;
+}
+
 static bool parse_type(const char *type, s3_music_message_type_t *out_type)
 {
     static const struct {
@@ -309,6 +378,7 @@ static bool parse_type(const char *type, s3_music_message_type_t *out_type)
         {"note_off", S3_MUSIC_MESSAGE_NOTE_OFF},
         {"poly", S3_MUSIC_MESSAGE_POLY},
         {"diagnostic", S3_MUSIC_MESSAGE_DIAGNOSTIC},
+        {"notes", S3_MUSIC_MESSAGE_NOTES},
     };
     for (size_t i = 0; i < sizeof(known_types) / sizeof(known_types[0]); ++i) {
         if (strcmp(type, known_types[i].name) == 0) {
@@ -340,7 +410,8 @@ s3_protocol_result_t s3_protocol_parse_music_line(
     s3_music_message_t message = {0};
     uint32_t version;
     const cJSON *type = cJSON_GetObjectItemCaseSensitive(root, "type");
-    if (!json_u32(root, "v", &version) || version != 1 ||
+    if (!json_u32(root, "v", &version) ||
+        (version != 1 && version != 2) ||
         !cJSON_IsString(type) || type->valuestring == NULL) {
         cJSON_Delete(root);
         return S3_PROTOCOL_INVALID_FIELD;
@@ -349,6 +420,12 @@ s3_protocol_result_t s3_protocol_parse_music_line(
         cJSON_Delete(root);
         return S3_PROTOCOL_UNKNOWN_TYPE;
     }
+    if ((message.type == S3_MUSIC_MESSAGE_NOTES && version != 2) ||
+        (message.type != S3_MUSIC_MESSAGE_NOTES && version != 1)) {
+        cJSON_Delete(root);
+        return S3_PROTOCOL_INVALID_FIELD;
+    }
+    message.version = version;
     if (!json_u32(root, "seq", &message.seq) ||
         !json_u32(root, "sid", &message.sid) ||
         !json_u32(root, "ts_ms", &message.ts_ms)) {
@@ -404,6 +481,11 @@ s3_protocol_result_t s3_protocol_parse_music_line(
         break;
     case S3_MUSIC_MESSAGE_DIAGNOSTIC:
         fields_valid = parse_diagnostic_fields(root, &message);
+        break;
+    case S3_MUSIC_MESSAGE_NOTES:
+        fields_valid = json_u32(root, "state_id", &message.state_id) &&
+                       message.state_id > 0 &&
+                       parse_note_set(root, &message);
         break;
     }
 

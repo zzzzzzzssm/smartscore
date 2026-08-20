@@ -108,6 +108,7 @@ typedef struct {
 
 typedef struct {
     uint8_t midi;
+    uint8_t flags; /* Source event flags: tie/slur/uncertain. */
     uint16_t staff;
     uint16_t voice;
     uint32_t event_index;
@@ -142,4 +143,3 @@ const char *compact_score_error_name(compact_score_error_code_t code);
 #ifdef __cplusplus
 }
 #endif
-

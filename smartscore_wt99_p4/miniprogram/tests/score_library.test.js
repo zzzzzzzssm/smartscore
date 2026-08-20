@@ -39,6 +39,27 @@ try {
     [60]
   );
 
+  const decorated = library.normalizeNotes([{
+    midi: 64,
+    start: 0,
+    duration: 0.5,
+    start_tick: 0,
+    duration_ticks: 480,
+    dots: 1,
+    tie_flags: 1,
+    slur_start: 7,
+    gliss_stop: 9,
+    notation_flags: 3,
+    event_index: 12
+  }])[0];
+  assert.strictEqual(decorated.duration_ticks, 480);
+  assert.strictEqual(decorated.dots, 1);
+  assert.strictEqual(decorated.tie_flags, 1);
+  assert.strictEqual(decorated.slur_start, 7);
+  assert.strictEqual(decorated.gliss_stop, 9);
+  assert.strictEqual(decorated.notation_flags, 3);
+  assert.strictEqual(decorated.event_index, 12);
+
   const saved = library.saveScore({
     title: '测试乐谱',
     bpm: 96,

@@ -1,3 +1,6 @@
 {
-  "navigationBarTitleText": "练习记录"
+  "navigationBarTitleText": "练习记录",
+  "usingComponents": {
+    "performance-chart": "/components/performance-chart/performance-chart"
+  }
 }

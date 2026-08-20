@@ -43,18 +43,21 @@ bool adaptive_input_control_update(
         control->clip_streak = 0;
     }
 
-    const bool settled = control->last_change_ms == 0 ||
-                         now_ms - control->last_change_ms >=
-                             MUSIC_DEMO_GAIN_SETTLE_MS;
-    if (settled &&
+    const bool clip_settled = control->last_change_ms == 0 ||
+        now_ms - control->last_change_ms >= MUSIC_DEMO_CLIP_SETTLE_MS;
+    if (clip_settled &&
         control->clip_streak >= MUSIC_DEMO_CLIP_CONFIRM_FRAMES &&
         control->current_gain_db > MUSIC_DEMO_MIN_GAIN_DB + 0.1f) {
         *requested_gain_db = fmaxf(MUSIC_DEMO_MIN_GAIN_DB,
                                    control->current_gain_db -
-                                       MUSIC_DEMO_GAIN_STEP_DB);
+                                       MUSIC_DEMO_CLIP_GAIN_STEP_DB);
         *reason = ADAPTIVE_GAIN_REASON_CLIPPING;
         return true;
     }
+
+    const bool settled = control->last_change_ms == 0 ||
+                         now_ms - control->last_change_ms >=
+                             MUSIC_DEMO_GAIN_SETTLE_MS;
 
     const bool low_clean_signal = !selected->clipped &&
         selected->peak > MUSIC_MIC_MIN_VALID_PEAK &&

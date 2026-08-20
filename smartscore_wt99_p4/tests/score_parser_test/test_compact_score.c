@@ -142,9 +142,25 @@ static void test_sorting_and_validation(void)
         "{\"v\":1,\"kind\":\"n\",\"meta\":{\"nkey\":\"C\","
         "\"ks\":null,\"ts\":null,\"bpm\":null,\"ppq\":24},"
         "\"sys\":[{\"bars\":[{\"bf\":0,\"volta\":[],"
-        "\"e\":[[0,1,0,24,0,8,\"\"]]}]}]}";
+        "\"e\":[[0,1,0,24,0,16,\"\"]]}]}]}";
     CHECK(compact_score_parse(bad_flags, strlen(bad_flags), &score, &error) ==
           COMPACT_SCORE_ERR_FLAGS);
+
+    const char slide_flags[] =
+        "{\"v\":1,\"kind\":\"n\",\"meta\":{\"nkey\":\"C\","
+        "\"ks\":null,\"ts\":null,\"bpm\":null,\"ppq\":24},"
+        "\"sys\":[{\"bars\":[{\"bf\":0,\"volta\":[],"
+        "\"e\":[[0,1,0,24,0,8,\"\"]]}]}]}";
+    CHECK(compact_score_parse(slide_flags, strlen(slide_flags), &score,
+                              &error) == COMPACT_SCORE_OK);
+    CHECK(score != NULL && score->systems[0].bars[0].events[0].flags == 8U);
+    compact_score_playback_t slide_playback = {0};
+    CHECK(compact_score_build_playback(score, 120, &slide_playback,
+                                       &error) == COMPACT_SCORE_OK);
+    CHECK(slide_playback.note_count == 1U &&
+          slide_playback.notes[0].flags == 8U);
+    compact_score_playback_free(&slide_playback);
+    compact_score_free(score);
 }
 
 static void test_completion_layers(void)

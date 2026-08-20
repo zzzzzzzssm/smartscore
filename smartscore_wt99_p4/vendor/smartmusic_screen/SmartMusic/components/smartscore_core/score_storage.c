@@ -24,6 +24,48 @@ static const char *TAG = "score_storage";
 #define RENAME_TEMP_FILENAME "SCRNM.TMP"
 #define RENAME_BACKUP_FILENAME "SCRNM.BAK"
 
+static void format_key_signature(int fifths, bool minor,
+                                 char *buffer, size_t buffer_size)
+{
+    static const char *const major_tonics[15] = {
+        "Cb", "Gb", "Db", "Ab", "Eb", "Bb", "F", "C",
+        "G", "D", "A", "E", "B", "F#", "C#",
+    };
+    static const char *const minor_tonics[15] = {
+        "Ab", "Eb", "Bb", "F", "C", "G", "D", "A",
+        "E", "B", "F#", "C#", "G#", "D#", "A#",
+    };
+
+    if (!buffer || buffer_size == 0) return;
+    if (fifths < -7 || fifths > 7) fifths = 0;
+    const char *tonic = minor ? minor_tonics[fifths + 7]
+                              : major_tonics[fifths + 7];
+    snprintf(buffer, buffer_size, "%s %s", tonic,
+             minor ? "minor" : "major");
+}
+
+static bool legacy_key_is_minor(const char *key)
+{
+    if (!key) return false;
+    for (const char *cursor = key; *cursor; ++cursor) {
+        if ((cursor[0] == 'm' || cursor[0] == 'M') &&
+            (cursor[1] == 'i' || cursor[1] == 'I') &&
+            (cursor[2] == 'n' || cursor[2] == 'N')) {
+            return true;
+        }
+    }
+    if (strstr(key, "\xE5\xB0\x8F\xE8\xB0\x83") != NULL) return true;
+
+    size_t length = strlen(key);
+    while (length > 0 &&
+           (key[length - 1] == ' ' || key[length - 1] == '\t')) {
+        --length;
+    }
+    /* Compact notation uses lowercase "m" for minor. Uppercase "M" is the
+     * conventional major abbreviation and must not silently change mode. */
+    return length > 0 && key[length - 1] == 'm';
+}
+
 /* Always-available single-voice melody. Grand-staff test data belongs in a
  * separately annotated score; low pitches must not manufacture a bass staff. */
 static const char s_builtin_twinkle_json[] =
@@ -117,6 +159,12 @@ static bool quick_parse_meta(const char *path, score_info_t *info)
     cJSON *bpm_json   = cJSON_GetObjectItemCaseSensitive(root, "bpm");
     cJSON *notes_json = cJSON_GetObjectItemCaseSensitive(root, "notes");
     cJSON *key_json = cJSON_GetObjectItemCaseSensitive(root, "key");
+    cJSON *key_fifths_json =
+        cJSON_GetObjectItemCaseSensitive(root, "key_fifths");
+    cJSON *key_minor_json =
+        cJSON_GetObjectItemCaseSensitive(root, "key_minor");
+    cJSON *key_explicit_json =
+        cJSON_GetObjectItemCaseSensitive(root, "key_explicit");
     cJSON *time_json = cJSON_GetObjectItemCaseSensitive(root, "time_signature");
 
     if (cJSON_IsString(title_json)) {
@@ -127,8 +175,25 @@ static bool quick_parse_meta(const char *path, score_info_t *info)
     info->bpm        = cJSON_IsNumber(bpm_json) ? bpm_json->valueint : 120;
     info->note_count = cJSON_IsArray(notes_json) ? cJSON_GetArraySize(notes_json) : 0;
     info->file_size  = (size_t)fsize;
-    snprintf(info->key, sizeof(info->key), "%s",
-             cJSON_IsString(key_json) ? key_json->valuestring : "C major");
+    const bool key_is_open = cJSON_IsBool(key_explicit_json) &&
+                             !cJSON_IsTrue(key_explicit_json);
+    if (!key_is_open && cJSON_IsNumber(key_fifths_json) &&
+        key_fifths_json->valuedouble == key_fifths_json->valueint &&
+        key_fifths_json->valueint >= -7 &&
+        key_fifths_json->valueint <= 7) {
+        bool key_minor = cJSON_IsBool(key_minor_json)
+                             ? cJSON_IsTrue(key_minor_json)
+                             : cJSON_IsString(key_json) &&
+                                   legacy_key_is_minor(key_json->valuestring);
+        format_key_signature(key_fifths_json->valueint, key_minor,
+                             info->key, sizeof(info->key));
+    } else if (key_is_open) {
+        snprintf(info->key, sizeof(info->key), "%s", "open");
+    } else {
+        snprintf(info->key, sizeof(info->key), "%s",
+                 cJSON_IsString(key_json) ? key_json->valuestring
+                                          : "C major");
+    }
     snprintf(info->time_signature, sizeof(info->time_signature), "%s",
              cJSON_IsString(time_json) ? time_json->valuestring : "4/4");
 
@@ -512,6 +577,18 @@ esp_err_t score_storage_save_midi_auto(const midi_data_t *score,
     snprintf(time_signature, sizeof(time_signature), "%d/%d",
              numerator, denominator);
 
+    int key_fifths = score->tonality_sf;
+    if (key_fifths < -7 || key_fifths > 7) key_fifths = 0;
+    const bool key_minor = score->tonality_minor;
+    const bool key_explicit = score->tonality_forced;
+    char key_signature[16];
+    if (key_explicit) {
+        format_key_signature(key_fifths, key_minor,
+                             key_signature, sizeof(key_signature));
+    } else {
+        snprintf(key_signature, sizeof(key_signature), "open");
+    }
+
     bool grand_staff = false;
     for (int i = 0; i < score->note_count; ++i)
         if (score->notes[i].staff == 2) grand_staff = true;
@@ -528,7 +605,12 @@ esp_err_t score_storage_save_midi_auto(const midi_data_t *score,
     cJSON_AddStringToObject(root, "title", title);
     cJSON_AddNumberToObject(root, "bpm", bpm);
     cJSON_AddStringToObject(root, "time_signature", time_signature);
-    cJSON_AddStringToObject(root, "key", "C major");
+    cJSON_AddBoolToObject(root, "key_explicit", key_explicit);
+    if (key_explicit) {
+        cJSON_AddNumberToObject(root, "key_fifths", key_fifths);
+        cJSON_AddBoolToObject(root, "key_minor", key_minor);
+    }
+    cJSON_AddStringToObject(root, "key", key_signature);
     cJSON_AddStringToObject(root, "source", "creator");
     cJSON_AddNumberToObject(root, "ticks_per_quarter", ticks_per_quarter);
     cJSON_AddStringToObject(root, "staff_mode",

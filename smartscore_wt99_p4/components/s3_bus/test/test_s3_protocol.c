@@ -113,3 +113,93 @@ TEST_CASE("music protocol rejects unknown type and trailing garbage", "[s3_bus]"
         S3_PROTOCOL_INVALID_JSON,
         s3_protocol_parse_music_line(trailing, strlen(trailing), &message));
 }
+
+TEST_CASE("MusicLink v2 parses a sorted four-key snapshot", "[s3_bus]")
+{
+    const char *line =
+        "{\"v\":2,\"type\":\"notes\",\"seq\":8,\"sid\":3,"
+        "\"state_id\":5,\"ts_ms\":900,\"midis\":[36,48,60,96],"
+        "\"velocities\":[80,81,82,83],"
+        "\"confidences\":[0.9,0.8,0.7,0.6],"
+        "\"set_confidence\":0.75,\"degraded_mic\":false,"
+        "\"overflow\":false}";
+    s3_music_message_t message;
+    TEST_ASSERT_EQUAL(
+        S3_PROTOCOL_OK,
+        s3_protocol_parse_music_line(line, strlen(line), &message));
+    TEST_ASSERT_EQUAL(S3_MUSIC_MESSAGE_NOTES, message.type);
+    TEST_ASSERT_EQUAL_UINT32(2, message.version);
+    TEST_ASSERT_EQUAL_UINT32(5, message.state_id);
+    TEST_ASSERT_EQUAL_UINT8(4, message.note_set_count);
+    TEST_ASSERT_EQUAL_UINT8(36, message.midis[0]);
+    TEST_ASSERT_EQUAL_UINT8(96, message.midis[3]);
+    TEST_ASSERT_FALSE(message.degraded_mic);
+    TEST_ASSERT_FALSE(message.overflow);
+}
+
+TEST_CASE("MusicLink v2 parses an empty release snapshot", "[s3_bus]")
+{
+    const char *line =
+        "{\"v\":2,\"type\":\"notes\",\"seq\":9,\"sid\":3,"
+        "\"state_id\":6,\"ts_ms\":1000,\"midis\":[],"
+        "\"velocities\":[],\"confidences\":[],"
+        "\"set_confidence\":1.0,\"degraded_mic\":true}";
+    s3_music_message_t message;
+    TEST_ASSERT_EQUAL(
+        S3_PROTOCOL_OK,
+        s3_protocol_parse_music_line(line, strlen(line), &message));
+    TEST_ASSERT_EQUAL_UINT8(0, message.note_set_count);
+    TEST_ASSERT_TRUE(message.degraded_mic);
+    TEST_ASSERT_FALSE(message.overflow);
+}
+
+TEST_CASE("MusicLink v2 rejects invalid note arrays", "[s3_bus]")
+{
+    const char *unsorted =
+        "{\"v\":2,\"type\":\"notes\",\"seq\":1,\"sid\":1,"
+        "\"state_id\":1,\"ts_ms\":1,\"midis\":[60,48],"
+        "\"velocities\":[80,80],\"confidences\":[0.9,0.9],"
+        "\"set_confidence\":0.9,\"degraded_mic\":false}";
+    const char *mismatched =
+        "{\"v\":2,\"type\":\"notes\",\"seq\":1,\"sid\":1,"
+        "\"state_id\":1,\"ts_ms\":1,\"midis\":[48,60],"
+        "\"velocities\":[80],\"confidences\":[0.9,0.9],"
+        "\"set_confidence\":0.9,\"degraded_mic\":false}";
+    const char *out_of_range =
+        "{\"v\":2,\"type\":\"notes\",\"seq\":1,\"sid\":1,"
+        "\"state_id\":1,\"ts_ms\":1,\"midis\":[35],"
+        "\"velocities\":[80],\"confidences\":[0.9],"
+        "\"set_confidence\":0.9,\"degraded_mic\":false}";
+    s3_music_message_t message;
+    TEST_ASSERT_EQUAL(
+        S3_PROTOCOL_INVALID_FIELD,
+        s3_protocol_parse_music_line(unsorted, strlen(unsorted), &message));
+    TEST_ASSERT_EQUAL(
+        S3_PROTOCOL_INVALID_FIELD,
+        s3_protocol_parse_music_line(mismatched, strlen(mismatched),
+                                     &message));
+    TEST_ASSERT_EQUAL(
+        S3_PROTOCOL_INVALID_FIELD,
+        s3_protocol_parse_music_line(out_of_range, strlen(out_of_range),
+                                     &message));
+}
+
+TEST_CASE("music protocol enforces message version", "[s3_bus]")
+{
+    const char *v1_notes =
+        "{\"v\":1,\"type\":\"notes\",\"seq\":1,\"sid\":1,"
+        "\"state_id\":1,\"ts_ms\":1,\"midis\":[],"
+        "\"velocities\":[],\"confidences\":[],"
+        "\"set_confidence\":1.0,\"degraded_mic\":false}";
+    const char *v2_note_on =
+        "{\"v\":2,\"type\":\"note_on\",\"seq\":1,\"sid\":1,"
+        "\"ts_ms\":1,\"midi\":60,\"velocity\":80}";
+    s3_music_message_t message;
+    TEST_ASSERT_EQUAL(
+        S3_PROTOCOL_INVALID_FIELD,
+        s3_protocol_parse_music_line(v1_notes, strlen(v1_notes), &message));
+    TEST_ASSERT_EQUAL(
+        S3_PROTOCOL_INVALID_FIELD,
+        s3_protocol_parse_music_line(v2_note_on, strlen(v2_note_on),
+                                     &message));
+}

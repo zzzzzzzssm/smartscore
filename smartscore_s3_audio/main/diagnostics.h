@@ -12,9 +12,6 @@ typedef struct {
     volatile uint32_t mic1_fft_time_us;
     volatile uint32_t mic2_fft_time_us;
     volatile uint32_t chord_time_us;
-    volatile uint32_t low_yin_time_us;
-    volatile uint32_t low_spectrum_time_us;
-    volatile uint32_t diagnostic_drop_count;
     volatile uint32_t dsp_cycle_time_us;
     volatile uint32_t dsp_cycle_max_us;
     volatile uint64_t dsp_cycle_sum_us;
@@ -28,4 +25,4 @@ void diagnostics_log_audio(float mic1_rms, float mic1_peak, float mic1_clip,
                            int selected_mic, float mic1_noise, float mic2_noise,
                            float mic1_gate, float mic2_gate);
 void diagnostics_log_performance(unsigned queue_depth, unsigned free_heap,
-                                 unsigned stack_words);
+                                 unsigned stack_bytes);

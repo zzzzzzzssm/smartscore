@@ -30,18 +30,14 @@ static int local_minimum(int tau, int min_tau, int max_tau)
 }
 
 void yin_detector_analyze_range(const float *samples, size_t count,
-                                float sample_rate_hz,
-                                float minimum_frequency_hz,
-                                float maximum_frequency_hz,
-                                float threshold,
-                                yin_result_t *result)
+                                float sample_rate_hz, float minimum_frequency_hz,
+                                float maximum_frequency_hz, yin_result_t *result)
 {
     memset(result, 0, sizeof(*result));
     result->midi = -1;
     if (samples == NULL || count < 8 || sample_rate_hz <= 0.0f ||
         minimum_frequency_hz <= 0.0f ||
-        maximum_frequency_hz <= minimum_frequency_hz ||
-        threshold <= 0.0f || threshold >= 1.0f) {
+        maximum_frequency_hz <= minimum_frequency_hz) {
         return;
     }
     int min_tau = (int)floorf(sample_rate_hz / maximum_frequency_hz);
@@ -92,7 +88,7 @@ void yin_detector_analyze_range(const float *samples, size_t count,
             minimum = s_cmnd[tau];
             global_min_tau = tau;
         }
-        if (s_cmnd[tau] < threshold) {
+        if (s_cmnd[tau] < MUSIC_YIN_THRESHOLD) {
             selected_tau = local_minimum(tau, min_tau, max_tau);
             break;
         }
@@ -121,8 +117,7 @@ void yin_detector_analyze_range(const float *samples, size_t count,
         }
     }
     const float frequency = sample_rate_hz / tau_exact;
-    if (frequency < minimum_frequency_hz ||
-        frequency > maximum_frequency_hz) {
+    if (frequency < minimum_frequency_hz || frequency > maximum_frequency_hz) {
         return;
     }
     result->midi = note_frequency_to_midi(frequency);
@@ -137,16 +132,9 @@ void yin_detector_analyze_range(const float *samples, size_t count,
     note_midi_to_name(result->midi, result->note_name, sizeof(result->note_name));
 }
 
-void yin_detector_analyze(const float *samples, size_t count,
-                          yin_result_t *result)
+void yin_detector_analyze(const float *samples, size_t count, yin_result_t *result)
 {
-    if (count < MUSIC_YIN_WINDOW_SIZE) {
-        memset(result, 0, sizeof(*result));
-        result->midi = -1;
-        return;
-    }
     yin_detector_analyze_range(samples, count, MUSIC_SAMPLE_RATE_HZ,
                                MUSIC_MIN_FREQUENCY_HZ,
-                               MUSIC_MAX_FREQUENCY_HZ,
-                               MUSIC_YIN_THRESHOLD, result);
+                               MUSIC_MAX_FREQUENCY_HZ, result);
 }

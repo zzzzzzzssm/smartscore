@@ -1,7 +1,8 @@
 const api = require('../../utils/api');
 const scoreLibrary = require('../../utils/score_library');
-const { formatTime } = require('../../utils/util');
 const practiceAdvice = require('../../utils/practice_advice');
+const performanceChart = require('../../utils/performance_chart');
+const practiceRecord = require('../../utils/practice_record');
 
 function emptyResult() {
   return {
@@ -14,6 +15,8 @@ function emptyResult() {
     scoreNotice: '',
     confidenceText: '',
     targetCount: 0,
+    startOffset: null,
+    tempoScale: null,
     alignmentMethod: '',
     startAnchorTargetIndex: 0,
     startAnchorPlayedIndex: 0,
@@ -57,14 +60,7 @@ Page({
     audioS3Implemented: false,
     creatorActive: false,
     result: emptyResult(),
-    chartEmpty: true,
-    chartHint: '结束练习后会显示标准谱、采集演奏和音高误差。',
-    chartStats: {
-      avgPitch: '-',
-      maxPitch: '-',
-      avgRhythm: '-',
-      matched: '-'
-    },
+    performanceTargetNotes: [],
     liveStatus: {
       online: false,
       state: '未连接',
@@ -79,18 +75,23 @@ Page({
     }
   },
 
-  onReady() {
-    this.drawPracticeChart();
-  },
-
   onShow() {
     this.pageVisible = true;
     const app = getApp();
     const current = scoreLibrary.getCurrentScore() || app.globalData.currentScore;
+    const currentTargetNotes = performanceChart.normalizeTargetNotes(
+      current && current.notes
+    );
+    const keepSessionTargets =
+      (this.data.isRecording || this.data.status === '已完成') &&
+      this.data.performanceTargetNotes.length > 0;
     this.setData({
       scoreTitle: current ? current.title : '未选择乐谱',
-      currentScore: current || null
-    }, () => this.drawPracticeChart());
+      currentScore: current || null,
+      performanceTargetNotes: keepSessionTargets
+        ? this.data.performanceTargetNotes
+        : currentTargetNotes
+    });
     this.startStatusPolling();
   },
 
@@ -234,14 +235,31 @@ Page({
             preparation.title || this.data.scoreTitle;
         }
         if (state === 'RECORDING') {
+          if (!this.data.isRecording) {
+            practiceRecord.rememberPendingContext({
+              scoreTitle: nextData.scoreTitle || this.data.scoreTitle,
+              targetNotes: this.data.performanceTargetNotes
+            });
+          }
           nextData.isRecording = true;
           nextData.status = nextStatus.phase;
           nextData.statusClass = nextStatus.phaseClass;
+        } else if (state === 'SCORING') {
+          nextData.isRecording = false;
+          nextData.status = '正在评分';
+          nextData.statusClass = 'warn';
+        } else if (state === 'READY') {
+          nextData.isRecording = false;
+          nextData.status = '评分已完成，正在保存';
+          nextData.statusClass = 'warn';
         } else if (this.data.isRecording && state !== 'RECORDING') {
           nextData.isRecording = false;
         }
         this.setData(nextData);
-        return this.applyAdviceSummary(status);
+        const resultSync = state === 'READY'
+          ? this.syncCompletedPracticeResult(status)
+          : Promise.resolve(false);
+        return resultSync.then(() => this.applyAdviceSummary(status));
       })
       .catch(() => {
         this.setData({
@@ -280,6 +298,45 @@ Page({
       }
       return false;
     }
+  },
+
+  syncCompletedPracticeResult(status) {
+    if (this.completionInFlight) return Promise.resolve(false);
+    const sessionId = String(status && status.practice_session_id || '');
+    const records = wx.getStorageSync('practiceRecords') || [];
+    const existing = practiceRecord.findBySession(records, sessionId);
+    if (existing) {
+      if (this.data.status !== '已完成' ||
+          this.data.currentPracticeSessionId !== sessionId) {
+        this.finishPractice(existing, { automatic: true, silent: true });
+      }
+      practiceRecord.clearPendingContext();
+      return Promise.resolve(false);
+    }
+
+    this.completionInFlight = true;
+    return api.getResult()
+      .then((apiResult) => {
+        if (!apiResult || apiResult.ready === false) return false;
+        const result = this.normalizeResult(apiResult);
+        if (sessionId && result.practiceSessionId &&
+            sessionId !== result.practiceSessionId) {
+          throw new Error('设备返回了其他练习会话的评分');
+        }
+        this.finishPractice(result, { automatic: true });
+        return true;
+      })
+      .catch(() => {
+        this.setData({
+          status: '评分已完成，记录同步重试中',
+          statusClass: 'warn',
+          isRecording: false
+        });
+        return false;
+      })
+      .finally(() => {
+        this.completionInFlight = false;
+      });
   },
 
   updateAdviceRecord(sessionId, patch) {
@@ -393,270 +450,6 @@ Page({
     return this.adviceFetchPromise;
   },
 
-  getMatchedDetails(result) {
-    const details = result && Array.isArray(result.details) ? result.details : [];
-    return details
-      .filter((item) => (
-        item.result !== 'uncertain' &&
-        item.result !== 'extra' &&
-        item.result !== 'retry' &&
-        Number(item.ref_index) > 0 &&
-        Number(item.target_midi) >= 0 &&
-        Number(item.played_midi) >= 0 &&
-        Number(item.target_start) >= 0 &&
-        Number(item.played_start) >= 0
-      ))
-      .sort((left, right) => Number(left.ref_index) - Number(right.ref_index));
-  },
-
-  buildTargetNotes(result) {
-    const details = result && Array.isArray(result.details) ? result.details : [];
-    const resultTargets = new Map();
-    details.forEach((item) => {
-      const refIndex = Number(item.ref_index);
-      const midi = Number(item.target_midi);
-      const start = Number(item.target_start);
-      if (refIndex <= 0 || !Number.isFinite(midi) || midi < 0 ||
-          !Number.isFinite(start) || start < 0 || resultTargets.has(refIndex)) return;
-      resultTargets.set(refIndex, {
-        refIndex,
-        midi,
-        start,
-        duration: Math.max(0.08, Number(item.target_duration || 0.25))
-      });
-    });
-    const sortedResultTargets = Array.from(resultTargets.values())
-      .sort((left, right) => left.refIndex - right.refIndex);
-    const expectedTargetCount = Number(
-      result && (result.targetCount || result.target_count)
-    );
-    if (sortedResultTargets.length &&
-        (!Number.isFinite(expectedTargetCount) || expectedTargetCount <= 0 ||
-         sortedResultTargets.length >= expectedTargetCount)) {
-      return sortedResultTargets;
-    }
-
-    const current = this.data.currentScore;
-    if (current && Array.isArray(current.notes) && current.notes.length) {
-      return current.notes
-        .map((note) => ({
-          midi: Number(note.midi),
-          start: Number(note.start),
-          duration: Math.max(0.08, Number(note.duration || 0.25))
-        }))
-        .filter((note) => Number.isFinite(note.midi) && Number.isFinite(note.start));
-    }
-    return sortedResultTargets;
-  },
-
-  estimateVisualOffset(matched) {
-    if (matched.some((item) => Number.isFinite(Number(item.aligned_played_start)))) {
-      return 0;
-    }
-    const offsets = matched
-      .map((item) => Number(item.played_start) - Number(item.target_start))
-      .filter((value) => Number.isFinite(value))
-      .sort((a, b) => a - b);
-    if (!offsets.length) return 0;
-    return offsets[Math.floor(offsets.length / 2)];
-  },
-
-  alignedPlayedStart(item, result, legacyOffset) {
-    const aligned = Number(item.aligned_played_start);
-    if (Number.isFinite(aligned)) return aligned;
-    const raw = Number(item.played_start);
-    const offset = Number(result && result.startOffset);
-    const tempo = Number(result && result.tempoScale);
-    if (Number.isFinite(raw) && Number.isFinite(offset) &&
-        Number.isFinite(tempo) && tempo > 0) {
-      return (raw - offset) / tempo;
-    }
-    return raw - Number(legacyOffset || 0);
-  },
-
-  updateChartStats(result, matched, targetNotes, visualOffset) {
-    if (!matched.length) {
-      this.setData({
-        chartStats: {
-          avgPitch: '-',
-          maxPitch: '-',
-          avgRhythm: '-',
-          matched: `0 / ${targetNotes.length || '-'}`
-        },
-        chartHint: targetNotes.length
-          ? '已载入标准谱；结束评分后会叠加采集演奏和音高误差。'
-          : '结束练习后会显示标准谱、采集演奏和音高误差。',
-        chartEmpty: !targetNotes.length
-      });
-      return;
-    }
-
-    const pitchErrors = matched.map((item) => Math.abs(Number(item.played_midi) - Number(item.target_midi)));
-    const rhythmErrors = matched.map((item) => Math.abs(Number(item.time_error || 0)));
-    const avgPitch = pitchErrors.reduce((sum, value) => sum + value, 0) / pitchErrors.length;
-    const maxPitch = Math.max.apply(null, pitchErrors);
-    const avgRhythm = rhythmErrors.reduce((sum, value) => sum + value, 0) / rhythmErrors.length;
-    this.setData({
-      chartStats: {
-        avgPitch: `${avgPitch.toFixed(2)} 半音`,
-        maxPitch: `${maxPitch.toFixed(2)} 半音`,
-        avgRhythm: `${avgRhythm.toFixed(2)}s`,
-        matched: `${matched.length} / ${result.targetCount || result.target_count || targetNotes.length || matched.length}`
-      },
-      chartHint: result.alignmentOriginLocked
-        ? '已锁定乐谱开头和起奏时间原点；等待起奏不会把演奏吸附到后面的重复乐句。'
-        : 'MIDI 已按音符顺序和演奏速度完成时间归一化，起奏等待不计分。',
-      chartEmpty: false
-    });
-  },
-
-  midiName(midi) {
-    const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-    const value = Math.round(Number(midi));
-    return `${names[((value % 12) + 12) % 12]}${Math.floor(value / 12) - 1}`;
-  },
-
-  drawPracticeChart() {
-    const result = this.data.result || {};
-    const matched = this.getMatchedDetails(result);
-    const targetNotes = this.buildTargetNotes(result);
-    const visualOffset = this.estimateVisualOffset(matched);
-    this.updateChartStats(result, matched, targetNotes, visualOffset);
-
-    const query = wx.createSelectorQuery().in(this);
-    query.select('.performance-chart').boundingClientRect((rect) => {
-      if (!rect || !rect.width || !rect.height) return;
-      const ctx = wx.createCanvasContext('performanceChart', this);
-      const width = rect.width;
-      const height = rect.height;
-      const pad = { left: 36, right: 16, top: 24, bottom: 34 };
-      const errorBand = 58;
-      const pitchTop = pad.top;
-      const pitchBottom = height - pad.bottom - errorBand;
-      const chartLeft = pad.left;
-      const chartRight = width - pad.right;
-      const chartWidth = Math.max(1, chartRight - chartLeft);
-      const pitchHeight = Math.max(1, pitchBottom - pitchTop);
-      const errorTop = pitchBottom + 22;
-      const errorBottom = height - pad.bottom;
-
-      const midiValues = [];
-      targetNotes.forEach((note) => midiValues.push(Number(note.midi)));
-      matched.forEach((item) => {
-        midiValues.push(Number(item.target_midi));
-        midiValues.push(Number(item.played_midi));
-      });
-      if (!midiValues.length) midiValues.push(60, 72);
-      const midiMinRaw = Math.min.apply(null, midiValues);
-      const midiMaxRaw = Math.max.apply(null, midiValues);
-      const midiMin = Math.floor(midiMinRaw - 2);
-      const midiMax = Math.ceil(midiMaxRaw + 2);
-      const midiRange = Math.max(1, midiMax - midiMin);
-
-      const targetEnd = targetNotes.reduce((max, note) => Math.max(max, Number(note.start) + Number(note.duration || 0.25)), 0);
-      const playedEnd = matched.reduce((max, item) => {
-        const start = this.alignedPlayedStart(item, result, visualOffset);
-        return Math.max(max, start + Math.max(0.08, Number(item.played_duration || 0.25)));
-      }, 0);
-      const timeMax = Math.max(2, targetEnd, playedEnd);
-      const xOf = (time) => chartLeft + (Math.max(0, Number(time || 0)) / timeMax) * chartWidth;
-      const yOf = (midi) => pitchBottom - ((Number(midi) - midiMin) / midiRange) * pitchHeight;
-      const yErr = (err) => {
-        const clamped = Math.max(-3, Math.min(3, Number(err || 0)));
-        return errorTop + ((3 - clamped) / 6) * (errorBottom - errorTop);
-      };
-
-      ctx.setFillStyle('#f8fbfd');
-      ctx.fillRect(0, 0, width, height);
-      ctx.setFontSize(10);
-      ctx.setFillStyle('#667085');
-      ctx.setStrokeStyle('#dfe8ef');
-      ctx.setLineWidth(1);
-      for (let i = 0; i <= 4; i += 1) {
-        const y = pitchTop + (pitchHeight / 4) * i;
-        ctx.beginPath();
-        ctx.moveTo(chartLeft, y);
-        ctx.lineTo(chartRight, y);
-        ctx.stroke();
-        const midi = midiMax - (midiRange / 4) * i;
-        ctx.fillText(this.midiName(midi), 4, y + 3);
-      }
-      for (let i = 0; i <= 4; i += 1) {
-        const x = chartLeft + (chartWidth / 4) * i;
-        ctx.beginPath();
-        ctx.moveTo(x, pitchTop);
-        ctx.lineTo(x, errorBottom);
-        ctx.stroke();
-        ctx.fillText(`${Math.round((timeMax / 4) * i)}s`, x - 8, height - 10);
-      }
-
-      const drawTarget = () => {
-        if (!targetNotes.length) return;
-        ctx.setStrokeStyle('#2563eb');
-        ctx.setLineWidth(3);
-        ctx.setLineCap('round');
-        targetNotes.forEach((note) => {
-          const y = yOf(note.midi);
-          ctx.beginPath();
-          ctx.moveTo(xOf(note.start), y);
-          ctx.lineTo(xOf(Number(note.start) + Number(note.duration || 0.25)), y);
-          ctx.stroke();
-        });
-      };
-
-      const drawPlayed = () => {
-        if (!matched.length) return;
-        ctx.setStrokeStyle('#0f766e');
-        ctx.setFillStyle('#0f766e');
-        ctx.setLineWidth(2);
-        ctx.beginPath();
-        matched.forEach((item, index) => {
-          const x = xOf(this.alignedPlayedStart(item, result, visualOffset));
-          const y = yOf(item.played_midi);
-          if (index === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        });
-        ctx.stroke();
-        matched.forEach((item) => {
-          const x = xOf(this.alignedPlayedStart(item, result, visualOffset));
-          const y = yOf(item.played_midi);
-          ctx.beginPath();
-          ctx.arc(x, y, 3, 0, Math.PI * 2);
-          ctx.fill();
-        });
-      };
-
-      drawTarget();
-      drawPlayed();
-
-      ctx.setStrokeStyle('#94a3b8');
-      ctx.setLineWidth(1);
-      ctx.beginPath();
-      ctx.moveTo(chartLeft, yErr(0));
-      ctx.lineTo(chartRight, yErr(0));
-      ctx.stroke();
-      ctx.setFillStyle('#667085');
-      ctx.fillText('+3', 8, errorTop + 6);
-      ctx.fillText('0', 18, yErr(0) + 3);
-      ctx.fillText('-3', 8, errorBottom + 3);
-
-      if (matched.length) {
-        ctx.setStrokeStyle('#dc2626');
-        ctx.setLineWidth(2);
-        ctx.beginPath();
-        matched.forEach((item, index) => {
-          const err = Number(item.played_midi) - Number(item.target_midi);
-          const x = xOf(Number(item.target_start));
-          const y = yErr(err);
-          if (index === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        });
-        ctx.stroke();
-      }
-      ctx.draw();
-    }).exec();
-  },
-
   selectInputSource(event) {
     const source = event.currentTarget.dataset.source;
     if (!source || this.data.inputChanging || this.data.inputLocked) return;
@@ -762,11 +555,21 @@ Page({
       return;
     }
 
-    wx.showLoading({ title: '启动练习中' });
-    this.setData({ isStarting: true });
     const restartingCompletedPractice =
       this.data.preparationValid && mode === 'follow' &&
       this.data.status === '已完成';
+    const currentTargetNotes = performanceChart.normalizeTargetNotes(
+      this.data.currentScore && this.data.currentScore.notes
+    );
+    const sessionTargetNotes = restartingCompletedPractice &&
+      this.data.performanceTargetNotes.length
+      ? performanceChart.compactTargetNotes(this.data.performanceTargetNotes)
+      : currentTargetNotes;
+    wx.showLoading({ title: '启动练习中' });
+    this.setData({
+      isStarting: true,
+      performanceTargetNotes: sessionTargetNotes
+    });
     const startAction = restartingCompletedPractice
       ? api.restartPreparedPractice()
       : this.data.preparationValid
@@ -785,6 +588,15 @@ Page({
           this.applyPreparationResult(result);
         }
         const readOnly = this.data.preparationValid && mode === 'read_only';
+        if (!readOnly) {
+          const preparation = result && (result.preparation || result);
+          practiceRecord.rememberPendingContext({
+            scoreTitle: preparation && preparation.title
+              ? preparation.title
+              : this.data.scoreTitle,
+            targetNotes: sessionTargetNotes
+          });
+        }
         this.setData({
           status: readOnly ? '只读看谱' : '正在记录',
           statusClass: readOnly ? 'finished' : 'recording',
@@ -797,7 +609,7 @@ Page({
             : '结束练习后会自动生成建议',
           currentPracticeSessionId: '',
           currentAdviceText: ''
-        }, () => this.drawPracticeChart());
+        });
         this.refreshLiveStatus();
         wx.showToast({
           title: readOnly ? '屏幕已显示乐谱' : '已开始跟谱',
@@ -818,6 +630,8 @@ Page({
   },
 
   stopPractice() {
+    if (this.completionInFlight) return;
+    this.completionInFlight = true;
     wx.showLoading({ title: '生成评分中' });
     api.stopPractice()
       .then((apiResult) => this.finishPractice(this.normalizeResult(apiResult)))
@@ -827,99 +641,68 @@ Page({
           statusClass: '',
           isRecording: false,
           result: this.buildEmptyResult()
-        }, () => this.drawPracticeChart());
+        });
         wx.showModal({
           title: '评分失败',
           content: `${api.errorMessage(err, '评分失败')}\n如果串口显示 target=0 或 frames=0，请先同步有效乐谱，并确认设备真的开始录音。`,
           showCancel: false
         });
       })
-      .finally(() => wx.hideLoading());
+      .finally(() => {
+        this.completionInFlight = false;
+        wx.hideLoading();
+      });
   },
 
   normalizeResult(result) {
-    if (!result || result.ok === false) {
-      throw new Error(api.messageText(result && result.message, '评分失败'));
+    try {
+      return practiceRecord.normalizeResult(result);
+    } catch (error) {
+      throw new Error(api.messageText(result && result.message, error.message));
     }
-
-    const scorable = result.scorable !== false;
-    const referenceOnly = result.score_status === 'reference';
-    const inputConfidence = Number(result.input_confidence);
-    return {
-      totalScore: scorable ? result.total_score : '-',
-      pitchScore: result.pitch_score,
-      rhythmScore: result.rhythm_evaluable === false ? '-' : result.rhythm_score,
-      fluencyScore: result.fluency_score === undefined ? '-' : result.fluency_score,
-      completeScore: result.complete_score,
-      level: result.level || '',
-      scoreNotice: !scorable
-        ? '本次麦克风识别证据不足，未生成正式分数'
-        : (referenceOnly ? '麦克风识别可信度一般，本次分数仅供参考' : ''),
-      confidenceText: Number.isFinite(inputConfidence) && result.input_source === 'audio_s3'
-        ? `输入可信度 ${Math.round(inputConfidence * 100)}%`
-        : '',
-      targetCount: Number(result.target_count || 0),
-      startOffset: Number(result.start_offset || 0),
-      tempoScale: Number(result.tempo_scale || 1),
-      alignmentMethod: result.alignment_method || '',
-      startAnchorTargetIndex: Number(result.start_anchor_target_index || 0),
-      startAnchorPlayedIndex: Number(result.start_anchor_played_index || 0),
-      leadingMissingCount: Number(result.leading_missing_count || 0),
-      leadingExtraCount: Number(result.leading_extra_count || 0),
-      alignmentOriginLocked: result.alignment_origin_locked === true,
-      tempoSampleCount: Number(result.tempo_sample_count || 0),
-      details: Array.isArray(result.details) ? result.details : [],
-      practiceSessionId: String(result.practice_session_id || '')
-    };
   },
 
-  finishPractice(result) {
-    const record = {
-      id: `record_${Date.now()}`,
-      scoreTitle: this.data.scoreTitle,
-      practicedAt: formatTime(new Date()),
-      totalScore: result.totalScore,
-      pitchScore: result.pitchScore,
-      rhythmScore: result.rhythmScore,
-      fluencyScore: result.fluencyScore,
-      completeScore: result.completeScore,
-      level: result.level,
-      targetCount: result.targetCount,
-      alignmentMethod: result.alignmentMethod,
-      startAnchorTargetIndex: result.startAnchorTargetIndex,
-      startAnchorPlayedIndex: result.startAnchorPlayedIndex,
-      leadingMissingCount: result.leadingMissingCount,
-      leadingExtraCount: result.leadingExtraCount,
-      alignmentOriginLocked: result.alignmentOriginLocked,
-      tempoSampleCount: result.tempoSampleCount,
-      details: result.details || [],
-      chartStats: this.data.chartStats,
-      practiceSessionId: result.practiceSessionId,
-      adviceStatus: result.practiceSessionId ? 'pending' : 'sync_missed',
-      advice: null,
-      adviceText: '',
-      adviceMessage: result.practiceSessionId
-        ? '练习建议正在后台生成'
-        : '设备未返回练习会话编号，建议无法同步'
-    };
+  finishPractice(result, options) {
+    const settings = options || {};
     const records = wx.getStorageSync('practiceRecords') || [];
-    records.unshift(record);
-    this.savePracticeRecords(records);
+    let record = practiceRecord.findBySession(
+      records, result.practiceSessionId
+    );
+    let stored = !!record;
+    if (!record) {
+      record = practiceRecord.buildRecord(result, {
+        scoreTitle: this.data.scoreTitle,
+        targetNotes: this.data.performanceTargetNotes
+      });
+      records.unshift(record);
+      stored = this.savePracticeRecords(records);
+    }
+    if (stored) practiceRecord.clearPendingContext();
+    const storedAdviceState = practiceAdvice.normalizeAdviceState(
+      record.adviceStatus
+    );
+    const adviceState = storedAdviceState === 'pending'
+      ? 'running'
+      : storedAdviceState;
     this.setData({
       status: '已完成',
       statusClass: 'finished',
       isRecording: false,
       result,
-      adviceState: result.practiceSessionId ? 'running' : 'sync_missed',
-      adviceButtonText: practiceAdvice.adviceButtonText(
-        result.practiceSessionId ? 'running' : 'sync_missed'
-      ),
+      adviceState,
+      adviceButtonText: practiceAdvice.adviceButtonText(adviceState),
       adviceMessage: record.adviceMessage,
       currentPracticeSessionId: result.practiceSessionId,
-      currentAdviceText: ''
-    }, () => this.drawPracticeChart());
+      currentAdviceText: record.adviceText || '',
+      performanceTargetNotes: performanceChart.compactTargetNotes(record.targetNotes)
+    });
     this.refreshLiveStatus();
-    wx.showToast({ title: '评分完成', icon: 'success' });
+    if (!settings.silent) {
+      wx.showToast({
+        title: settings.automatic ? '已自动保存记录' : '评分完成',
+        icon: 'success'
+      });
+    }
   },
 
   resetPractice() {
@@ -934,13 +717,25 @@ Page({
     }
 
     wx.showLoading({ title: '重新开始中' });
-    this.setData({ isStarting: true });
+    const restartTargetNotes = this.data.performanceTargetNotes.length
+      ? performanceChart.compactTargetNotes(this.data.performanceTargetNotes)
+      : performanceChart.normalizeTargetNotes(
+        this.data.currentScore && this.data.currentScore.notes
+      );
+    this.setData({
+      isStarting: true,
+      performanceTargetNotes: restartTargetNotes
+    });
     api.restartPreparedPractice()
       .then((result) => {
         if (!result || result.ok === false) {
           throw new Error(api.messageText(result && result.message, '重新练习失败'));
         }
         this.applyPreparationResult(result);
+        practiceRecord.rememberPendingContext({
+          scoreTitle: this.data.scoreTitle,
+          targetNotes: restartTargetNotes
+        });
         this.setData({
           status: '正在记录',
           statusClass: 'recording',
@@ -951,7 +746,7 @@ Page({
           adviceMessage: '结束练习后会自动生成建议',
           currentPracticeSessionId: '',
           currentAdviceText: ''
-        }, () => this.drawPracticeChart());
+        });
         this.refreshLiveStatus();
         wx.showToast({ title: '已重新开始', icon: 'success' });
       })

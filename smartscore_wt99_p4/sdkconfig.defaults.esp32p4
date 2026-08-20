@@ -29,16 +29,17 @@ CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D3_4BIT_BUS_SLOT_1=17
 CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=54
 CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y
 CONFIG_ESP_HOSTED_NIMBLE_HCI_VHCI=y
-# Allocate SDIO packet buffers individually.  The full screen firmware cannot
-# reserve ESP-Hosted's ~48 KiB contiguous internal-DMA mempool at startup, and
-# ESP-Hosted intentionally excludes PSRAM from this transport allocation.
-# CONFIG_ESP_HOSTED_USE_MEMPOOL is not set
+# Keep the fixed transport pools large enough for sustained HTTP traffic.
+# The P4 host port allocates their DMA-capable backing storage from PSRAM.
+CONFIG_ESP_HOSTED_SDIO_TX_Q_SIZE=25
+CONFIG_ESP_HOSTED_SDIO_RX_Q_SIZE=25
+CONFIG_ESP_HOSTED_USE_MEMPOOL=y
 
 # Keep large TLS/LwIP allocations and Hosted task stacks in PSRAM while
 # reserving contiguous internal/DMA memory for SDIO packet copies and P4 AES.
-CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=128
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
-CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=98304
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=163840
 CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y
 CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM=y
 # CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC is not set
@@ -49,11 +50,16 @@ CONFIG_ESP_HOSTED_DFLT_TASK_FROM_SPIRAM=y
 # Reserve enough descriptors for the HTTP server, its mini-program clients,
 # the warm Doubao WebSocket, DNS, and outbound AI HTTPS requests.
 CONFIG_LWIP_MAX_SOCKETS=16
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=14360
+CONFIG_LWIP_TCP_WND_DEFAULT=14360
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=12
 
 # Doubao's HTTP Upgrade response headers exceed the ESP-IDF 1 KiB default.
 # This temporary transport buffer is released after WebSocket connection.
 CONFIG_WS_BUFFER_SIZE=4096
 CONFIG_WS_DYNAMIC_BUFFER=y
+CONFIG_ESP_WS_CLIENT_SEPARATE_TX_LOCK=y
+CONFIG_ESP_WS_CLIENT_TX_LOCK_TIMEOUT_MS=1500
 
 # Source: WT99P4C5-S1 1V1 schematic sheet 2 and the Wireless-Tag
 # WT99P4C5-S1 official sdkconfig.defaults.

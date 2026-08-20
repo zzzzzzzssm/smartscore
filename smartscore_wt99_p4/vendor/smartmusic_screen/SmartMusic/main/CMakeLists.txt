@@ -7,6 +7,7 @@ idf_component_register(SRCS "main.c"
                         smartscore_core
                         midi_parser
                         music_display
+                        musicxml_renderer
                         usb_midi_input
                         ui-guider
                         wifi_manager

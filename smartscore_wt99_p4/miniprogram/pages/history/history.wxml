@@ -1,6 +1,6 @@
 <view class="page">
   <view class="section-title">历史练习记录</view>
-  <view class="hint">点击记录可查看评分明细和逐音符数据。</view>
+  <view class="hint">点击记录可查看评分明细和演奏过程图谱。</view>
 
   <view class="record-list" wx:if="{{records.length}}">
     <view class="card record-card" wx:for="{{records}}" wx:key="id">
@@ -79,32 +79,11 @@
         </view>
       </view>
 
-      <view class="detail-title">逐音符数据</view>
-      <scroll-view scroll-x class="note-table-wrap">
-        <view class="note-table">
-          <view class="note-row head">
-            <view>#</view>
-            <view>目标音</view>
-            <view>演奏音</view>
-            <view>目标时间</view>
-            <view>演奏时间</view>
-            <view>时间误差</view>
-            <view>音高误差</view>
-            <view>结果</view>
-          </view>
-          <view class="note-row" wx:for="{{selectedRecord.details}}" wx:key="index">
-            <view>{{item.index}}</view>
-            <view>{{item.target_note}} / {{item.target_midi}}</view>
-            <view>{{item.played_note}} / {{item.played_midi}}</view>
-            <view>{{item.target_start}}s</view>
-            <view>{{item.played_start}}s</view>
-            <view>{{item.time_error}}s</view>
-            <view>{{item.pitch_error}}</view>
-            <view>{{item.result}}</view>
-          </view>
-          <view class="note-empty" wx:if="{{!selectedRecord.details || !selectedRecord.details.length}}">这条记录暂无逐音符明细。</view>
-        </view>
-      </scroll-view>
+      <view class="history-chart">
+        <performance-chart result="{{selectedRecord}}"
+                           target-notes="{{selectedRecord.targetNotes}}"
+                           context="history"></performance-chart>
+      </view>
     </view>
   </view>
 </view>
