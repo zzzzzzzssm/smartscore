@@ -11,8 +11,8 @@ extern "C" {
 
 #define MUSIC_MAX_PARTS       4
 #define MUSIC_MAX_STAVES      2
-#define MUSIC_MAX_MEASURES    96
-#define MUSIC_MAX_EVENTS      1024
+#define MUSIC_MAX_MEASURES    192
+#define MUSIC_MAX_EVENTS      2048
 #define MUSIC_MAX_BEAM_LEVELS 3
 
 typedef float music_sp_t;

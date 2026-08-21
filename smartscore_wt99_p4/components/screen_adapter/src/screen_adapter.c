@@ -23,6 +23,7 @@
 #include "music_display.h"
 #include "practice_advice_view.h"
 #include "score_data.h"
+#include "score_player.h"
 #include "score_storage.h"
 #include "score_ui_flow.h"
 #include "scoring_service.h"
@@ -38,7 +39,7 @@
 #define SCREEN_FOLLOW_TASK_STACK_BYTES 6144
 #define SCREEN_FOLLOW_TASK_PRIORITY 3
 #define SCREEN_FOLLOW_TASK_PERIOD_MS 50
-#define SCREEN_PAGE_CHECK_PERIOD_MS 125
+#define SCREEN_PAGE_CHECK_PERIOD_MS 50
 #define SCREEN_AUDIO_COUNTDOWN_TASK_STACK_BYTES 4096
 #define SCREEN_AUDIO_COUNTDOWN_SECONDS 3
 #define SCREEN_RESULT_TIMEOUT_MS 15000
@@ -171,6 +172,16 @@ static bool s_applying_volume_status;
 static screen_preparation_status_t s_preparation;
 static char *s_preparation_json;
 static size_t s_preparation_json_length;
+static uint16_t s_read_only_playback_bpm = 120;
+#define SCREEN_READ_ONLY_PAGE_CHECK_PERIOD_MS 50U
+static bool s_read_only_player_ui_valid;
+static uint32_t s_read_only_player_ui_generation;
+static music_display_playback_state_t s_read_only_player_ui_state;
+static char s_read_only_player_ui_message[64];
+static int s_read_only_player_ui_first_note = -1;
+static int s_read_only_player_ui_last_note = -1;
+static bool s_read_only_page_check_valid;
+static uint32_t s_read_only_last_page_check_ms;
 static void hide_practice_buttons(void);
 static void finish_practice(void);
 static void finish_practice_async_cb(void *user_data);
@@ -179,6 +190,131 @@ static void hide_audio_countdown_overlay(void);
 static bool begin_practice_completion(result_action_t action);
 static bool begin_practice_completion_internal(result_action_t action,
                                                 bool allow_detached_recording);
+
+static void score_player_status_changed(
+    const score_player_status_t *status, void *user_data)
+{
+    (void)user_data;
+    if (!status) return;
+
+    bool reading = false;
+    if (s_session_lock) {
+        xSemaphoreTake(s_session_lock, portMAX_DELAY);
+        reading = s_preparation.phase == SCREEN_PREPARATION_READING;
+        xSemaphoreGive(s_session_lock);
+    }
+    if (!reading) return;
+
+    const bool new_generation = !s_read_only_player_ui_valid ||
+        s_read_only_player_ui_generation != status->generation;
+    if (new_generation) {
+        s_read_only_player_ui_valid = true;
+        s_read_only_player_ui_generation = status->generation;
+        s_read_only_player_ui_first_note = -1;
+        s_read_only_player_ui_last_note = -1;
+        s_read_only_player_ui_message[0] = '\0';
+        s_read_only_page_check_valid = false;
+    }
+
+    music_display_playback_state_t display_state =
+        MUSIC_DISPLAY_PLAYBACK_STOPPED;
+    const char *display_message = NULL;
+    if (status->state == SCORE_PLAYER_PREPARING) {
+        display_state = MUSIC_DISPLAY_PLAYBACK_PREPARING;
+        display_message = status->message;
+    } else if (status->state == SCORE_PLAYER_PLAYING ||
+               status->state == SCORE_PLAYER_DRAINING) {
+        display_state = MUSIC_DISPLAY_PLAYBACK_PLAYING;
+    } else if (status->state == SCORE_PLAYER_PAUSED) {
+        display_state = MUSIC_DISPLAY_PLAYBACK_PAUSED;
+    } else if (status->state == SCORE_PLAYER_ERROR) {
+        display_state = MUSIC_DISPLAY_PLAYBACK_ERROR;
+        display_message = status->message[0] ? status->message
+                                             : "乐谱播放失败";
+    }
+
+    const bool display_state_changed = new_generation ||
+        display_state != s_read_only_player_ui_state;
+    const char *message = display_message ? display_message : "";
+    const bool display_message_changed =
+        strcmp(message, s_read_only_player_ui_message) != 0;
+    if (display_state_changed || display_message_changed) {
+        music_display_set_read_only_playback_state(
+            display_state, display_message);
+        s_read_only_player_ui_state = display_state;
+        snprintf(s_read_only_player_ui_message,
+                 sizeof(s_read_only_player_ui_message), "%s", message);
+    }
+
+    const bool show_note = status->state == SCORE_PLAYER_PLAYING ||
+                           status->state == SCORE_PLAYER_DRAINING ||
+                           status->state == SCORE_PLAYER_PAUSED;
+    if (show_note &&
+        (new_generation ||
+         status->first_note_index != s_read_only_player_ui_first_note ||
+         status->last_note_index != s_read_only_player_ui_last_note)) {
+        music_display_set_expected_note_group(
+            status->first_note_index, status->last_note_index);
+        s_read_only_player_ui_first_note = status->first_note_index;
+        s_read_only_player_ui_last_note = status->last_note_index;
+    }
+
+    if (status->state == SCORE_PLAYER_PLAYING ||
+        status->state == SCORE_PLAYER_DRAINING) {
+        if (!s_read_only_page_check_valid ||
+            status->position_ms < s_read_only_last_page_check_ms ||
+            status->position_ms - s_read_only_last_page_check_ms >=
+                SCREEN_READ_ONLY_PAGE_CHECK_PERIOD_MS) {
+            music_display_check_time_page_turn(status->position_ms);
+            s_read_only_last_page_check_ms = status->position_ms;
+            s_read_only_page_check_valid = true;
+        }
+    } else if (display_state_changed &&
+               (status->state == SCORE_PLAYER_ERROR ||
+                status->state == SCORE_PLAYER_STOPPED)) {
+        s_read_only_player_ui_first_note = 0;
+        s_read_only_player_ui_last_note = 0;
+        music_display_reset_read_only_playback_view();
+    }
+}
+
+static void read_only_playback_action(
+    music_display_playback_action_t action, void *user_data)
+{
+    (void)user_data;
+    if (action == MUSIC_DISPLAY_PLAYBACK_STOP) {
+        (void)score_player_stop();
+        return;
+    }
+
+    score_player_status_t player = {0};
+    score_player_get_status(&player);
+    if (player.state == SCORE_PLAYER_PLAYING ||
+        player.state == SCORE_PLAYER_DRAINING) {
+        (void)score_player_pause();
+        return;
+    }
+    if (player.state == SCORE_PLAYER_PAUSED) {
+        (void)score_player_resume();
+        return;
+    }
+    if (player.state == SCORE_PLAYER_PREPARING) return;
+
+    esp_err_t error = ESP_ERR_INVALID_STATE;
+    if (s_session_lock) {
+        xSemaphoreTake(s_session_lock, portMAX_DELAY);
+        if (s_preparation.phase == SCREEN_PREPARATION_READING &&
+            s_preparation_json && s_preparation_json_length > 0U) {
+            error = score_player_start(s_preparation_json,
+                                       s_read_only_playback_bpm);
+        }
+        xSemaphoreGive(s_session_lock);
+    }
+    if (error != ESP_OK) {
+        ESP_LOGW(TAG, "unable to start score playback: %s",
+                 esp_err_to_name(error));
+    }
+}
 
 static void notify_camera_practice_state(
     s3_camera_practice_state_t state)
@@ -881,6 +1017,10 @@ static void result_back_event_cb(lv_event_t *event)
     (void)event;
     end_active_session();
     hide_practice_buttons();
+    /* Reset feedback even when the selected score is byte-identical to the
+     * previous attempt. The staff renderer can otherwise reuse its colored
+     * scene and leak the last practice result into the new session. */
+    music_display_reset_note_feedback();
     music_display_set_creator_active(false);
     music_display_set_read_only(false);
     esp_err_t err = scoring_service_reset();
@@ -1580,14 +1720,19 @@ static void log_practice_start_task_diagnostics(void)
     const void *stack_pointer = esp_cpu_get_sp();
     ESP_LOGI(TAG,
              "practice start task: name=%s stack_sp=%p external=%s "
-             "high_water=%u internal_free=%u psram_free=%u",
+             "high_water=%u internal_free=%u internal_largest=%u "
+             "dma_largest=%u psram_free=%u",
              pcTaskGetName(NULL), stack_pointer,
              esp_ptr_external_ram(stack_pointer) ? "yes" : "no",
              (unsigned)uxTaskGetStackHighWaterMark(NULL),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL |
-                                                MALLOC_CAP_8BIT),
+                                                 MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(
+                 MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(
+                 MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM |
-                                                MALLOC_CAP_8BIT));
+                                                 MALLOC_CAP_8BIT));
 }
 
 static bool start_selected_score(const char *filename,
@@ -1661,6 +1806,8 @@ static bool start_selected_score(const char *filename,
         return false;
     }
 
+    (void)score_player_stop();
+    music_display_reset_note_feedback();
     music_display_set_creator_active(false);
     music_display_set_read_only(options->read_only);
     int practice_bpm = options->metronome_enabled
@@ -1676,7 +1823,10 @@ static bool start_selected_score(const char *filename,
     };
 
     if (options->read_only) {
+        s_read_only_playback_bpm = (uint16_t)practice_bpm;
         music_display_set_practice_navigation_state(false, false);
+        music_display_set_read_only_playback_state(
+            MUSIC_DISPLAY_PLAYBACK_STOPPED, NULL);
         hide_practice_buttons();
         bool displayed = music_display_apply_score_json_with_options(
             json, &display_options);
@@ -1954,6 +2104,14 @@ static void screen_init_task(void *argument)
     bsp_display_unlock();
 
     music_display_start();
+    err = score_player_init(score_player_status_changed, NULL);
+    if (err == ESP_OK) {
+        music_display_set_playback_button_callback(
+            read_only_playback_action, NULL);
+    } else {
+        ESP_LOGE(TAG, "score player initialization failed: %s",
+                 esp_err_to_name(err));
+    }
     if (xTaskCreate(practice_follow_task, "practice_follow",
                     SCREEN_FOLLOW_TASK_STACK_BYTES, NULL,
                     SCREEN_FOLLOW_TASK_PRIORITY, NULL) != pdPASS) {
@@ -2308,6 +2466,7 @@ static bool voice_go_home(void)
         }
     }
 
+    (void)score_player_stop();
     hide_practice_buttons();
     music_display_set_practice_navigation_state(false, false);
     music_display_set_read_only(false);

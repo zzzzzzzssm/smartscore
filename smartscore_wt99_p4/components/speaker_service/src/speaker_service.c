@@ -57,6 +57,7 @@ typedef enum {
     SPEAKER_COMMAND_FILE_PLAY,
     SPEAKER_COMMAND_FILE_PAUSE,
     SPEAKER_COMMAND_STREAM_START,
+    SPEAKER_COMMAND_STREAM_PAUSE,
     SPEAKER_COMMAND_STREAM_RELEASE,
     SPEAKER_COMMAND_STREAM_FINISH,
     SPEAKER_COMMAND_STREAM_ABORT,
@@ -127,6 +128,7 @@ static size_t s_stream_max_buffered_bytes;
 static uint64_t s_stream_received_bytes;
 static uint64_t s_stream_played_bytes;
 static uint32_t s_stream_backpressure_events;
+static uint32_t s_stream_generation;
 /* Static double buffer: 2 KiB total, never allocated on the audio task stack. */
 static int16_t s_pcm[2][SPEAKER_CHUNK_SAMPLES];
 
@@ -528,6 +530,8 @@ static void handle_tone(const speaker_command_t *command,
     }
 }
 
+static void finish_stream_output(esp_err_t cause);
+
 static void handle_stream_start(uint32_t sample_rate_hz, bool held)
 {
     if (s_stream_buffer != NULL) xStreamBufferReset(s_stream_buffer);
@@ -537,6 +541,7 @@ static void handle_stream_start(uint32_t sample_rate_hz, bool held)
     s_stream_played_bytes = 0;
     s_stream_backpressure_events = 0;
     s_stream_underruns = 0;
+    if (++s_stream_generation == 0U) ++s_stream_generation;
     portEXIT_CRITICAL(&s_stream_lock);
     speaker_state_t previous_state;
     portENTER_CRITICAL(&s_status_lock);
@@ -574,6 +579,28 @@ static void handle_stream_start(uint32_t sample_rate_hz, bool held)
                  held ? "yes" : "no",
                  s_stream_resume_file ? "yes" : "no");
     }
+}
+
+static void handle_stream_pause(void)
+{
+    portENTER_CRITICAL(&s_status_lock);
+    const bool active = s_status.state == SPEAKER_STATE_STREAM;
+    portEXIT_CRITICAL(&s_status_lock);
+    if (!active) return;
+
+    esp_err_t error = ESP_OK;
+    if (s_stream_output_started) error = board_audio_end_output();
+    if (error != ESP_OK) {
+        finish_stream_output(error);
+        return;
+    }
+    portENTER_CRITICAL(&s_stream_lock);
+    s_stream_output_started = false;
+    s_stream_held = true;
+    s_stream_rebuffering = false;
+    s_stream_low_water_ticks = 0;
+    portEXIT_CRITICAL(&s_stream_lock);
+    ESP_LOGI(TAG, "PCM stream paused");
 }
 
 static void finish_stream_output(esp_err_t cause)
@@ -663,6 +690,8 @@ static void speaker_task(void *context)
             } else if (command.type == SPEAKER_COMMAND_STREAM_START) {
                 handle_stream_start(command.data.stream.sample_rate_hz,
                                     command.data.stream.held);
+            } else if (command.type == SPEAKER_COMMAND_STREAM_PAUSE) {
+                handle_stream_pause();
             } else if (command.type == SPEAKER_COMMAND_STREAM_RELEASE) {
                 portENTER_CRITICAL(&s_stream_lock);
                 s_stream_held = false;
@@ -1291,6 +1320,16 @@ esp_err_t speaker_service_stream_release(void)
     return send_speaker_command(&command, false);
 }
 
+esp_err_t speaker_service_stream_pause(void)
+{
+    if (!speaker_service_is_ready() || s_control_only_ready ||
+        s_stream_buffer == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    speaker_command_t command = {.type = SPEAKER_COMMAND_STREAM_PAUSE};
+    return send_speaker_command(&command, true);
+}
+
 esp_err_t speaker_service_stream_write(const int16_t *pcm,
                                        size_t sample_count,
                                        size_t *accepted_samples)
@@ -1388,6 +1427,7 @@ void speaker_service_stream_get_metrics(speaker_stream_metrics_t *out_metrics)
     out_metrics->played_bytes = s_stream_played_bytes;
     out_metrics->underruns = s_stream_underruns;
     out_metrics->backpressure_events = s_stream_backpressure_events;
+    out_metrics->generation = s_stream_generation;
     portEXIT_CRITICAL(&s_stream_lock);
 }
 

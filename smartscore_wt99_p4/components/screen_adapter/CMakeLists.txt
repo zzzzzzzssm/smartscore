@@ -15,6 +15,7 @@ idf_component_register(
         music_display
         practice_advice_view
         score_data
+        score_player
         scoring_service
         s3_bus
         screen_legacy_storage

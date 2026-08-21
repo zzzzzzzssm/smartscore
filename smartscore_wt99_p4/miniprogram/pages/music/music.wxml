@@ -4,7 +4,7 @@
       <view>
         <view class="hero-kicker">SD MUSIC PLAYER</view>
         <view class="hero-title">音乐播放模式</view>
-        <view class="hero-subtitle">搜索并播放 SD 卡中的 WAV 音频</view>
+        <view class="hero-subtitle">搜索并播放 SD 卡中的音频</view>
       </view>
       <view class="online-dot {{online ? 'on' : ''}}"></view>
     </view>
@@ -39,7 +39,7 @@
         <view class="row between">
           <view>
             <view class="card-title">上传音乐到设备</view>
-            <view class="hint import-hint">支持 MP3、M4A/AAC、FLAC、OGG、WAV，手机转码后写入 P4 的 SD 卡</view>
+            <view class="hint import-hint">支持 MP3、M4A/AAC、FLAC、OGG、WAV，手机转码后写入 SD 卡</view>
           </view>
           <button class="primary-btn import-btn" bindtap="chooseAndUploadMusic"
                   disabled="{{importing || !online || activeFile}}">

@@ -1,0 +1,22 @@
+SmartScore compact piano bank
+=============================
+
+The piano samples in piano.pbank are adapted from:
+
+Salamander Grand Piano V3
+Author: Alexander Holm
+Instrument: Yamaha C5 grand piano
+Source: https://github.com/sfzinstruments/SalamanderGrandPiano
+License: Creative Commons Attribution 3.0 Unported (CC BY 3.0)
+License URL: https://creativecommons.org/licenses/by/3.0/
+
+Modifications made for SmartScore:
+- selected three velocity layers from the original library;
+- selected root notes sampled in minor thirds;
+- downmixed to mono and resampled to 24 kHz;
+- applied a modest fixed gain for the device speaker output;
+- trimmed and limited each sample to a compact attack/sustain segment;
+- added a crossfaded loop tail;
+- packed signed 16-bit PCM into the SmartScore piano-bank container.
+
+The original author does not endorse SmartScore or this adaptation.

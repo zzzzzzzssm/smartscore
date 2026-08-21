@@ -7,13 +7,34 @@ const EXAMPLE_RECORD_IDS = ['record_20260525_1', 'record_20260524_1'];
 
 function normalizeNotes(notes) {
   return (Array.isArray(notes) ? notes : [])
-    .map((note) => ({
-      midi: Number(note.midi),
-      start: Number(note.start),
-      duration: Math.max(0.08, Number(note.duration || 0.25)),
-      staff: Number(note.staff || 1),
-      voice: Number(note.voice || 1)
-    }))
+    .map((note) => {
+      const normalized = {
+        midi: Number(note.midi),
+        start: Number(note.start),
+        duration: Math.max(0.08, Number(note.duration || 0.25)),
+        staff: Number(note.staff || 1),
+        voice: Number(note.voice || 1)
+      };
+      [
+        'velocity',
+        'start_tick',
+        'duration_ticks',
+        'dots',
+        'tie_flags',
+        'slur_start',
+        'slur_stop',
+        'gliss_start',
+        'gliss_stop',
+        'notation_flags',
+        'event_index'
+      ].forEach((field) => {
+        const value = Number(note[field]);
+        if (Number.isFinite(value) && value >= 0) {
+          normalized[field] = Math.floor(value);
+        }
+      });
+      return normalized;
+    })
     .filter((note) => (
       Number.isFinite(note.midi) &&
       note.midi >= 0 &&

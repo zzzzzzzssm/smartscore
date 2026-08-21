@@ -1,5 +1,6 @@
 const practiceAdvice = require('../../utils/practice_advice');
 const api = require('../../utils/api');
+const practiceRecord = require('../../utils/practice_record');
 
 function downloadPhotoBatch(items, sessionId) {
   const photos = (items || []).map((item) => Object.assign({}, item, { path: '', error: '' }));
@@ -41,7 +42,90 @@ Page({
   },
 
   onShow() {
+    this.pageVisible = true;
     this.loadRecords();
+    this.startResultRecoveryPolling();
+  },
+
+  onHide() {
+    this.pageVisible = false;
+    this.stopResultRecoveryPolling();
+  },
+
+  onUnload() {
+    this.pageVisible = false;
+    this.stopResultRecoveryPolling();
+  },
+
+  startResultRecoveryPolling() {
+    this.stopResultRecoveryPolling();
+    if (!this.pageVisible || !api.getBaseUrl()) return;
+    this.recoverLatestResult();
+    this.resultRecoveryTimer = setInterval(
+      () => this.recoverLatestResult(), 1500
+    );
+  },
+
+  stopResultRecoveryPolling() {
+    if (this.resultRecoveryTimer) {
+      clearInterval(this.resultRecoveryTimer);
+      this.resultRecoveryTimer = null;
+    }
+  },
+
+  recoverLatestResult() {
+    if (this.resultRecoveryInFlight || !api.getBaseUrl()) {
+      return Promise.resolve(false);
+    }
+    this.resultRecoveryInFlight = true;
+    return api.getStatus()
+      .then((status) => {
+        const state = String(
+          status && (status.practice_state || status.state) || ''
+        ).toUpperCase();
+        if (state !== 'READY') return false;
+        const sessionId = String(status.practice_session_id || '');
+        const records = wx.getStorageSync('practiceRecords') || [];
+        if (practiceRecord.findBySession(records, sessionId)) {
+          practiceRecord.clearPendingContext();
+          return false;
+        }
+        return Promise.all([
+          api.getResult(),
+          api.getPracticePreparation().catch(() => null)
+        ]).then(([apiResult, preparationResult]) => {
+          if (!apiResult || apiResult.ready === false) return false;
+          const result = practiceRecord.normalizeResult(apiResult);
+          if (sessionId && result.practiceSessionId &&
+              sessionId !== result.practiceSessionId) {
+            return false;
+          }
+          const latestRecords = wx.getStorageSync('practiceRecords') || [];
+          if (practiceRecord.findBySession(
+            latestRecords, result.practiceSessionId
+          )) {
+            practiceRecord.clearPendingContext();
+            return false;
+          }
+          const preparation = preparationResult &&
+            (preparationResult.preparation || preparationResult);
+          const context = practiceRecord.readPendingContext();
+          const record = practiceRecord.buildRecord(result, {
+            scoreTitle: context.scoreTitle ||
+              (preparation && preparation.title) || '自动完成练习',
+            targetNotes: context.targetNotes
+          });
+          latestRecords.unshift(record);
+          this.saveRecords(latestRecords);
+          practiceRecord.clearPendingContext();
+          wx.showToast({ title: '已自动保存演奏记录', icon: 'success' });
+          return true;
+        });
+      })
+      .catch(() => false)
+      .finally(() => {
+        this.resultRecoveryInFlight = false;
+      });
   },
 
   loadRecords() {

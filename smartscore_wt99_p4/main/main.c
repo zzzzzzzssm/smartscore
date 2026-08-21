@@ -1,12 +1,16 @@
+#include <inttypes.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "ble_provisioning.h"
 #include "board_audio.h"
 #include "board_sdcard.h"
 #include "board_wt99.h"
+#include "cJSON.h"
 #include "device_api.h"
 #include "esp_err.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -48,6 +52,32 @@ static voice_audio_focus_t s_voice_audio_focus;
 static portMUX_TYPE s_voice_audio_focus_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static void release_voice_audio_focus(void);
+
+static void *json_psram_malloc(size_t size)
+{
+    void *memory = heap_caps_malloc(size,
+                                    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (memory == NULL) {
+        memory = heap_caps_malloc(size,
+                                  MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+    return memory;
+}
+
+static void json_heap_free(void *memory)
+{
+    heap_caps_free(memory);
+}
+
+static void configure_json_allocator(void)
+{
+    cJSON_Hooks hooks = {
+        .malloc_fn = json_psram_malloc,
+        .free_fn = json_heap_free,
+    };
+    cJSON_InitHooks(&hooks);
+    ESP_LOGI(TAG, "cJSON allocations prefer PSRAM");
+}
 
 static void acquire_voice_audio_focus(void)
 {
@@ -414,6 +444,8 @@ static void manage_network_services(network_state_t state)
 
 void app_main(void)
 {
+    /* Install the global hooks before any service can parse or build JSON. */
+    configure_json_allocator();
     ESP_LOGI(TAG, "SmartScore WT99 stage-one network starting");
 
     esp_err_t err = initialize_nvs();

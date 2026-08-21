@@ -66,6 +66,28 @@ void music_display_set_creator_active(bool active);
 void music_display_set_read_only(bool active);
 
 typedef enum {
+    MUSIC_DISPLAY_PLAYBACK_STOPPED = 0,
+    MUSIC_DISPLAY_PLAYBACK_PREPARING,
+    MUSIC_DISPLAY_PLAYBACK_PLAYING,
+    MUSIC_DISPLAY_PLAYBACK_PAUSED,
+    MUSIC_DISPLAY_PLAYBACK_ERROR,
+} music_display_playback_state_t;
+
+typedef enum {
+    MUSIC_DISPLAY_PLAYBACK_TOGGLE = 0,
+    MUSIC_DISPLAY_PLAYBACK_STOP,
+} music_display_playback_action_t;
+
+typedef void (*music_display_playback_button_cb_t)(
+    music_display_playback_action_t action, void *user_data);
+void music_display_set_playback_button_callback(
+    music_display_playback_button_cb_t callback, void *user_data);
+void music_display_set_read_only_playback_state(
+    music_display_playback_state_t state, const char *message);
+void music_display_reset_read_only_playback_view(void);
+void music_display_reset_note_feedback(void);
+
+typedef enum {
     MUSIC_DISPLAY_PAGE_PREVIOUS = -1,
     MUSIC_DISPLAY_PAGE_NEXT = 1,
 } music_display_page_direction_t;

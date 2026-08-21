@@ -16,7 +16,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
-#include "diagnostics.h"
 #include "music_detector_config.h"
 
 #define MUSIC_LINK_JSON_BUFFER_SIZE 384
@@ -39,14 +38,12 @@ typedef struct {
 typedef enum {
     LINK_STATE_RESULT = 0,
     LINK_STATE_READY,
-    LINK_STATE_DIAGNOSTIC,
 } link_state_event_type_t;
 
 typedef struct {
     link_state_event_type_t type;
     union {
         music_result_t result;
-        music_diagnostic_t diagnostic;
         bool ready;
     } data;
 } link_state_event_t;
@@ -63,6 +60,9 @@ typedef struct {
 typedef struct {
     uint32_t seq;
     uint32_t sid;
+    uint32_t protocol_version;
+    uint32_t latest_state_id;
+    uint32_t ack_state_id;
     bool ready;
     bool stream_enabled;
     bool active_note;
@@ -89,12 +89,15 @@ typedef struct {
     char rx_line[MUSIC_LINK_RX_LINE_SIZE];
     size_t rx_length;
     bool rx_overflow;
+    piano_note_set_t latest_note_set;
+    bool latest_note_set_valid;
 } music_link_state_t;
 
 static const char *const TAG = "MUSIC_LINK";
 static QueueHandle_t s_state_queue;
 static QueueHandle_t s_pitch_queue;
 static QueueHandle_t s_output_queue;
+static QueueHandle_t s_note_set_queue;
 static portMUX_TYPE s_drop_lock = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t s_tx_drop;
 
@@ -145,11 +148,11 @@ static uint32_t next_seq(music_link_state_t *state)
     return state->seq;
 }
 
-static bool send_checked_json(char *json, size_t capacity, int length)
+static void send_checked_json(char *json, size_t capacity, int length)
 {
     if (length < 0 || (size_t)length >= capacity - 1U) {
         increment_drop();
-        return false;
+        return;
     }
     json[length++] = '\n';
     json[length] = '\0';
@@ -161,112 +164,6 @@ static bool send_checked_json(char *json, size_t capacity, int length)
     if (s_output_queue == NULL ||
         xQueueSend(s_output_queue, &frame, 0) != pdTRUE) {
         increment_drop();
-        return false;
-    }
-    return true;
-}
-
-static const char *diagnostic_type_name(music_result_type_t type)
-{
-    switch (type) {
-        case MUSIC_RESULT_SINGLE: return "single";
-        case MUSIC_RESULT_INTERVAL: return "interval";
-        case MUSIC_RESULT_CHORD: return "chord";
-        case MUSIC_RESULT_SILENCE: return "silence";
-        case MUSIC_RESULT_UNKNOWN:
-        default: return "unknown";
-    }
-}
-
-static bool append_diagnostic_notes(char *output, size_t capacity,
-                                    size_t *used, const int *notes,
-                                    int note_count)
-{
-    if (*used + 2 > capacity) return false;
-    output[(*used)++] = '[';
-    for (int index = 0; index < note_count; ++index) {
-        const int length = snprintf(output + *used, capacity - *used,
-                                    index == 0 ? "%d" : ",%d",
-                                    notes[index]);
-        if (length < 0 || (size_t)length >= capacity - *used) return false;
-        *used += (size_t)length;
-    }
-    if (*used + 2 > capacity) return false;
-    output[(*used)++] = ']';
-    output[*used] = '\0';
-    return true;
-}
-
-static bool append_diagnostic_raw(char *output, size_t capacity,
-                                  size_t *used,
-                                  const music_diagnostic_t *diagnostic)
-{
-    if (*used + 2 > capacity) return false;
-    output[(*used)++] = '[';
-    for (int index = 0; index < diagnostic->raw_candidate_count; ++index) {
-        const music_diagnostic_candidate_t *candidate =
-            &diagnostic->raw_candidates[index];
-        const int length = snprintf(
-            output + *used, capacity - *used,
-            index == 0 ? "[%d,%d,%.1f,%.2f]" : ",[%d,%d,%.1f,%.2f]",
-            (int)candidate->source, candidate->midi,
-            (double)finite_or_zero(candidate->frequency_hz),
-            (double)confidence_value(candidate->confidence));
-        if (length < 0 || (size_t)length >= capacity - *used) return false;
-        *used += (size_t)length;
-    }
-    if (*used + 2 > capacity) return false;
-    output[(*used)++] = ']';
-    output[*used] = '\0';
-    return true;
-}
-
-static void send_diagnostic(music_link_state_t *state,
-                            const music_diagnostic_t *diagnostic)
-{
-    if (!state->stream_enabled) return;
-    char raw[150];
-    char candidate_notes[24];
-    char final_notes[24];
-    size_t used = 0;
-    if (!append_diagnostic_raw(raw, sizeof(raw), &used, diagnostic)) {
-        ++diagnostics_counters()->diagnostic_drop_count;
-        increment_drop();
-        return;
-    }
-    used = 0;
-    if (!append_diagnostic_notes(candidate_notes, sizeof(candidate_notes),
-                                 &used, diagnostic->candidate_notes,
-                                 diagnostic->candidate_note_count)) {
-        ++diagnostics_counters()->diagnostic_drop_count;
-        increment_drop();
-        return;
-    }
-    used = 0;
-    if (!append_diagnostic_notes(final_notes, sizeof(final_notes), &used,
-                                 diagnostic->final_notes,
-                                 diagnostic->final_note_count)) {
-        ++diagnostics_counters()->diagnostic_drop_count;
-        increment_drop();
-        return;
-    }
-    char json[MUSIC_LINK_JSON_BUFFER_SIZE];
-    const int length = snprintf(
-        json, sizeof(json) - 1U,
-        "{\"v\":1,\"type\":\"diagnostic\",\"seq\":%" PRIu32
-        ",\"sid\":%" PRIu32 ",\"ts_ms\":%" PRIu32
-        ",\"raw\":%s,\"candidate_kind\":\"%s\",\"candidate\":%s"
-        ",\"final_kind\":\"%s\",\"final\":%s,\"reject\":\"%s\""
-        ",\"octave\":%d,\"snr\":[%.1f,%.1f,%.1f]}",
-        next_seq(state), state->sid, diagnostic->timestamp_ms, raw,
-        diagnostic_type_name(diagnostic->candidate_type), candidate_notes,
-        diagnostic_type_name(diagnostic->final_type), final_notes,
-        diagnostic->reject_reason, diagnostic->octave_shift,
-        (double)finite_or_zero(diagnostic->band_snr_db[0]),
-        (double)finite_or_zero(diagnostic->band_snr_db[1]),
-        (double)finite_or_zero(diagnostic->band_snr_db[2]));
-    if (!send_checked_json(json, sizeof(json), length)) {
-        ++diagnostics_counters()->diagnostic_drop_count;
     }
 }
 
@@ -276,9 +173,11 @@ static void send_hello(music_link_state_t *state, uint32_t timestamp_ms)
     const int length = snprintf(json, sizeof(json) - 1U,
         "{\"v\":1,\"type\":\"hello\",\"seq\":%" PRIu32 ",\"sid\":%" PRIu32
         ",\"ts_ms\":%" PRIu32 ",\"source\":\"s3_audio\",\"sample_rate\":%d,"
-        "\"a4\":%.1f,\"mic\":\"ch1\"}",
+        "\"a4\":%.1f,\"mic\":\"dual\",\"capabilities\":[\"note_set_v2\"],"
+        "\"midi_min\":%d,\"midi_max\":%d,\"max_polyphony\":%d}",
         next_seq(state), state->sid, timestamp_ms, MUSIC_SAMPLE_RATE_HZ,
-        (double)MUSIC_REFERENCE_A4_HZ);
+        (double)MUSIC_REFERENCE_A4_HZ, MUSIC_PIANO_MIDI_MIN,
+        MUSIC_PIANO_MIDI_MAX, MUSIC_MAX_SIMULTANEOUS_KEYS);
     send_checked_json(json, sizeof(json), length);
 }
 
@@ -381,6 +280,95 @@ static bool build_notes_array(const music_result_t *result, char *output, size_t
     output[used++] = ']';
     output[used] = '\0';
     return true;
+}
+
+static bool append_float(char *output, size_t capacity, size_t *used,
+                         float value, bool prepend_comma)
+{
+    if (*used >= capacity) return false;
+    const int length = snprintf(output + *used, capacity - *used,
+                                prepend_comma ? ",%.3f" : "%.3f",
+                                (double)confidence_value(value));
+    if (length < 0 || (size_t)length >= capacity - *used) return false;
+    *used += (size_t)length;
+    return true;
+}
+
+static bool build_note_set_arrays(const piano_note_set_t *note_set,
+                                  char *midis, size_t midis_capacity,
+                                  char *velocities, size_t velocities_capacity,
+                                  char *confidences,
+                                  size_t confidences_capacity)
+{
+    if (note_set->count > PIANO_NOTE_SET_MAX_KEYS ||
+        midis_capacity < 3 || velocities_capacity < 3 ||
+        confidences_capacity < 3) {
+        return false;
+    }
+    size_t midi_used = 1;
+    size_t velocity_used = 1;
+    size_t confidence_used = 1;
+    midis[0] = '[';
+    velocities[0] = '[';
+    confidences[0] = '[';
+    for (uint8_t index = 0; index < note_set->count; ++index) {
+        const int midi = note_set->midi[index];
+        const int velocity = note_set->velocity[index];
+        if (midi < MUSIC_PIANO_MIDI_MIN || midi > MUSIC_PIANO_MIDI_MAX ||
+            velocity < 1 || velocity > 127 ||
+            (index > 0 && midi <= note_set->midi[index - 1]) ||
+            !append_note(midis, midis_capacity, &midi_used, midi, index != 0) ||
+            !append_note(velocities, velocities_capacity, &velocity_used,
+                         velocity, index != 0) ||
+            !append_float(confidences, confidences_capacity,
+                          &confidence_used, note_set->confidence[index],
+                          index != 0)) {
+            return false;
+        }
+    }
+    if (midi_used + 2 > midis_capacity ||
+        velocity_used + 2 > velocities_capacity ||
+        confidence_used + 2 > confidences_capacity) {
+        return false;
+    }
+    midis[midi_used++] = ']';
+    midis[midi_used] = '\0';
+    velocities[velocity_used++] = ']';
+    velocities[velocity_used] = '\0';
+    confidences[confidence_used++] = ']';
+    confidences[confidence_used] = '\0';
+    return true;
+}
+
+static int format_note_set(music_link_state_t *state, char *json,
+                           size_t capacity)
+{
+    const piano_note_set_t *note_set = &state->latest_note_set;
+    char midis[32];
+    char velocities[32];
+    char confidences[64];
+    if (!build_note_set_arrays(note_set, midis, sizeof(midis), velocities,
+                               sizeof(velocities), confidences,
+                               sizeof(confidences))) {
+        return -1;
+    }
+    float set_confidence = note_set->count == 0 ? 1.0f : 0.0f;
+    for (uint8_t index = 0; index < note_set->count; ++index) {
+        set_confidence += confidence_value(note_set->confidence[index]);
+    }
+    if (note_set->count > 0) set_confidence /= note_set->count;
+    return snprintf(
+        json, capacity,
+        "{\"v\":2,\"type\":\"notes\",\"seq\":%" PRIu32
+        ",\"sid\":%" PRIu32 ",\"state_id\":%" PRIu32
+        ",\"ts_ms\":%" PRIu32 ",\"midis\":%s,\"velocities\":%s,"
+        "\"confidences\":%s,\"set_confidence\":%.3f,"
+        "\"degraded_mic\":%s,\"overflow\":%s}\n",
+        next_seq(state), state->sid, state->latest_state_id,
+        note_set->timestamp_ms, midis, velocities, confidences,
+        (double)confidence_value(set_confidence),
+        note_set->degraded_mic ? "true" : "false",
+        note_set->overflow ? "true" : "false");
 }
 
 static void send_poly(music_link_state_t *state, const music_result_t *result)
@@ -518,7 +506,7 @@ static void update_active_melody_note(music_link_state_t *state,
 
 static void process_result(music_link_state_t *state, const music_result_t *result)
 {
-    if (!state->stream_enabled) return;
+    if (!state->stream_enabled || state->protocol_version >= 2) return;
     switch (result->type) {
         case MUSIC_RESULT_SINGLE:
             state->unknown_since_ms = 0;
@@ -596,6 +584,30 @@ static bool extract_sid(const char *line, uint32_t *sid)
     return true;
 }
 
+static bool extract_optional_u32(const char *line, const char *field,
+                                 uint32_t *value, bool *present)
+{
+    char key[40];
+    const int key_length = snprintf(key, sizeof(key), "\"%s\"", field);
+    if (key_length < 0 || (size_t)key_length >= sizeof(key)) return false;
+    const char *cursor = strstr(line, key);
+    *present = cursor != NULL;
+    if (cursor == NULL) return true;
+    cursor += (size_t)key_length;
+    while (isspace((unsigned char)*cursor)) ++cursor;
+    if (*cursor++ != ':') return false;
+    while (isspace((unsigned char)*cursor)) ++cursor;
+    if (!isdigit((unsigned char)*cursor)) return false;
+    errno = 0;
+    char *end = NULL;
+    const unsigned long parsed = strtoul(cursor, &end, 10);
+    if (errno == ERANGE || end == cursor || parsed > UINT32_MAX) return false;
+    while (isspace((unsigned char)*end)) ++end;
+    if (*end != ',' && *end != '}') return false;
+    *value = (uint32_t)parsed;
+    return true;
+}
+
 static bool extract_recognition_profile(
     const char *line, music_recognition_profile_t *profile)
 {
@@ -608,7 +620,7 @@ static bool extract_recognition_profile(
     while (isspace((unsigned char)*cursor)) ++cursor;
     if (*cursor++ != '"') return false;
 
-    char value[12];
+    char value[16];
     size_t used = 0;
     while (*cursor != '\0' && *cursor != '"') {
         if (*cursor == '\\' || (unsigned char)*cursor < 0x20 ||
@@ -621,6 +633,10 @@ static bool extract_recognition_profile(
     value[used] = '\0';
     if (strcmp(value, "demo") == 0) {
         *profile = MUSIC_RECOGNITION_PROFILE_DEMO;
+        return true;
+    }
+    if (strcmp(value, "performance") == 0) {
+        *profile = MUSIC_RECOGNITION_PROFILE_PERFORMANCE;
         return true;
     }
     if (strcmp(value, "strict") == 0) return true;
@@ -646,7 +662,10 @@ static void flush_poll_response(music_link_state_t *state)
     }
 
     const uint32_t timestamp_ms = now_ms();
-    if (uxQueueMessagesWaiting(s_output_queue) == 0) {
+    const bool note_pending = state->protocol_version >= 2 &&
+        state->stream_enabled && state->latest_note_set_valid &&
+        state->ack_state_id < state->latest_state_id;
+    if (uxQueueMessagesWaiting(s_output_queue) == 0 && !note_pending) {
         state->last_heartbeat_ms = timestamp_ms;
         send_heartbeat(state, timestamp_ms);
     }
@@ -654,6 +673,22 @@ static void flush_poll_response(music_link_state_t *state)
     link_output_frame_t frame;
     unsigned sent = 0;
     unsigned written_frames = 0;
+    if (note_pending) {
+        char json[MUSIC_LINK_JSON_BUFFER_SIZE];
+        const int length = format_note_set(state, json, sizeof(json));
+        if (length <= 0 || (size_t)length >= sizeof(json)) {
+            increment_drop();
+        } else {
+            const int written = uart_write_bytes(
+                BOARD_MUSIC_LINK_UART_PORT, json, (size_t)length);
+            if (written != length) {
+                increment_drop();
+            } else {
+                ++written_frames;
+            }
+        }
+        ++sent;
+    }
     while (sent < MUSIC_LINK_MAX_FRAMES_PER_POLL &&
            xQueueReceive(s_output_queue, &frame, 0) == pdTRUE) {
         const int written = uart_write_bytes(
@@ -688,6 +723,22 @@ static void process_command(music_link_state_t *state, const char *line)
         return;
     }
     if (strcmp(command, "poll") == 0) {
+        uint32_t poll_sid = 0;
+        uint32_t ack_state_id = 0;
+        bool sid_present = false;
+        bool ack_present = false;
+        if (!extract_optional_u32(line, "sid", &poll_sid, &sid_present) ||
+            !extract_optional_u32(line, "ack_state_id", &ack_state_id,
+                                  &ack_present)) {
+            ++state->invalid_commands;
+            send_status(state, timestamp_ms, "invalid_ack");
+            return;
+        }
+        if (ack_present && sid_present && poll_sid == state->sid &&
+            ack_state_id <= state->latest_state_id &&
+            ack_state_id > state->ack_state_id) {
+            state->ack_state_id = ack_state_id;
+        }
         flush_poll_response(state);
     } else if (strcmp(command, "ping") == 0) {
         send_pong(state, timestamp_ms);
@@ -697,6 +748,15 @@ static void process_command(music_link_state_t *state, const char *line)
             send_status(state, timestamp_ms, "invalid_sid");
             return;
         }
+        uint32_t protocol_version = 1;
+        bool protocol_present = false;
+        if (!extract_optional_u32(line, "protocol", &protocol_version,
+                                  &protocol_present) ||
+            (protocol_present && protocol_version != 1 &&
+             protocol_version != 2)) {
+            send_status(state, timestamp_ms, "unsupported_protocol");
+            return;
+        }
         music_recognition_profile_t profile;
         if (!extract_recognition_profile(line, &profile)) {
             profile = MUSIC_RECOGNITION_PROFILE_STRICT;
@@ -704,9 +764,26 @@ static void process_command(music_link_state_t *state, const char *line)
         }
         close_active_note(state, timestamp_ms, "restart");
         state->sid = new_sid;
+        state->protocol_version = protocol_version;
         state->stream_enabled = true;
         state->unknown_since_ms = 0;
         reset_poly_state(state);
+        state->ack_state_id = 0;
+        state->latest_state_id = 0;
+        state->latest_note_set_valid = false;
+        if (protocol_version >= 2) {
+            /* A new session never inherits a possibly stale held set from the
+             * previous profile/session. Fresh DSP evidence will repopulate it
+             * after the normal attack debounce. */
+            memset(&state->latest_note_set, 0,
+                   sizeof(state->latest_note_set));
+            state->latest_note_set.timestamp_ms = timestamp_ms;
+            for (int index = 0; index < PIANO_NOTE_SET_MAX_KEYS; ++index) {
+                state->latest_note_set.midi[index] = -1;
+            }
+            state->latest_state_id = 1;
+            state->latest_note_set_valid = true;
+        }
         music_detector_set_recognition_profile(profile);
         send_status(state, timestamp_ms, "started");
     } else if (strcmp(command, "stop") == 0) {
@@ -797,6 +874,7 @@ static void music_link_tx_task(void *argument)
 {
     (void)argument;
     music_link_state_t state = {
+        .protocol_version = 1,
         .stream_enabled = true,
         .active_midi = -1,
         .last_heartbeat_ms = now_ms(),
@@ -812,10 +890,19 @@ static void music_link_tx_task(void *argument)
                 state.ready = state_event.data.ready;
                 if (state.ready) send_hello(&state, now_ms());
                 send_status(&state, now_ms(), state.ready ? "ready" : "audio_error");
-            } else if (state_event.type == LINK_STATE_DIAGNOSTIC) {
-                send_diagnostic(&state, &state_event.data.diagnostic);
             } else {
                 process_result(&state, &state_event.data.result);
+            }
+        }
+
+        piano_note_set_t note_set;
+        if (xQueueReceive(s_note_set_queue, &note_set, 0) == pdTRUE) {
+            did_work = true;
+            if (state.protocol_version >= 2 && state.stream_enabled) {
+                state.latest_note_set = note_set;
+                ++state.latest_state_id;
+                if (state.latest_state_id == 0) ++state.latest_state_id;
+                state.latest_note_set_valid = true;
             }
         }
 
@@ -841,9 +928,11 @@ static void music_link_tx_task(void *argument)
                                          : (unsigned)uxQueueMessagesWaiting(s_output_queue);
             ESP_LOGI(TAG, "link diag: rx_bytes=%" PRIu32 " polls=%" PRIu32
                           " reply_frames=%" PRIu32 " invalid_cmd=%" PRIu32
-                          " pending=%u tx_drop=%" PRIu32,
+                          " pending=%u tx_drop=%" PRIu32
+                          " state=%" PRIu32 " ack=%" PRIu32,
                      state.rx_bytes, state.poll_count, state.response_frames,
-                     state.invalid_commands, pending, read_drop());
+                     state.invalid_commands, pending, read_drop(),
+                     state.latest_state_id, state.ack_state_id);
             if (state.rx_bytes == 0) {
                 ESP_LOGW(TAG, "no P4 UART bytes: check P4 GPIO0/J6-4 -> S3 GPIO2/H7-8 and GND");
             } else if (state.poll_count == 0) {
@@ -859,19 +948,23 @@ static void music_link_tx_task(void *argument)
 esp_err_t music_uart_link_init(void)
 {
     ESP_RETURN_ON_FALSE(s_state_queue == NULL && s_pitch_queue == NULL &&
-                        s_output_queue == NULL,
+                        s_output_queue == NULL && s_note_set_queue == NULL,
                         ESP_ERR_INVALID_STATE, TAG, "music link already initialized");
     s_state_queue = xQueueCreate(MUSIC_UART_STATE_QUEUE_LENGTH, sizeof(link_state_event_t));
     s_pitch_queue = xQueueCreate(MUSIC_UART_PITCH_QUEUE_LENGTH, sizeof(link_pitch_event_t));
     s_output_queue = xQueueCreate(MUSIC_LINK_OUTPUT_QUEUE_LENGTH,
                                   sizeof(link_output_frame_t));
-    if (s_state_queue == NULL || s_pitch_queue == NULL || s_output_queue == NULL) {
+    s_note_set_queue = xQueueCreate(1, sizeof(piano_note_set_t));
+    if (s_state_queue == NULL || s_pitch_queue == NULL ||
+        s_output_queue == NULL || s_note_set_queue == NULL) {
         if (s_state_queue != NULL) vQueueDelete(s_state_queue);
         if (s_pitch_queue != NULL) vQueueDelete(s_pitch_queue);
         if (s_output_queue != NULL) vQueueDelete(s_output_queue);
+        if (s_note_set_queue != NULL) vQueueDelete(s_note_set_queue);
         s_state_queue = NULL;
         s_pitch_queue = NULL;
         s_output_queue = NULL;
+        s_note_set_queue = NULL;
         return ESP_ERR_NO_MEM;
     }
 
@@ -898,9 +991,11 @@ esp_err_t music_uart_link_init(void)
         vQueueDelete(s_state_queue);
         vQueueDelete(s_pitch_queue);
         vQueueDelete(s_output_queue);
+        vQueueDelete(s_note_set_queue);
         s_state_queue = NULL;
         s_pitch_queue = NULL;
         s_output_queue = NULL;
+        s_note_set_queue = NULL;
         return error;
     }
     uart_flush_input(BOARD_MUSIC_LINK_UART_PORT);
@@ -912,9 +1007,11 @@ esp_err_t music_uart_link_init(void)
         vQueueDelete(s_state_queue);
         vQueueDelete(s_pitch_queue);
         vQueueDelete(s_output_queue);
+        vQueueDelete(s_note_set_queue);
         s_state_queue = NULL;
         s_pitch_queue = NULL;
         s_output_queue = NULL;
+        s_note_set_queue = NULL;
         return ESP_ERR_NO_MEM;
     }
     uint32_t actual_baud = 0;
@@ -962,15 +1059,16 @@ void music_uart_link_submit_pitch(const music_result_t *result)
     if (xQueueSend(s_pitch_queue, &event, 0) != pdTRUE) increment_drop();
 }
 
-void music_uart_link_submit_diagnostic(const music_diagnostic_t *diagnostic)
+void music_uart_link_submit_note_set(const piano_note_set_t *note_set)
 {
-    if (s_state_queue == NULL || diagnostic == NULL) return;
-    const link_state_event_t event = {
-        .type = LINK_STATE_DIAGNOSTIC,
-        .data.diagnostic = *diagnostic,
-    };
-    if (xQueueSend(s_state_queue, &event, 0) != pdTRUE) {
-        ++diagnostics_counters()->diagnostic_drop_count;
+    if (s_note_set_queue == NULL || note_set == NULL ||
+        note_set->count > PIANO_NOTE_SET_MAX_KEYS) {
+        return;
+    }
+    /* A length-one overwrite queue is the reliable latest-state slot. Old
+     * unacknowledged snapshots may be superseded, but the newest complete set
+     * cannot be displaced by pitch or diagnostic traffic. */
+    if (xQueueOverwrite(s_note_set_queue, note_set) != pdTRUE) {
         increment_drop();
     }
 }

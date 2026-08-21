@@ -1,0 +1,33 @@
+<view class="chart-card">
+  <view class="chart-head">
+    <view class="section-title">演奏过程图谱</view>
+    <view class="chart-legend">
+      <view class="legend-item"><view class="legend-swatch target"></view>标准谱</view>
+      <view class="legend-item"><view class="legend-swatch played"></view>采集演奏</view>
+      <view class="legend-item"><view class="legend-swatch error"></view>音高误差</view>
+    </view>
+  </view>
+  <view class="chart-hint">{{chartHint}}</view>
+  <view class="chart-wrap">
+    <canvas id="performanceChart" type="2d" class="performance-chart"></canvas>
+    <view class="chart-empty" wx:if="{{chartEmpty}}">还没有可展示的演奏数据。</view>
+  </view>
+  <view class="chart-stats">
+    <view class="chart-stat">
+      <view class="muted">平均音准误差</view>
+      <view>{{chartStats.avgPitch}}</view>
+    </view>
+    <view class="chart-stat">
+      <view class="muted">最大音准误差</view>
+      <view>{{chartStats.maxPitch}}</view>
+    </view>
+    <view class="chart-stat">
+      <view class="muted">平均节奏误差</view>
+      <view>{{chartStats.avgRhythm}}</view>
+    </view>
+    <view class="chart-stat">
+      <view class="muted">匹配音符</view>
+      <view>{{chartStats.matched}}</view>
+    </view>
+  </view>
+</view>

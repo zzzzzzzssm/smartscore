@@ -425,6 +425,7 @@ TEST_CASE("dirty layout preserves systems before the changed tail",
     TEST_ASSERT_EQUAL_UINT16(3, scene->system_count);
     music_scene_item_t preserved = scene->items[0];
     uint16_t preserved_count = scene->systems[0].item_count;
+    music_sp_t rebuilt_boundary_top = scene->systems[1].top;
 
     score->events[2].data.note.pitch.step = 5;
     TEST_ASSERT_TRUE_MESSAGE(music_layout_rebuild_from_measure(
@@ -433,6 +434,8 @@ TEST_CASE("dirty layout preserves systems before the changed tail",
     TEST_ASSERT_EQUAL_UINT16(3, scene->system_count);
     TEST_ASSERT_EQUAL_UINT16(preserved_count, scene->systems[0].item_count);
     TEST_ASSERT_EQUAL_MEMORY(&preserved, &scene->items[0], sizeof(preserved));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, rebuilt_boundary_top,
+                             scene->systems[1].top);
 
     free(scene);
     free(score);

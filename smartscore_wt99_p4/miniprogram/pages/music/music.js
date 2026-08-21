@@ -333,12 +333,12 @@ Page({
       this.setData({ importProgress: Math.max(0, Math.min(100, Number(progress) || 0)) });
     }).then((result) => {
       converted = result;
-      this.setData({ importStage: '正在上传到 P4', importProgress: 0 });
+      this.setData({ importStage: '正在上传', importProgress: 0 });
       return api.uploadAudioWav(result.path, result.name, (progress) => {
         this.setData({ importProgress: progress });
       });
     }).then(() => {
-      wx.showToast({ title: '音乐已保存到 SD 卡', icon: 'success' });
+      wx.showToast({ title: '音乐已保存', icon: 'success' });
       this.setData({ activeSearch: '', searchInput: '' });
       return this.loadFiles(1);
     }).catch((err) => {

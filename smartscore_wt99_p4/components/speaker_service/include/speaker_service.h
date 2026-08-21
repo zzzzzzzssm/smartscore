@@ -69,6 +69,7 @@ typedef struct {
     uint64_t played_bytes;
     uint32_t underruns;
     uint32_t backpressure_events;
+    uint32_t generation;
 } speaker_stream_metrics_t;
 
 esp_err_t speaker_service_init(void);
@@ -88,6 +89,8 @@ esp_err_t speaker_service_stream_start(uint32_t sample_rate_hz);
 esp_err_t speaker_service_stream_start_held(uint32_t sample_rate_hz);
 /* Release a held stream. Existing prebuffer/rebuffer rules still apply. */
 esp_err_t speaker_service_stream_release(void);
+/* Pause an active PCM stream without discarding buffered or played data. */
+esp_err_t speaker_service_stream_pause(void);
 /* Non-blocking backpressure API. accepted_samples may be smaller than
  * sample_count; the caller must retain and retry the unaccepted tail. */
 esp_err_t speaker_service_stream_write(const int16_t *pcm,

@@ -220,43 +220,6 @@
   margin: 0;
 }
 
-.note-table-wrap {
-  width: 100%;
-  border: 1rpx solid #d7e7e6;
-  border-radius: 16rpx;
-}
-
-.note-table {
-  min-width: 1120rpx;
-}
-
-.note-row {
-  display: flex;
-  min-height: 66rpx;
-  border-top: 1rpx solid #e5eeee;
-  color: #334155;
-  font-size: 23rpx;
-}
-
-.note-row.head {
-  border-top: 0;
-  color: #0f766e;
-  background: #f2fbfa;
-  font-weight: 700;
-}
-
-.note-row view {
-  width: 140rpx;
-  padding: 16rpx 12rpx;
-  box-sizing: border-box;
-}
-
-.note-row view:first-child {
-  width: 70rpx;
-}
-
-.note-empty {
-  padding: 28rpx;
-  color: #667085;
-  font-size: 24rpx;
+.history-chart {
+  margin-top: 28rpx;
 }

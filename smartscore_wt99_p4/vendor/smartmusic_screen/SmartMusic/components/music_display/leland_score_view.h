@@ -16,11 +16,16 @@ bool leland_score_view_hit_test_note(const leland_score_view_t *view,
                                      int *note_index, int *measure_number);
 leland_score_view_t *leland_score_view_create(lv_obj_t *parent);
 void leland_score_view_destroy(leland_score_view_t *view);
+/* Paginated preview keeps complete systems inside fixed-height pages.
+ * Continuous Creator scrolling leaves this disabled. */
+void leland_score_view_set_paginated(leland_score_view_t *view,
+                                     bool paginated);
 bool leland_score_view_set_midi(leland_score_view_t *view,
                                 const midi_data_t *midi,
                                 char *error, size_t error_size);
 bool leland_score_view_set_note_color(leland_score_view_t *view,
                                       int note_index, uint32_t color_rgb);
+void leland_score_view_clear_note_colors(leland_score_view_t *view);
 /* Highlight the next score-following group without changing result colors. */
 void leland_score_view_set_note_guide(leland_score_view_t *view,
                                       int first_note_index,
@@ -31,5 +36,10 @@ bool leland_score_view_show_page(leland_score_view_t *view, int page,
 void leland_score_view_set_hidden(leland_score_view_t *view, bool hidden);
 int leland_score_view_get_last_note_on_page(const leland_score_view_t *view,
                                             int page);
+/* Return the musical tick at which the first system on a logical page
+ * begins.  Unlike note-based paging this remains defined for empty measures. */
+bool leland_score_view_get_page_start_tick(const leland_score_view_t *view,
+                                           int page,
+                                           uint64_t *start_tick);
 
 #endif

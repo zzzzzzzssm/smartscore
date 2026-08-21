@@ -1,79 +1,97 @@
 # P4 与音频 S3 通信协议
 
-P4 使用独立 UART1 与音频 S3 双向通信：
+## 物理链路
 
-| 端点 | UART | TX | RX | 参数 |
-|---|---:|---:|---:|---|
-| 音频 S3 | 1 | GPIO2 / H7-10 | GPIO1 / H7-8 | 460800, 8N1, 无流控 |
-| ESP32-P4 | 1 | GPIO0 / J6-4 | GPIO1 / J6-6 | 460800, 8N1, 无流控 |
+两端均使用 UART1、115200 baud、8N1、无流控：
 
-当前方向为 P4 GPIO0/J6-4 TX → S3 GPIO1/H7-8 RX、S3 GPIO2/H7-10 TX →
-P4 GPIO1/J6-6 RX，两块板必须共地。
+| 端点 | TX | RX |
+|---|---:|---:|
+| 音频 S3 | GPIO1 / H7-23 / U2.39 | GPIO2 / H7-25 / U2.38 |
+| ESP32-P4 | GPIO0 / J6-4 | GPIO1 / J6-6 |
 
-## 帧格式
+接线为 P4 GPIO0/TX → S3 GPIO2/RX、S3 GPIO1/TX → P4 GPIO1/RX，并共地。
+H7 针号来自 `Netlist_PCB1_2026-08-19.tel`；旧记录中的 460800 baud、反向
+GPIO 方向和 H7-8/H7-10 均已废弃。实物接线前仍需按连接器丝印确认 H7 编号方向。
 
-协议为 NDJSON，每行一个 UTF-8 JSON 对象，以 `\n` 结束，最大 384 字节。公共
-字段是：
+## 帧和轮询
 
-```json
-{"v":1,"type":"heartbeat","seq":10,"sid":0,"ts_ms":1000,"ready":true,"tx_drop":0}
-```
+链路使用 NDJSON，每行一个 JSON 对象并以 `\n` 结束，单行上限 384 字节。
+P4 每 50 ms 发送轮询。S3 只在收到轮询后回复，最多发送四帧。
 
-音频 S3 当前发送 `hello`、`status`、`pong`、`heartbeat`、`pitch`、`note_on`、
-`note_off` 和 `poly`。只有 `hello` 包含 `source:"s3_audio"`；其他消息不包含
-`src`，P4 接收器按现有实际格式解析。
-
-P4 将以下两类消息映射到现有 MIDI 跟谱和评分入口：
+S3 的兼容 hello 使用 v1，并声明 v2 能力：
 
 ```json
-{"v":1,"type":"note_on","seq":11,"sid":0,"ts_ms":1100,"midi":69,"velocity":100,"freq_hz":440.0,"confidence":0.95}
-{"v":1,"type":"note_off","seq":12,"sid":0,"ts_ms":1600,"midi":69,"duration_ms":500,"reason":"silence"}
+{"v":1,"type":"hello","seq":1,"sid":0,"ts_ms":100,"source":"s3_audio","sample_rate":24000,"a4":440.0,"mic":"dual","capabilities":["note_set_v2"],"midi_min":36,"midi_max":96,"max_polyphony":4}
 ```
 
-`pitch` 和 `poly` 当前只用于链路诊断，不直接推进跟谱或评分。
-
-## P4 主轮询通信
-
-S3 不再主动长期驱动 GPIO2。识别结果先进入 16 帧发送缓存，P4 每 50 ms
-从 GPIO0 发送一次 `poll`；S3 收到后才短时启用 GPIO2，最多回复 4 帧，UART
-发送完成后立即把 GPIO2 恢复为高阻输入。这样 P4 复位、烧录和 ROM 启动期间
-S3 不会持续驱动 P4 RX。
-
-P4 发送下列按行 JSON 命令：
+普通练习启动 61 键正式识别：
 
 ```json
-{"cmd":"poll"}
-{"cmd":"ping"}
-{"cmd":"start","sid":1}
-{"cmd":"stop"}
+{"cmd":"start","sid":12,"protocol":2,"profile":"performance"}
 ```
 
-没有待发送识别结果时，S3 用一帧 `heartbeat` 响应 `poll`；`ping`、`start`、
-`stop` 的结果也先缓存，并由紧随其后的 `poll` 取回。因此合法响应同时证明
-P4 GPIO0 → S3 GPIO1 和 S3 GPIO2 → P4 GPIO1 两个方向均可用。
+P4 演奏/音符判断测试页保留较宽松的演示识别参数，但同样使用 v2 快照：
 
-P4 初始化时先发送 `stop` 和 `ping`，避免未选择音频输入时 S3 事件干扰 USB
-MIDI。选择 `audio_s3` 并开始练习时发送带新 `sid` 的 `start`，结束练习后发送
-`stop`。如果 S3 在 P4 之后重启，P4 收到新的 `hello` 会重新同步期望的流状态并
-再次 `ping`。
+```json
+{"cmd":"start","sid":13,"protocol":2,"profile":"demo"}
+```
 
-## 接收安全
+未请求 protocol 2 的旧控制器仍可使用 v1 `note_on`/`note_off`。当前 P4 固件
+请求 v2，避免把复音压缩成一个旋律音。
 
-- 错误 JSON、未知类型、缺失字段和越界值直接丢弃。
-- 超过 384 字节后丢弃整行，在下一个换行恢复。
-- 同一 `sid` 只接受递增 `seq`，重复或倒序消息不重复执行业务。
-- `hello` 或 `sid` 变化会建立新的序号基线。
-- 音符事件通过独立队列和派发任务进入业务层，UART RX 不等待评分或显示锁。
-- 最近 3 秒内收到合法轮询响应时，链路状态为在线。
-- 收到 `pong` 后 `command_link_confirmed=true`，证明 P4 TX → S3 RX 方向可用。
+## MusicLink v2 琴键快照
 
-P4 使用本地接收时间作为 MIDI 业务时间戳，S3 的 `ts_ms` 仅保留用于诊断。
+S3 在活动集合变化时生成完整快照：
+
+```json
+{"v":2,"type":"notes","seq":108,"sid":12,"state_id":35,"ts_ms":4260,"midis":[48,52,55],"velocities":[91,78,84],"confidences":[0.950,0.890,0.920],"set_confidence":0.920,"degraded_mic":false,"overflow":false}
+```
+
+约束：
+
+- 三个数组长度相同，长度 0–4；空数组表示全部释放；
+- MIDI 严格递增且位于 36–96，velocity 位于 1–127；
+- confidence 必须是有限的 0–1 数值；
+- `state_id` 在一个 sid 内从 1 单调增加；
+- `degraded_mic=true` 表示当前只有一路健康麦克风参与；
+- `overflow=true` 表示检测到超过四键的非支持输入；
+- 同一集合持续存在不会只因 RMS 或置信度浮动产生新 state_id。
+
+P4 每次轮询确认最后一次完整接收并原子处理的状态：
+
+```json
+{"cmd":"poll","sid":12,"ack_state_id":35}
+```
+
+S3 在确认前重复最新快照。重复快照只更新确认号，不重复产生业务事件。更新后的
+完整快照可以覆盖旧的未确认状态。
+
+## P4 集合差分与恢复
+
+P4 严格校验 v2 数组、范围、有限数、sid、seq 和 state_id。合法新快照与本地
+活动集合比较：
+
+1. 用同一个 S3 `ts_ms` 先产生所有消失键的 `note_off`；
+2. 再产生所有新增键的 `note_on`；
+3. 保留键不重复起音；
+4. 整批事件进入现有评分、跟谱、显示和录制入口。
+
+一次四键集合完全替换最多需要八个事件。事件队列空间不足时整批不提交、也不
+确认该 state_id；S3 下一次轮询会重传，避免只处理半个和弦。
+
+以下情况会先释放全部本地活动键：切换 sid、收到 hello、停止音频 S3 输入、
+链路连续 3 秒超时。超时后链路恢复时 P4 重新发送 start，防止重复音和卡音。
+
+temp 工程原有的 v1 `poly` 和 `diagnostic` 消息继续保留，用于演示页诊断；它们
+不会代替 v2 完整琴键集合进入评分。
 
 ## 联调检查
 
-1. P4 启动日志应显示 `master-poll UART1 TX=GPIO0 RX=GPIO1 at 460800 baud (50 ms)`。
-2. S3 启动日志应显示 `poll-response UART1 TX=GPIO2(high-Z idle) RX=GPIO1 at 460800 baud`。
-3. 空闲时 S3 的 `status.stream_enabled` 应为 `false`，P4 轮询仍会取得 heartbeat。
-4. 选择 S3 音频并开始练习后应收到 `status`（新 `sid`、流已开启），随后
-   `note_on/note_off` 能进入跟谱和评分。
-5. 结束练习后应收到停止状态；断开任一 TX/RX 可分别验证两个方向。
+1. P4 日志显示 `UART1 TX=GPIO0 RX=GPIO1 at 115200 baud (50 ms)`；
+2. S3 日志显示 `UART1 TX=GPIO1 RX=GPIO2 ... 115200 baud`；
+3. 普通练习时 S3 显示 `recognition profile: performance`；演示测试页显示 `demo`；
+4. P4 显示 `MusicLink v2 note-set confirmed`；
+5. 两端周期日志中的 `state` 与 `ack` 很快相等；
+6. 同时按三键时三条评分事件具有同一 `sender_ts_ms`；
+7. 断开一块麦克风时快照结构不变且 `degraded_mic=true`；
+8. 断开串口超过 3 秒，P4 释放全部活动键，恢复后不能重复或卡键。

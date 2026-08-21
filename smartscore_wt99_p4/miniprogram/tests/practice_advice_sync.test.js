@@ -52,7 +52,7 @@ function loadPage() {
 async function run() {
   const page = loadPage();
   page.data.scoreTitle = '测试曲目';
-  page.drawPracticeChart = () => {};
+  page.data.performanceTargetNotes = [{ midi: 60, start: 0, duration: 0.5 }];
   page.refreshLiveStatus = () => Promise.resolve(false);
 
   const normalized = page.normalizeResult({
@@ -63,12 +63,23 @@ async function run() {
     rhythm_score: 86,
     fluency_score: 87,
     complete_score: 89,
+    start_offset: 1.25,
+    tempo_scale: 0.9,
     details: []
   });
   page.finishPractice(normalized);
   const saved = storage.get('practiceRecords')[0];
   assert.strictEqual(saved.practiceSessionId, 'session-a');
   assert.strictEqual(saved.adviceStatus, 'pending');
+  assert.deepStrictEqual(saved.targetNotes, [{ midi: 60, start: 0, duration: 0.5 }]);
+  assert.strictEqual(saved.startOffset, 1.25);
+  assert.strictEqual(saved.tempoScale, 0.9);
+  page.data.performanceTargetNotes[0].midi = 72;
+  assert.strictEqual(saved.targetNotes[0].midi, 60);
+
+  const missingAlignment = page.normalizeResult({ ok: true, details: [] });
+  assert.strictEqual(missingAlignment.startOffset, null);
+  assert.strictEqual(missingAlignment.tempoScale, null);
 
   await page.applyAdviceSummary({
     practice_session_id: 'session-a',

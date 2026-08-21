@@ -11,9 +11,11 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "midi_notation.h"
 #include "music_display.h"
 #include "score_storage.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 #define COLOR_BG         0xFFF7EA
 #define COLOR_CARD       0xF3E2C7
@@ -63,6 +65,12 @@ typedef struct {
     uint32_t last_live_publish_ms;
     bool live_refresh_pending;
     bool live_publish_in_progress;
+    bool key_locked;
+    int8_t key_fifths;
+    bool key_minor;
+    uint8_t key_confidence_percent;
+    uint32_t key_session_generation;
+    SemaphoreHandle_t snapshot_publish_mutex;
     creator_recorder_config_t config;
     volatile bool active;
     volatile bool initialized;
@@ -75,6 +83,89 @@ typedef struct {
 static const char *TAG = "creator_mode";
 static creator_mode_context_t s_creator;
 static portMUX_TYPE s_live_refresh_lock = portMUX_INITIALIZER_UNLOCKED;
+
+static bool active_session_generation(uint32_t *generation)
+{
+    bool active;
+    taskENTER_CRITICAL(&s_live_refresh_lock);
+    active = s_creator.active;
+    if (active && generation)
+        *generation = s_creator.key_session_generation;
+    taskEXIT_CRITICAL(&s_live_refresh_lock);
+    return active;
+}
+
+static bool session_generation_matches(uint32_t expected_generation)
+{
+    bool matches;
+    taskENTER_CRITICAL(&s_live_refresh_lock);
+    matches = s_creator.active &&
+              s_creator.key_session_generation == expected_generation;
+    taskEXIT_CRITICAL(&s_live_refresh_lock);
+    return matches;
+}
+
+static bool prepare_snapshot_key(midi_data_t *snapshot,
+                                 uint32_t expected_generation,
+                                 bool analyze_if_unlocked)
+{
+    if (!snapshot) return false;
+
+    bool key_locked;
+    bool session_current;
+    taskENTER_CRITICAL(&s_live_refresh_lock);
+    session_current = s_creator.active &&
+                      s_creator.key_session_generation ==
+                          expected_generation;
+    key_locked = s_creator.key_locked;
+    taskEXIT_CRITICAL(&s_live_refresh_lock);
+    if (!session_current) return false;
+
+    if (!key_locked && analyze_if_unlocked &&
+        !snapshot->tonality_forced && snapshot->note_count > 0) {
+        midi_notation_key_analysis_t analysis = {0};
+        if (midi_notation_analyze_key(snapshot, &analysis) &&
+            analysis.accepted && analysis.fifths >= -7 &&
+            analysis.fifths <= 7) {
+            bool newly_locked = false;
+            taskENTER_CRITICAL(&s_live_refresh_lock);
+            if (s_creator.active &&
+                s_creator.key_session_generation == expected_generation &&
+                !s_creator.key_locked) {
+                s_creator.key_locked = true;
+                s_creator.key_fifths = analysis.fifths;
+                s_creator.key_minor = analysis.minor;
+                s_creator.key_confidence_percent =
+                    analysis.confidence_percent;
+                newly_locked = true;
+            }
+            key_locked = s_creator.key_locked;
+            taskEXIT_CRITICAL(&s_live_refresh_lock);
+            if (newly_locked) {
+                ESP_LOGI(TAG,
+                         "Creator key locked: fifths=%d minor=%d confidence=%u%%",
+                         analysis.fifths, analysis.minor,
+                         (unsigned)analysis.confidence_percent);
+            }
+        }
+    }
+
+    int key_fifths = 0;
+    bool key_minor = false;
+    taskENTER_CRITICAL(&s_live_refresh_lock);
+    session_current = s_creator.active &&
+                      s_creator.key_session_generation ==
+                          expected_generation;
+    key_locked = session_current && s_creator.key_locked;
+    if (session_current && key_locked) {
+        key_fifths = s_creator.key_fifths;
+        key_minor = s_creator.key_minor;
+    }
+    taskEXIT_CRITICAL(&s_live_refresh_lock);
+    if (!session_current) return false;
+    if (key_locked) midi_set_tonality(snapshot, key_fifths, key_minor);
+    return true;
+}
 
 static bool valid_config(const creator_recorder_config_t *config)
 {
@@ -169,18 +260,38 @@ static void refresh_preparation(void)
                  s_creator.config.staff_mode == CREATOR_STAFF_GRAND);
 }
 
-static bool publish_snapshot(bool allow_empty, bool include_active)
+static bool publish_snapshot(bool allow_empty, bool include_active,
+                             uint32_t expected_generation)
 {
+    if (!s_creator.snapshot_publish_mutex) return false;
+    xSemaphoreTake(s_creator.snapshot_publish_mutex, portMAX_DELAY);
+    if (!session_generation_matches(expected_generation)) {
+        xSemaphoreGive(s_creator.snapshot_publish_mutex);
+        return false;
+    }
+
     midi_data_t *snapshot = heap_caps_calloc(
         1, sizeof(*snapshot), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!snapshot) snapshot = calloc(1, sizeof(*snapshot));
-    if (!snapshot) return false;
+    if (!snapshot) {
+        xSemaphoreGive(s_creator.snapshot_publish_mutex);
+        return false;
+    }
     bool ready = include_active ?
         creator_recorder_snapshot_live(snapshot,
                                        (uint64_t)esp_timer_get_time()) :
         creator_recorder_snapshot(snapshot);
     if (!ready) {
         free(snapshot);
+        xSemaphoreGive(s_creator.snapshot_publish_mutex);
+        return false;
+    }
+    if (!prepare_snapshot_key(
+            snapshot, expected_generation,
+            !include_active &&
+                creator_recorder_state() == CREATOR_RECORDER_PAUSED)) {
+        free(snapshot);
+        xSemaphoreGive(s_creator.snapshot_publish_mutex);
         return false;
     }
     music_display_score_options_t options = {
@@ -189,39 +300,53 @@ static bool publish_snapshot(bool allow_empty, bool include_active)
         .time_sig_den = s_creator.config.time_sig_den,
         .notation_type = MUSIC_DISPLAY_NOTATION_STAFF,
     };
-    return music_display_submit_midi_snapshot(snapshot, &options,
-                                              allow_empty);
+    bool submitted = music_display_submit_midi_snapshot(snapshot, &options,
+                                                        allow_empty);
+    xSemaphoreGive(s_creator.snapshot_publish_mutex);
+    return submitted;
+}
+
+static bool publish_current_snapshot(bool allow_empty, bool include_active)
+{
+    uint32_t generation = 0;
+    if (!active_session_generation(&generation)) return false;
+    return publish_snapshot(allow_empty, include_active, generation);
 }
 
 static void flush_live_refresh(uint32_t now_ms)
 {
     bool claimed = false;
+    uint32_t generation = 0;
     taskENTER_CRITICAL(&s_live_refresh_lock);
-    if (s_creator.live_refresh_pending &&
+    if (s_creator.active && s_creator.live_refresh_pending &&
         !s_creator.live_publish_in_progress &&
         (!s_creator.last_live_publish_ms ||
          now_ms - s_creator.last_live_publish_ms >= CREATOR_LIVE_REFRESH_MS)) {
         s_creator.live_refresh_pending = false;
         s_creator.live_publish_in_progress = true;
+        generation = s_creator.key_session_generation;
         claimed = true;
     }
     taskEXIT_CRITICAL(&s_live_refresh_lock);
     if (!claimed) return;
 
-    bool submitted = publish_snapshot(false, true);
+    bool submitted = publish_snapshot(false, true, generation);
     taskENTER_CRITICAL(&s_live_refresh_lock);
-    s_creator.live_publish_in_progress = false;
-    if (submitted)
-        s_creator.last_live_publish_ms = now_ms;
-    else
-        s_creator.live_refresh_pending = true;
+    if (s_creator.active &&
+        s_creator.key_session_generation == generation) {
+        s_creator.live_publish_in_progress = false;
+        if (submitted)
+            s_creator.last_live_publish_ms = now_ms;
+        else
+            s_creator.live_refresh_pending = true;
+    }
     taskEXIT_CRITICAL(&s_live_refresh_lock);
 }
 
 static void request_live_refresh(uint64_t timestamp_us)
 {
     taskENTER_CRITICAL(&s_live_refresh_lock);
-    s_creator.live_refresh_pending = true;
+    if (s_creator.active) s_creator.live_refresh_pending = true;
     taskEXIT_CRITICAL(&s_live_refresh_lock);
     flush_live_refresh((uint32_t)(timestamp_us / 1000U));
 }
@@ -266,7 +391,7 @@ static void sync_auto_pause_ui(bool was_recording)
     if (!was_recording ||
         creator_recorder_state() != CREATOR_RECORDER_PAUSED)
         return;
-    publish_snapshot(true, false);
+    publish_current_snapshot(true, false);
     bsp_display_lock(portMAX_DELAY);
     reset_range_selection_ui();
     set_recording_ui(false);
@@ -277,11 +402,11 @@ static void sync_auto_pause_ui(bool was_recording)
 static void auto_pause_timer_cb(lv_timer_t *timer)
 {
     (void)timer;
-    if (!s_creator.active) return;
+    if (!active_session_generation(NULL)) return;
     uint64_t now_us = (uint64_t)esp_timer_get_time();
     flush_live_refresh((uint32_t)(now_us / 1000U));
     if (!creator_recorder_poll(now_us)) return;
-    publish_snapshot(true, false);
+    publish_current_snapshot(true, false);
     reset_range_selection_ui();
     set_recording_ui(false);
     ESP_LOGI(TAG, "overwrite range timer reached the end; Creator paused");
@@ -289,11 +414,11 @@ static void auto_pause_timer_cb(lv_timer_t *timer)
 
 static esp_err_t pause_locked(void)
 {
-    if (!s_creator.active ||
+    if (!active_session_generation(NULL) ||
         creator_recorder_state() != CREATOR_RECORDER_RECORDING)
         return ESP_ERR_INVALID_STATE;
     creator_recorder_pause((uint64_t)esp_timer_get_time());
-    publish_snapshot(true, false);
+    publish_current_snapshot(true, false);
     reset_range_selection_ui();
     set_recording_ui(false);
     s_creator.last_error = ESP_OK;
@@ -302,7 +427,7 @@ static esp_err_t pause_locked(void)
 
 static esp_err_t resume_locked(void)
 {
-    if (!s_creator.active ||
+    if (!active_session_generation(NULL) ||
         creator_recorder_state() != CREATOR_RECORDER_PAUSED)
         return ESP_ERR_INVALID_STATE;
     reset_range_selection_ui();
@@ -323,13 +448,17 @@ static lv_obj_t *creator_return_screen(void)
 
 static void exit_locked(void)
 {
+    xSemaphoreTake(s_creator.snapshot_publish_mutex, portMAX_DELAY);
     creator_recorder_stop();
-    s_creator.active = false;
     s_creator.saving = false;
     taskENTER_CRITICAL(&s_live_refresh_lock);
+    s_creator.active = false;
     s_creator.live_refresh_pending = false;
+    s_creator.live_publish_in_progress = false;
+    ++s_creator.key_session_generation;
     taskEXIT_CRITICAL(&s_live_refresh_lock);
     music_display_set_creator_active(false);
+    xSemaphoreGive(s_creator.snapshot_publish_mutex);
     reset_range_selection_ui();
     if (s_creator.pause_button)
         lv_obj_add_flag(s_creator.pause_button, LV_OBJ_FLAG_HIDDEN);
@@ -345,9 +474,17 @@ static void exit_locked(void)
 
 static esp_err_t finish_locked(void)
 {
-    if (!s_creator.active ||
-        creator_recorder_state() != CREATOR_RECORDER_PAUSED)
+    if (creator_recorder_state() != CREATOR_RECORDER_PAUSED)
         return ESP_ERR_INVALID_STATE;
+
+    uint32_t generation = 0;
+    if (!active_session_generation(&generation))
+        return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_creator.snapshot_publish_mutex, portMAX_DELAY);
+    if (!session_generation_matches(generation)) {
+        xSemaphoreGive(s_creator.snapshot_publish_mutex);
+        return ESP_ERR_INVALID_STATE;
+    }
 
     midi_data_t *snapshot = heap_caps_calloc(
         1, sizeof(*snapshot), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -355,12 +492,19 @@ static esp_err_t finish_locked(void)
     if (!snapshot || !creator_recorder_snapshot(snapshot) ||
         snapshot->note_count <= 0) {
         free(snapshot);
+        xSemaphoreGive(s_creator.snapshot_publish_mutex);
         if (s_creator.ui && s_creator.ui->music_screen_status_label)
             lv_label_set_text(s_creator.ui->music_screen_status_label,
                               TXT_NO_NOTES);
         s_creator.last_error = ESP_ERR_INVALID_SIZE;
         return s_creator.last_error;
     }
+    if (!prepare_snapshot_key(snapshot, generation, true)) {
+        free(snapshot);
+        xSemaphoreGive(s_creator.snapshot_publish_mutex);
+        return ESP_ERR_INVALID_STATE;
+    }
+    xSemaphoreGive(s_creator.snapshot_publish_mutex);
 
     s_creator.saving = true;
     esp_err_t err = score_storage_save_midi_auto(
@@ -410,7 +554,7 @@ static void score_note_selected_cb(int note_index, int measure_number,
 {
     (void)note_index;
     (void)user_data;
-    if (!s_creator.active || measure_number < 1 ||
+    if (!active_session_generation(NULL) || measure_number < 1 ||
         creator_recorder_state() != CREATOR_RECORDER_PAUSED)
         return;
 
@@ -434,11 +578,11 @@ static void score_note_selected_cb(int note_index, int measure_number,
         first = last;
         last = swap;
     }
-    if (creator_recorder_resume_measure_range(
-            first, last,
-            (uint64_t)esp_timer_get_time())) {
-        reset_range_selection_ui();
-        publish_snapshot(true, false);
+        if (creator_recorder_resume_measure_range(
+                first, last,
+                (uint64_t)esp_timer_get_time())) {
+            reset_range_selection_ui();
+            publish_current_snapshot(true, false);
         set_waiting_ui();
         ESP_LOGI(TAG, "overwrite range armed: measures %d-%d", first, last);
     } else {
@@ -496,25 +640,41 @@ static esp_err_t start_locked(const creator_recorder_config_t *config)
 {
     if (!s_creator.initialized || !valid_config(config))
         return ESP_ERR_INVALID_ARG;
-    if (s_creator.active) return ESP_ERR_INVALID_STATE;
+    uint32_t ignored_generation = 0;
+    if (active_session_generation(&ignored_generation))
+        return ESP_ERR_INVALID_STATE;
 
+    xSemaphoreTake(s_creator.snapshot_publish_mutex, portMAX_DELAY);
+    if (active_session_generation(&ignored_generation)) {
+        xSemaphoreGive(s_creator.snapshot_publish_mutex);
+        return ESP_ERR_INVALID_STATE;
+    }
     s_creator.config = normalized_remote_config(config);
     s_creator.last_error = ESP_OK;
     s_creator.saved_title[0] = '\0';
     s_creator.saved_filename[0] = '\0';
+    creator_recorder_begin(&s_creator.config,
+                           (uint64_t)esp_timer_get_time());
+    music_display_set_creator_active(true);
+    uint32_t generation;
     taskENTER_CRITICAL(&s_live_refresh_lock);
     s_creator.last_live_publish_ms = 0;
     s_creator.live_refresh_pending = false;
     s_creator.live_publish_in_progress = false;
-    taskEXIT_CRITICAL(&s_live_refresh_lock);
-    creator_recorder_begin(&s_creator.config,
-                           (uint64_t)esp_timer_get_time());
+    s_creator.key_locked = false;
+    s_creator.key_fifths = 0;
+    s_creator.key_minor = false;
+    s_creator.key_confidence_percent = 0;
+    ++s_creator.key_session_generation;
+    generation = s_creator.key_session_generation;
     s_creator.active = true;
-    music_display_set_creator_active(true);
+    taskEXIT_CRITICAL(&s_live_refresh_lock);
+    xSemaphoreGive(s_creator.snapshot_publish_mutex);
+
     ensure_music_controls();
     reset_range_selection_ui();
     set_waiting_ui();
-    publish_snapshot(true, false);
+    publish_snapshot(true, false, generation);
     if (s_creator.ui && s_creator.ui->music_screen)
         lv_screen_load_anim(s_creator.ui->music_screen,
                             LV_SCREEN_LOAD_ANIM_MOVE_LEFT, 180, 0, false);
@@ -655,6 +815,13 @@ static esp_err_t creator_mode_initialize(lv_ui *ui, bool bind_entry)
         .chord_window_ms = 45,
         .max_notes_per_onset = 10,
     };
+    if (!s_creator.snapshot_publish_mutex) {
+        s_creator.snapshot_publish_mutex = xSemaphoreCreateMutex();
+        if (!s_creator.snapshot_publish_mutex) {
+            ESP_LOGE(TAG, "unable to create Creator snapshot mutex");
+            return ESP_ERR_NO_MEM;
+        }
+    }
     esp_err_t err = creator_recorder_init();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "creator recorder init failed: %s",
@@ -693,7 +860,7 @@ esp_err_t creator_mode_init_detached(lv_ui *ui)
 
 bool creator_mode_is_active(void)
 {
-    return s_creator.active;
+    return active_session_generation(NULL);
 }
 
 esp_err_t creator_mode_start(const creator_recorder_config_t *config)
@@ -734,9 +901,13 @@ esp_err_t creator_mode_finish(void)
 
 esp_err_t creator_mode_cancel(void)
 {
-    if (!s_creator.initialized || !s_creator.active)
+    if (!s_creator.initialized || !active_session_generation(NULL))
         return ESP_ERR_INVALID_STATE;
     bsp_display_lock(portMAX_DELAY);
+    if (!active_session_generation(NULL)) {
+        bsp_display_unlock();
+        return ESP_ERR_INVALID_STATE;
+    }
     s_creator.last_error = ESP_OK;
     exit_locked();
     bsp_display_unlock();
@@ -756,13 +927,14 @@ void creator_mode_get_status(creator_mode_status_t *status)
     }
 
     bsp_display_lock(portMAX_DELAY);
-    status->active = s_creator.active;
+    const bool active = active_session_generation(NULL);
+    status->active = active;
     status->config = s_creator.config;
     status->last_error = s_creator.last_error;
     status->note_count = creator_recorder_note_count();
     status->measure_count = creator_recorder_measure_count();
     status->waiting_first_note =
-        s_creator.active && creator_recorder_waiting_for_first_note();
+        active && creator_recorder_waiting_for_first_note();
     snprintf(status->saved_title, sizeof(status->saved_title), "%s",
              s_creator.saved_title);
     snprintf(status->saved_filename, sizeof(status->saved_filename), "%s",
@@ -772,11 +944,11 @@ void creator_mode_get_status(creator_mode_status_t *status)
     if (s_creator.saving) {
         status->state = CREATOR_MODE_STATE_SAVING;
         snprintf(status->message, sizeof(status->message), "Saving to SD card");
-    } else if (s_creator.active && s_creator.last_error != ESP_OK) {
+    } else if (active && s_creator.last_error != ESP_OK) {
         status->state = CREATOR_MODE_STATE_ERROR;
         snprintf(status->message, sizeof(status->message), "%s",
                  esp_err_to_name(s_creator.last_error));
-    } else if (!s_creator.active) {
+    } else if (!active) {
         status->state = CREATOR_MODE_STATE_IDLE;
         snprintf(status->message, sizeof(status->message),
                  status->saved_filename[0] ? "Saved to SD card" : "Ready");
@@ -797,7 +969,7 @@ bool creator_mode_add_connection(creator_connection_kind_t kind,
                                  int end_note_index,
                                  uint8_t number)
 {
-    if (!s_creator.active || !creator_recorder_add_connection(
+    if (!active_session_generation(NULL) || !creator_recorder_add_connection(
             kind, start_note_index, end_note_index, number))
         return false;
     request_live_refresh((uint64_t)esp_timer_get_time());
@@ -806,7 +978,7 @@ bool creator_mode_add_connection(creator_connection_kind_t kind,
 
 bool creator_mode_handle_midi_event(const usb_midi_input_event_t *event)
 {
-    if (!event || !s_creator.active) return false;
+    if (!event || !active_session_generation(NULL)) return false;
 
     switch (event->type) {
     case USB_MIDI_INPUT_DEVICE_CONNECTED:
@@ -815,7 +987,7 @@ bool creator_mode_handle_midi_event(const usb_midi_input_event_t *event)
         break;
     case USB_MIDI_INPUT_DEVICE_DISCONNECTED:
         creator_recorder_pause(event->timestamp_us);
-        publish_snapshot(true, false);
+        publish_current_snapshot(true, false);
         bsp_display_lock(portMAX_DELAY);
         reset_range_selection_ui();
         set_recording_ui(false);

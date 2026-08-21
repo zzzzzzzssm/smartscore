@@ -3,6 +3,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "low_note_detector.h"
+
 typedef enum {
     CHORD_DETECTION_NONE = 0,
     CHORD_DETECTION_INTERVAL,
@@ -11,6 +13,8 @@ typedef enum {
 } chord_detection_kind_t;
 
 #define CHORD_DEBUG_CANDIDATE_COUNT 4
+#define CHORD_PIANO_KEY_COUNT 61
+#define CHORD_EXACT_NOTE_COUNT 4
 
 typedef struct {
     int midi;
@@ -37,17 +41,33 @@ typedef struct {
     float spectrum_noise_floor;
     float band_noise_floor[3];
     int harmonic_rejected_count;
+    int exact_note_count;
+    int supported_note_count;
+    bool too_many_notes;
+    int exact_midi_notes[CHORD_EXACT_NOTE_COUNT];
+    float exact_note_confidence[CHORD_EXACT_NOTE_COUNT];
+    /* Normalized per-key evidence for MIDI 36..96. This remains available
+     * even when the legacy major/minor classifier does not accept a frame. */
+    float key_salience[CHORD_PIANO_KEY_COUNT];
+    /* True only when this key has its own physical fundamental after
+     * harmonic-residual rejection. Virtual low fundamentals stay false and
+     * require explicit low-YIN confirmation in the note tracker. */
+    bool key_has_independent_fundamental[CHORD_PIANO_KEY_COUNT];
+    float key_fundamental_prominence[CHORD_PIANO_KEY_COUNT];
+    /* Low-octave evidence synthesized from partials 2 and 3 must be confirmed
+     * by the low-rate periodicity path before it can start a key. */
+    bool key_uses_virtual_fundamental[CHORD_PIANO_KEY_COUNT];
     int debug_candidate_count;
     chord_candidate_debug_t debug_candidates[CHORD_DEBUG_CANDIDATE_COUNT];
 } chord_result_t;
 
 int chord_detector_init(void);
+size_t chord_detector_workspace_size(void);
 void chord_detector_analyze(const float *mic1_ring, const float *mic2_ring,
                             size_t write_position, float mic1_weight,
                             float mic2_weight, bool demo_profile,
-                            float signal_snr_db, chord_result_t *result);
+                            float signal_snr_db, int low_anchor_midi,
+                            float low_anchor_confidence,
+                            const low_note_result_t *low_notes,
+                            chord_result_t *result);
 float chord_detector_harmonic_explained_ratio(float fundamental_hz);
-bool chord_detector_fft_magnitude_window(const float *ring,
-                                         size_t write_position,
-                                         float *magnitude,
-                                         size_t magnitude_count);

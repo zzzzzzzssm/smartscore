@@ -31,9 +31,9 @@ typedef struct {
     uint8_t  velocity;   /* Velocity 0-127 */
     uint8_t  staff;      /* 0/1=upper staff, 2=lower piano staff */
     uint8_t  voice;      /* 0 defaults to voice 1 */
-    uint8_t  dots;       /* Explicit augmentation dots from Creator data. */
+    uint8_t  dots;       /* Augmentation dots; source data remains authoritative. */
     uint8_t  tie_flags;  /* MIDI_NOTE_TIE_* */
-    uint8_t  slur_start; /* Explicit connection number, never inferred. */
+    uint8_t  slur_start; /* Connection number; source data remains authoritative. */
     uint8_t  slur_stop;
     uint8_t  gliss_start;
     uint8_t  gliss_stop;
@@ -50,12 +50,45 @@ typedef struct {
     int   time_sig_num;       /* Time signature numerator (e.g. 4) */
     int   time_sig_den;       /* Time signature denominator power (2=quarter) */
     bool  time_sig_forced;    /* 外部强制设置拍号（跳过 MIDI 解析和自动检测） */
+    bool  numbered_legacy_inference_allowed; /* Owned local JSON preview only. */
     char  title[24];          /* 曲名（最多 7 个中文字符） */
     int   note_count;         /* Number of notes parsed */
     midi_note_t notes[MAX_NOTES];
     int raw_event_count;
     midi_raw_event_t raw_events[MAX_MIDI_RAW_EVENTS];
 } midi_data_t;
+
+/** One visible numbered-notation note and its source MIDI note. */
+typedef struct {
+    uint16_t byte_offset; /* Offset of the note glyph in the generated text. */
+    uint16_t note_index;  /* Zero-based index in midi_data_t::notes. */
+    uint8_t  byte_length; /* Length of the SimpMusic duration glyph. */
+    uint8_t  reduction_line_count; /* Visible duration lines below the digit. */
+    int8_t   octave;      /* Relative to C4: positive=upper dots, negative=lower. */
+} midi_numbered_note_ref_t;
+
+/** Display-only decorations inferred for a legacy local-score snapshot. */
+typedef struct {
+    uint16_t inferred_dots;
+    uint16_t inferred_ties;
+    uint16_t inferred_slurs;
+    uint16_t inferred_glissandi;
+} midi_numbered_inference_stats_t;
+
+/**
+ * Conservatively enrich an owned, start-tick-sorted legacy snapshot for
+ * numbered-notation display.  The caller decides whether the input is a
+ * legacy local score; Creator snapshots must not call this function.
+ *
+ * Authority is category-wide: if any note already contains dots or ties, that
+ * complete category is left unchanged.  The fallback never infers slurs or
+ * glissandi.  No pitch, onset, duration, playback event, or saved source data
+ * is changed.
+ *
+ * @return false without mutation when the snapshot or meter is invalid.
+ */
+bool midi_numbered_infer_legacy_marks(
+    midi_data_t *data, midi_numbered_inference_stats_t *stats);
 
 /**
  * @brief 外部强制设置调性（跳过 MIDI FF 59 事件和自动检测）
@@ -140,6 +173,24 @@ bool midi_generate_measure_range(const midi_data_t *data,
                                  char *buf, size_t buf_size,
                                  int start_measure, int measure_count,
                                  uint8_t staff);
+
+/** Generate a measure range together with an exact note-to-text mapping.
+ *
+ * Text and reference entries are appended atomically: a visible note is
+ * never emitted without its matching reference.  If either fixed-capacity
+ * output fills up, the valid prefix is retained, NUL-terminated, and
+ * @p truncated is set to true.  Each reference also carries the signed
+ * octave offset used by the display layer for standard upper/lower dots;
+ * octave marks are deliberately not embedded in the text buffer.
+ */
+bool midi_generate_measure_range_mapped(
+    const midi_data_t *data,
+    char *buf, size_t buf_size,
+    int start_measure, int measure_count,
+    uint8_t staff,
+    midi_numbered_note_ref_t *refs, size_t ref_capacity,
+    size_t *ref_count,
+    bool *truncated);
 
 /**
  * @brief 获取简谱总页数（每页 3 行）

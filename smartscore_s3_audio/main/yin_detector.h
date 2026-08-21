@@ -15,8 +15,5 @@ typedef struct {
 void yin_detector_init(void);
 void yin_detector_analyze(const float *samples, size_t count, yin_result_t *result);
 void yin_detector_analyze_range(const float *samples, size_t count,
-                                float sample_rate_hz,
-                                float minimum_frequency_hz,
-                                float maximum_frequency_hz,
-                                float threshold,
-                                yin_result_t *result);
+                                float sample_rate_hz, float minimum_frequency_hz,
+                                float maximum_frequency_hz, yin_result_t *result);

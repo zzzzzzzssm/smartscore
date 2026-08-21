@@ -57,16 +57,30 @@ function errorMessage(err, fallback = '操作失败') {
 
 function buildRequestError(data, statusCode) {
   const parsed = parseResponseBody(data);
+  let serverCode = '';
   if (parsed && typeof parsed === 'object') {
+    const rawCode = parsed.error_code || parsed.code || parsed.error;
+    if (typeof rawCode === 'string' || typeof rawCode === 'number') {
+      serverCode = String(rawCode).trim();
+    }
     const detail = messageText(parsed.message || parsed.error || parsed.reason || parsed, '');
     if (detail) {
-      return new Error(`请求失败：${statusCode}，${detail}`);
+      const error = new Error(`请求失败：${statusCode}，${detail}`);
+      error.code = serverCode;
+      error.statusCode = statusCode;
+      return error;
     }
   }
   if (typeof parsed === 'string' && parsed.trim()) {
-    return new Error(`请求失败：${statusCode}，${parsed.trim().slice(0, 120)}`);
+    const error = new Error(`请求失败：${statusCode}，${parsed.trim().slice(0, 120)}`);
+    error.code = serverCode;
+    error.statusCode = statusCode;
+    return error;
   }
-  return new Error(`请求失败：${statusCode}`);
+  const error = new Error(`请求失败：${statusCode}`);
+  error.code = serverCode;
+  error.statusCode = statusCode;
+  return error;
 }
 
 function request(path, options = {}) {

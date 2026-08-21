@@ -18,5 +18,6 @@ idf_component_register(
         scoring_service
         input_source_manager
         screen_adapter
+        json
         nvs_flash
 )

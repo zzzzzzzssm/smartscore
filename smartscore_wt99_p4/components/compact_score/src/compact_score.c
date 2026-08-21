@@ -327,7 +327,7 @@ static compact_score_error_code_t parse_event(
 
     int64_t value = 0;
     int flags_index = kind == COMPACT_SCORE_KIND_NUMBERED ? 5 : 4;
-    if (!json_integer(cJSON_GetArrayItem(event_json, flags_index), 0, 7,
+    if (!json_integer(cJSON_GetArrayItem(event_json, flags_index), 0, 15,
                       &value)) {
         set_error(error, COMPACT_SCORE_ERR_FLAGS, path);
         return COMPACT_SCORE_ERR_FLAGS;
@@ -1117,6 +1117,7 @@ static compact_score_error_code_t append_playback_event(
         }
         compact_score_playback_note_t *note = &playback->notes[(*index)++];
         note->midi = midi;
+        note->flags = event->flags;
         note->staff = staff;
         note->voice = event->voice;
         note->event_index = event->event_index;
@@ -1129,6 +1130,7 @@ static compact_score_error_code_t append_playback_event(
          ++pitch_index) {
         compact_score_playback_note_t *note = &playback->notes[(*index)++];
         note->midi = event->midi[pitch_index];
+        note->flags = event->flags;
         note->staff = staff;
         note->voice = event->voice;
         note->event_index = event->event_index;

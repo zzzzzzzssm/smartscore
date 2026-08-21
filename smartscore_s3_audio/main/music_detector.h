@@ -14,41 +14,8 @@ typedef enum {
 typedef enum {
     MUSIC_RECOGNITION_PROFILE_STRICT = 0,
     MUSIC_RECOGNITION_PROFILE_DEMO,
+    MUSIC_RECOGNITION_PROFILE_PERFORMANCE,
 } music_recognition_profile_t;
-
-#define MUSIC_DIAGNOSTIC_MAX_RAW_CANDIDATES 4
-#define MUSIC_DIAGNOSTIC_MAX_NOTES 3
-#define MUSIC_DIAGNOSTIC_REASON_SIZE 32
-
-typedef enum {
-    MUSIC_DIAGNOSTIC_SOURCE_YIN = 0,
-    MUSIC_DIAGNOSTIC_SOURCE_LOW_YIN,
-    MUSIC_DIAGNOSTIC_SOURCE_LOW_TEMPLATE,
-    MUSIC_DIAGNOSTIC_SOURCE_SPECTRUM,
-} music_diagnostic_source_t;
-
-typedef struct {
-    int midi;
-    float frequency_hz;
-    float confidence;
-    music_diagnostic_source_t source;
-} music_diagnostic_candidate_t;
-
-typedef struct {
-    uint32_t timestamp_ms;
-    int raw_candidate_count;
-    music_diagnostic_candidate_t
-        raw_candidates[MUSIC_DIAGNOSTIC_MAX_RAW_CANDIDATES];
-    music_result_type_t candidate_type;
-    int candidate_note_count;
-    int candidate_notes[MUSIC_DIAGNOSTIC_MAX_NOTES];
-    music_result_type_t final_type;
-    int final_note_count;
-    int final_notes[MUSIC_DIAGNOSTIC_MAX_NOTES];
-    int octave_shift;
-    float band_snr_db[3];
-    char reject_reason[MUSIC_DIAGNOSTIC_REASON_SIZE];
-} music_diagnostic_t;
 
 typedef struct {
     music_result_type_t type;

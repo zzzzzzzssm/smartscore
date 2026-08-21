@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -176,8 +177,10 @@ esp_err_t scoring_service_init(void)
         memset(&s_service, 0, sizeof(s_service));
         return ESP_ERR_NO_MEM;
     }
-    if (xTaskCreate(scoring_task, "score_task", SCORING_TASK_STACK_BYTES,
-                    NULL, SCORING_TASK_PRIORITY, &s_service.task) != pdPASS) {
+    if (xTaskCreateWithCaps(
+            scoring_task, "score_task", SCORING_TASK_STACK_BYTES,
+            NULL, SCORING_TASK_PRIORITY, &s_service.task,
+            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
         vSemaphoreDelete(s_service.lock);
         vQueueDelete(s_service.queue);
         vEventGroupDelete(s_service.events);
