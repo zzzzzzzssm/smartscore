@@ -14,6 +14,10 @@ typedef struct {
     bool onset_history[MUSIC_STABLE_HISTORY_SIZE];
     int history_count;
     int history_position;
+    music_result_type_t consecutive_type;
+    int consecutive_identity;
+    bool consecutive_minor;
+    int consecutive_count;
     music_result_t last_emitted;
     bool has_last_emitted;
     uint32_t last_emit_ms;

@@ -14,4 +14,6 @@ void music_uart_link_set_ready(bool ready);
 /* Both functions are non-blocking. Queue overflow only increments tx_drop. */
 void music_uart_link_submit_result(const music_result_t *result);
 void music_uart_link_submit_pitch(const music_result_t *result);
+
+/* Non-blocking latest-state note set (protocol v2 "notes" events). */
 void music_uart_link_submit_note_set(const piano_note_set_t *note_set);

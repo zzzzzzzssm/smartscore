@@ -13,7 +13,6 @@
 #include "esp_check.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
-#include "esp_psram.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -30,40 +29,66 @@ typedef struct {
     uint8_t next;
 } low_yin_stabilizer_t;
 
-typedef struct {
 #if MUSIC_USE_SINGLE_MIC_CH1
-    float audio_ring[MUSIC_FFT_SIZE];
-    float frame_float[MUSIC_CAPTURE_FRAMES];
-    audio_preprocess_state_t preprocess;
+static float s_audio_ring[MUSIC_FFT_SIZE];
+static float s_frame_float[MUSIC_CAPTURE_FRAMES];
 #else
-    float audio_ring[2][MUSIC_FFT_SIZE];
-    float frame_float[2][MUSIC_CAPTURE_FRAMES];
-    audio_preprocess_state_t preprocess[2];
-    dual_mic_selector_t demo_selector;
-    dual_mic_selection_t demo_selection;
+static float s_audio_ring[2][MUSIC_FFT_SIZE];
+static float s_frame_float[2][MUSIC_CAPTURE_FRAMES];
 #endif
-    float yin_window[MUSIC_YIN_WINDOW_SIZE];
-    float low_yin_window[MUSIC_LOW_YIN_WINDOW_SIZE];
-    low_note_detector_t low_note_detector;
-    low_yin_stabilizer_t low_yin_stabilizer;
-    audio_frame_metrics_t metrics[2];
-    music_classifier_t classifier;
-    adaptive_input_control_t input_control;
-    piano_note_tracker_t note_tracker;
-    chord_result_t last_spectrum_debug;
-} music_dsp_context_t;
-
-static music_dsp_context_t *s_dsp_context;
+static float s_yin_window[MUSIC_YIN_WINDOW_SIZE];
+static float s_low_yin_window[MUSIC_LOW_YIN_WINDOW_SIZE];
+static low_note_detector_t s_low_note_detector;
+static low_yin_stabilizer_t s_low_yin_stabilizer;
+static piano_note_tracker_t s_note_tracker;
 static size_t s_ring_write_position;
 static size_t s_ring_filled;
+static int s_bass_midi = -1;
+static int s_bass_pending_midi = -1;
+static unsigned s_bass_pending_frames = 0;
+static unsigned s_bass_missing_frames = 0;
+static bool s_bass_injected = false;
 static volatile music_recognition_profile_t s_recognition_profile =
     MUSIC_RECOGNITION_PROFILE_STRICT;
 
-#define s_audio_ring (s_dsp_context->audio_ring)
-#define s_frame_float (s_dsp_context->frame_float)
-#define s_yin_window (s_dsp_context->yin_window)
-#define s_low_yin_window (s_dsp_context->low_yin_window)
-#define s_low_note_detector (s_dsp_context->low_note_detector)
+static uint8_t low_fallback_velocity(float rms)
+{
+    const float level = fminf(fmaxf(rms, 0.0f) / PIANO_TRACKER_VELOCITY_RMS,
+                              1.0f);
+    const int velocity = (int)lrintf(127.0f * sqrtf(level));
+    return (uint8_t)(velocity < 1 ? 1 : (velocity > 127 ? 127 : velocity));
+}
+
+static bool bass_attack_supported(const low_note_result_t *low_match,
+                                  const yin_result_t *low_yin, int *midi)
+{
+    *midi = -1;
+    if (low_yin != NULL && low_yin->valid &&
+        low_yin->confidence >= MUSIC_LOW_CHORD_YIN_CONFIDENCE &&
+        low_yin->midi >= MUSIC_PIANO_MIDI_MIN &&
+        low_yin->midi <= MUSIC_VIRTUAL_FUNDAMENTAL_MAX_MIDI) {
+        *midi = low_yin->midi;
+        return true;
+    }
+    if (low_match != NULL && low_match->valid && low_match->count == 1U &&
+        low_match->confidence[0] >= PIANO_TRACKER_SINGLE_MIN_CONFIDENCE) {
+        *midi = low_match->midi[0];
+        return true;
+    }
+    return false;
+}
+
+static bool bass_hold_supported(const low_note_result_t *low_match,
+                                const yin_result_t *low_yin, int midi)
+{
+    if (low_yin != NULL && low_yin->valid && low_yin->midi == midi &&
+        low_yin->confidence >= 0.70f) {
+        return true;
+    }
+    return low_match != NULL && low_match->valid &&
+        low_match->count == 1U && low_match->midi[0] == midi &&
+        low_match->confidence[0] >= MUSIC_LOW_MATCH_SECONDARY_CONFIDENCE;
+}
 
 static void invalidate_yin(yin_result_t *result)
 {
@@ -155,58 +180,6 @@ static void low_yin_stabilizer_update(
                       sizeof(result->note_name));
 }
 
-void music_detector_set_recognition_profile(music_recognition_profile_t profile)
-{
-    if (profile != MUSIC_RECOGNITION_PROFILE_DEMO &&
-        profile != MUSIC_RECOGNITION_PROFILE_PERFORMANCE) {
-        profile = MUSIC_RECOGNITION_PROFILE_STRICT;
-    }
-    const music_recognition_profile_t previous = s_recognition_profile;
-    s_recognition_profile = profile;
-    if (previous != profile) {
-        const char *name = profile == MUSIC_RECOGNITION_PROFILE_PERFORMANCE
-                               ? "performance"
-                               : (profile == MUSIC_RECOGNITION_PROFILE_DEMO
-                                      ? "demo" : "strict");
-        ESP_LOGI("MUSIC", "recognition profile: %s", name);
-    }
-}
-
-music_recognition_profile_t music_detector_get_recognition_profile(void)
-{
-    const music_recognition_profile_t profile = s_recognition_profile;
-    return profile == MUSIC_RECOGNITION_PROFILE_DEMO ||
-                   profile == MUSIC_RECOGNITION_PROFILE_PERFORMANCE
-               ? profile : MUSIC_RECOGNITION_PROFILE_STRICT;
-}
-
-static float signal_snr_db(const audio_frame_metrics_t *metrics,
-                           const audio_preprocess_state_t *preprocess)
-{
-    const float reference = fmaxf(preprocess->noise_floor,
-                                  MUSIC_MIN_RMS * 0.25f);
-    const float ratio = metrics->rms / fmaxf(reference, 1.0e-7f);
-    return ratio > 1.0e-6f ? 20.0f * log10f(ratio) : -120.0f;
-}
-
-static void reset_spectral_history(void)
-{
-    memset(s_audio_ring, 0, sizeof(s_audio_ring));
-    memset(s_yin_window, 0, sizeof(s_yin_window));
-    memset(s_low_yin_window, 0, sizeof(s_low_yin_window));
-    s_ring_write_position = 0;
-    s_ring_filled = 0;
-    low_note_detector_reset(&s_low_note_detector);
-    low_yin_stabilizer_reset(&s_dsp_context->low_yin_stabilizer);
-}
-
-static bool copy_low_yin_window(int selected_mic)
-{
-    return low_note_detector_copy_recent(
-        &s_low_note_detector, selected_mic - 1, s_low_yin_window,
-        MUSIC_LOW_YIN_WINDOW_SIZE);
-}
-
 static void promote_low_match_yin(const low_note_result_t *match,
                                   yin_result_t *low_yin)
 {
@@ -226,6 +199,58 @@ static void promote_low_match_yin(const low_note_result_t *match,
                       sizeof(low_yin->note_name));
 }
 
+void music_detector_set_recognition_profile(music_recognition_profile_t profile)
+{
+    if (profile != MUSIC_RECOGNITION_PROFILE_DEMO) {
+        profile = MUSIC_RECOGNITION_PROFILE_STRICT;
+    }
+    const music_recognition_profile_t previous = s_recognition_profile;
+    s_recognition_profile = profile;
+    if (previous != profile) {
+        ESP_LOGI("MUSIC", "recognition profile: %s",
+                 profile == MUSIC_RECOGNITION_PROFILE_DEMO ? "demo" : "strict");
+    }
+}
+
+music_recognition_profile_t music_detector_get_recognition_profile(void)
+{
+    return s_recognition_profile == MUSIC_RECOGNITION_PROFILE_DEMO
+               ? MUSIC_RECOGNITION_PROFILE_DEMO
+               : MUSIC_RECOGNITION_PROFILE_STRICT;
+}
+
+static float signal_snr_db(const audio_frame_metrics_t *metrics,
+                           const audio_preprocess_state_t *preprocess)
+{
+    const float reference = fmaxf(preprocess->noise_floor,
+                                  MUSIC_MIN_RMS * 0.25f);
+    const float ratio = metrics->rms / fmaxf(reference, 1.0e-7f);
+    return ratio > 1.0e-6f ? 20.0f * log10f(ratio) : -120.0f;
+}
+
+static void reset_spectral_history(void)
+{
+    memset(s_audio_ring, 0, sizeof(s_audio_ring));
+    memset(s_yin_window, 0, sizeof(s_yin_window));
+    memset(s_low_yin_window, 0, sizeof(s_low_yin_window));
+    s_ring_write_position = 0;
+    s_ring_filled = 0;
+    s_bass_midi = -1;
+    s_bass_pending_midi = -1;
+    s_bass_pending_frames = 0;
+    s_bass_missing_frames = 0;
+    s_bass_injected = false;
+    low_note_detector_reset(&s_low_note_detector);
+    low_yin_stabilizer_reset(&s_low_yin_stabilizer);
+}
+
+static bool copy_low_yin_window(int selected_mic)
+{
+    return low_note_detector_copy_recent(
+        &s_low_note_detector, selected_mic - 1, s_low_yin_window,
+        MUSIC_LOW_YIN_WINDOW_SIZE);
+}
+
 static void copy_yin_window(int selected_mic)
 {
 #if MUSIC_USE_SINGLE_MIC_CH1
@@ -239,6 +264,32 @@ static void copy_yin_window(int selected_mic)
         s_yin_window[i] = ring[(start + i) % MUSIC_FFT_SIZE];
     }
 }
+
+#if !MUSIC_USE_SINGLE_MIC_CH1
+static int update_selected_mic(int selected, int *challenger_count,
+                               const audio_frame_metrics_t metrics[2],
+                               const audio_preprocess_state_t state[2])
+{
+    float score[2];
+    for (int mic = 0; mic < 2; ++mic) {
+        const float snr_proxy = metrics[mic].rms / fmaxf(state[mic].noise_gate, 1.0e-6f);
+        score[mic] = snr_proxy / (snr_proxy + 1.0f);
+        if (metrics[mic].clipped) score[mic] *= 0.15f;
+    }
+    const int current = selected - 1;
+    const int other = 1 - current;
+    if (score[other] > score[current] + MUSIC_MIC_SWITCH_SCORE_MARGIN) {
+        ++*challenger_count;
+        if (*challenger_count >= MUSIC_MIC_SWITCH_CONFIRM_FRAMES) {
+            *challenger_count = 0;
+            return other + 1;
+        }
+    } else {
+        *challenger_count = 0;
+    }
+    return selected;
+}
+#endif
 
 static void log_result(const music_result_t *result, const char *unknown_reason,
                        const chord_result_t *chord)
@@ -365,46 +416,39 @@ static const char *adaptive_snr_tier(bool demo_profile, float snr_db)
     return "reject-poly";
 }
 
-#define preprocess (context->preprocess)
-#define metrics (context->metrics)
-#define classifier (context->classifier)
-#define input_control (context->input_control)
-#define note_tracker (context->note_tracker)
-#define low_note_detector (context->low_note_detector)
-#define low_yin_stabilizer (context->low_yin_stabilizer)
-#if !MUSIC_USE_SINGLE_MIC_CH1
-#define demo_selector (context->demo_selector)
-#define demo_selection (context->demo_selection)
-#endif
-#define last_spectrum_debug (context->last_spectrum_debug)
-
 static void music_dsp_task(void *argument)
 {
-    music_dsp_context_t *context = (music_dsp_context_t *)argument;
-    if (context == NULL) {
-        ESP_LOGE("MUSIC", "DSP task received a null PSRAM context");
-        vTaskDelete(NULL);
-        return;
-    }
+    (void)argument;
+#if MUSIC_USE_SINGLE_MIC_CH1
+    audio_preprocess_state_t preprocess;
+#else
+    audio_preprocess_state_t preprocess[2];
+#endif
+    audio_frame_metrics_t metrics[2] = {0};
+    music_classifier_t classifier;
 #if MUSIC_USE_SINGLE_MIC_CH1
     audio_preprocess_init(&preprocess);
 #else
     for (int mic = 0; mic < 2; ++mic) audio_preprocess_init(&preprocess[mic]);
 #endif
     music_classifier_init(&classifier);
+    adaptive_input_control_t input_control;
     adaptive_input_control_init(&input_control,
                                 es7210_capture_get_input_gain());
     music_recognition_profile_t active_profile =
         MUSIC_RECOGNITION_PROFILE_STRICT;
     bool active_profile_initialized = false;
     yin_detector_init();
-    low_note_detector_init(&low_note_detector);
-    low_yin_stabilizer_reset(&low_yin_stabilizer);
+    low_note_detector_init(&s_low_note_detector);
+    low_yin_stabilizer_reset(&s_low_yin_stabilizer);
+    piano_note_tracker_init(&s_note_tracker);
     int selected_mic = 1;
-    piano_note_tracker_init(&note_tracker);
     unsigned spectrum_hop_counter = 0;
 #if !MUSIC_USE_SINGLE_MIC_CH1
+    int challenger_count = 0;
+    dual_mic_selector_t demo_selector;
     dual_mic_selector_init(&demo_selector);
+    dual_mic_selection_t demo_selection = {0};
 #endif
     uint32_t calibration_start_ms = 0;
     uint32_t last_diagnostic_ms = 0;
@@ -412,13 +456,13 @@ static void music_dsp_task(void *argument)
     uint32_t last_spectrum_debug_ms = 0;
     uint32_t last_low_match_log_ms = 0;
     uint32_t low_peak_diagnostics = 0;
-    bool low_dsp_stack_warned = false;
     float selected_snr_db = -120.0f;
+    chord_result_t last_spectrum_debug = {0};
 #if MUSIC_USE_SINGLE_MIC_CH1
     float last_yin_confidence = 0.0f;
     float last_chord_confidence = 0.0f;
-#endif
     unsigned active_hangover_blocks = 0;
+#endif
     bool calibrated = false;
     diagnostics_counters_t *counters = diagnostics_counters();
 
@@ -442,34 +486,33 @@ static void music_dsp_task(void *argument)
             if (active_profile_initialized) {
                 piano_note_set_t released_set;
                 if (piano_note_tracker_release_all(
-                        &note_tracker, block_timestamp_ms, &released_set)) {
-                    log_exact_note_set(&released_set);
+                        &s_note_tracker, block_timestamp_ms, &released_set)) {
                     music_uart_link_submit_note_set(&released_set);
                 }
-            } else {
-                piano_note_tracker_init(&note_tracker);
             }
             active_profile_initialized = true;
             active_profile = requested_profile;
             music_classifier_init(&classifier);
-            low_note_detector_reset(&low_note_detector);
-            low_yin_stabilizer_reset(&low_yin_stabilizer);
+            low_note_detector_reset(&s_low_note_detector);
+            low_yin_stabilizer_reset(&s_low_yin_stabilizer);
+            s_bass_midi = -1;
+            s_bass_pending_midi = -1;
+            s_bass_pending_frames = 0;
+            s_bass_missing_frames = 0;
+            s_bass_injected = false;
             spectrum_hop_counter = 0;
 #if !MUSIC_USE_SINGLE_MIC_CH1
             dual_mic_selector_init(&demo_selector);
+            challenger_count = 0;
 #endif
-            const char *profile_name =
-                active_profile == MUSIC_RECOGNITION_PROFILE_PERFORMANCE
-                    ? "performance"
-                    : (active_profile == MUSIC_RECOGNITION_PROFILE_DEMO
-                           ? "demo" : "strict");
             ESP_LOGI("MUSIC", "recognition history reset for profile: %s",
-                     profile_name);
+                     active_profile == MUSIC_RECOGNITION_PROFILE_DEMO
+                         ? "demo" : "strict");
             float requested_gain_db = input_control.current_gain_db;
             adaptive_gain_reason_t gain_reason = ADAPTIVE_GAIN_REASON_NONE;
             if (adaptive_input_control_profile_target(
                     &input_control,
-                    active_profile != MUSIC_RECOGNITION_PROFILE_STRICT,
+                    active_profile == MUSIC_RECOGNITION_PROFILE_DEMO,
                     &requested_gain_db, &gain_reason)) {
                 const float old_gain_db = input_control.current_gain_db;
                 const esp_err_t gain_error =
@@ -503,7 +546,7 @@ static void music_dsp_task(void *argument)
             }
         }
         const bool demo_profile =
-            active_profile != MUSIC_RECOGNITION_PROFILE_STRICT;
+            active_profile == MUSIC_RECOGNITION_PROFILE_DEMO;
 #if MUSIC_USE_SINGLE_MIC_CH1
         audio_preprocess_frame(&preprocess, block->mic1, s_frame_float,
                                MUSIC_CAPTURE_FRAMES, &metrics[0]);
@@ -515,13 +558,16 @@ static void music_dsp_task(void *argument)
                                MUSIC_CAPTURE_FRAMES, &metrics[0]);
         audio_preprocess_frame(&preprocess[1], block->mic2, s_frame_float[1],
                                MUSIC_CAPTURE_FRAMES, &metrics[1]);
-        dual_mic_selector_update(&demo_selector, metrics, preprocess,
-                                 &demo_selection);
-        if (demo_selection.switched) {
-            low_yin_stabilizer_reset(&low_yin_stabilizer);
+        if (demo_profile) {
+            dual_mic_selector_update(&demo_selector, metrics, preprocess,
+                                     &demo_selection);
+            selected_mic = demo_selection.selected_mic;
+            selected_snr_db =
+                demo_selector.quality[selected_mic - 1].snr_db;
+        } else {
+            selected_snr_db = signal_snr_db(&metrics[selected_mic - 1],
+                                             &preprocess[selected_mic - 1]);
         }
-        selected_mic = demo_selection.selected_mic;
-        selected_snr_db = demo_selector.quality[selected_mic - 1].snr_db;
         const size_t metric_count = 2;
 #endif
         if (demo_profile && calibrated) {
@@ -546,6 +592,7 @@ static void music_dsp_task(void *argument)
                         audio_preprocess_rescale_gain(&preprocess[mic],
                                                       linear_scale);
                     }
+                    dual_mic_selector_init(&demo_selector);
 #endif
                     adaptive_input_control_applied(
                         &input_control, requested_gain_db,
@@ -572,16 +619,16 @@ static void music_dsp_task(void *argument)
             }
         }
 #if MUSIC_USE_SINGLE_MIC_CH1
-        low_note_detector_push(&low_note_detector, 0, s_frame_float,
+        low_note_detector_push(&s_low_note_detector, 0, s_frame_float,
                                MUSIC_CAPTURE_FRAMES);
         for (size_t i = 0; i < MUSIC_CAPTURE_FRAMES; ++i) {
             const size_t index = (s_ring_write_position + i) % MUSIC_FFT_SIZE;
             s_audio_ring[index] = s_frame_float[i];
         }
 #else
-        low_note_detector_push(&low_note_detector, 0, s_frame_float[0],
+        low_note_detector_push(&s_low_note_detector, 0, s_frame_float[0],
                                MUSIC_CAPTURE_FRAMES);
-        low_note_detector_push(&low_note_detector, 1, s_frame_float[1],
+        low_note_detector_push(&s_low_note_detector, 1, s_frame_float[1],
                                MUSIC_CAPTURE_FRAMES);
         for (size_t i = 0; i < MUSIC_CAPTURE_FRAMES; ++i) {
             const size_t index = (s_ring_write_position + i) % MUSIC_FFT_SIZE;
@@ -596,55 +643,32 @@ static void music_dsp_task(void *argument)
         }
         es7210_capture_release_block(block_index);
 
-        const uint32_t calibration_elapsed_ms =
-            block_timestamp_ms - calibration_start_ms;
-#if MUSIC_USE_SINGLE_MIC_CH1
-        const bool calibration_quiet_ready =
-            audio_preprocess_calibration_ready(&preprocess);
-#else
-        const bool calibration_quiet_ready =
-            audio_preprocess_calibration_ready(&preprocess[0]) &&
-            audio_preprocess_calibration_ready(&preprocess[1]);
-#endif
-        const bool calibration_timed_out =
-            calibration_elapsed_ms >= MUSIC_CALIBRATION_MAX_MS;
-        if (!calibrated &&
-            ((calibration_elapsed_ms >= MUSIC_CALIBRATION_MS &&
-              calibration_quiet_ready) || calibration_timed_out)) {
+        if (!calibrated && block_timestamp_ms - calibration_start_ms >= MUSIC_CALIBRATION_MS) {
 #if MUSIC_USE_SINGLE_MIC_CH1
             audio_preprocess_finish_calibration(&preprocess);
             calibrated = true;
-            ESP_LOGI("AUDIO",
-                     "CH1 calibration finished status=%s valid=%" PRIu32
-                     " rejected=%" PRIu32,
-                     calibration_quiet_ready ? "quiet" : "timeout",
-                     preprocess.calibration_frames,
-                     preprocess.calibration_rejected_frames);
+            ESP_LOGI("AUDIO", "CH1 calibration finished");
             ESP_LOGI("AUDIO", "ch1_noise_rms=%.5f ch1_noise_gate=%.5f",
                      preprocess.noise_floor, preprocess.noise_gate);
 #else
             audio_preprocess_finish_calibration(&preprocess[0]);
             audio_preprocess_finish_calibration(&preprocess[1]);
             calibrated = true;
-            ESP_LOGI("AUDIO",
-                     "calibration finished status=%s mic1_valid=%" PRIu32
-                     " mic1_rejected=%" PRIu32 " mic2_valid=%" PRIu32
-                     " mic2_rejected=%" PRIu32,
-                     calibration_quiet_ready ? "quiet" : "timeout",
-                     preprocess[0].calibration_frames,
-                     preprocess[0].calibration_rejected_frames,
-                     preprocess[1].calibration_frames,
-                     preprocess[1].calibration_rejected_frames);
+            ESP_LOGI("AUDIO", "calibration finished");
             ESP_LOGI("AUDIO", "mic1_noise=%.5f mic2_noise=%.5f mic1_gate=%.5f mic2_gate=%.5f",
                      preprocess[0].noise_floor, preprocess[1].noise_floor,
                      preprocess[0].noise_gate, preprocess[1].noise_gate);
 #endif
         }
 
+        /* The integrated low-note chain makes the full analysis heavier than
+         * one capture block budget. Like the upstream design, run the complete
+         * YIN/FFT/chord/classifier pass every MUSIC_SPECTRUM_ANALYSIS_HOPS
+         * blocks so the DSP task can block between blocks and never starve
+         * the idle task watchdog. Sample pushing keeps running every block. */
         if (calibrated && s_ring_filled >= MUSIC_FFT_SIZE &&
             (++spectrum_hop_counter % MUSIC_SPECTRUM_ANALYSIS_HOPS) == 0) {
             yin_result_t yin = {.midi = -1};
-            yin_result_t high_yin = {.midi = -1};
             yin_result_t raw_low_yin = {.midi = -1};
             yin_result_t low_yin = {.midi = -1};
             low_note_result_t low_match = {0};
@@ -667,30 +691,24 @@ static void music_dsp_task(void *argument)
                 const bool low_window_ready =
                     copy_low_yin_window(selected_mic);
                 int64_t started = esp_timer_get_time();
-                yin_detector_analyze_range(
-                    s_yin_window, MUSIC_YIN_WINDOW_SIZE, MUSIC_SAMPLE_RATE_HZ,
-                    MUSIC_HIGH_YIN_MIN_FREQUENCY_HZ,
-                    MUSIC_MAX_FREQUENCY_HZ, &high_yin);
+                yin_detector_analyze(s_yin_window, MUSIC_YIN_WINDOW_SIZE, &yin);
                 if (low_window_ready) {
                     yin_detector_analyze_range(
                         s_low_yin_window, MUSIC_LOW_YIN_WINDOW_SIZE,
-                        MUSIC_LOW_YIN_SAMPLE_RATE_HZ, MUSIC_MIN_FREQUENCY_HZ,
+                        MUSIC_LOW_YIN_SAMPLE_RATE_HZ,
+                        MUSIC_LOW_MIN_FREQUENCY_HZ,
                         MUSIC_LOW_YIN_MAX_FREQUENCY_HZ, &raw_low_yin);
                 }
                 low_yin_stabilizer_update(
-                    &low_yin_stabilizer, &raw_low_yin, true, &low_yin);
+                    &s_low_yin_stabilizer, &raw_low_yin, true, &low_yin);
+                counters->yin_time_us = (uint32_t)(esp_timer_get_time() - started);
                 exact_signal_active = true;
                 exact_attack_allowed = above_gate && !metrics[0].clipped;
                 exact_rms = metrics[0].rms;
                 low_note_detector_analyze(
-                    &low_note_detector, 0, true, exact_attack_allowed,
-                    metrics[0].clipped,
-                    &low_match);
-                if (low_match.tonal_override) {
-                    exact_attack_allowed = true;
-                }
+                    &s_low_note_detector, 0, true, exact_attack_allowed,
+                    metrics[0].clipped, &low_match);
                 promote_low_match_yin(&low_match, &low_yin);
-                counters->yin_time_us = (uint32_t)(esp_timer_get_time() - started);
                 started = esp_timer_get_time();
                 chord_detector_analyze(s_audio_ring, NULL, s_ring_write_position,
                                        metrics[0].rms, 0.0f, demo_profile,
@@ -698,132 +716,177 @@ static void music_dsp_task(void *argument)
                                        low_yin.confidence, &low_match,
                                        &chord);
                 counters->chord_time_us = (uint32_t)(esp_timer_get_time() - started);
+                harmonic_ratio = yin.valid ?
+                    chord_detector_harmonic_explained_ratio(yin.frequency_hz) : 0.0f;
             } else {
                 low_yin_stabilizer_update(
-                    &low_yin_stabilizer, NULL, false, &low_yin);
+                    &s_low_yin_stabilizer, NULL, false, &low_yin);
                 low_note_detector_analyze(
-                    &low_note_detector, 0, false, false,
+                    &s_low_note_detector, 0, false, false,
                     metrics[0].clipped, &low_match);
-                if (low_match.tonal_override) {
-                    exact_signal_active = true;
-                    exact_attack_allowed = true;
-                    exact_rms = metrics[0].rms;
-                    promote_low_match_yin(&low_match, &low_yin);
-                    const int64_t started = esp_timer_get_time();
-                    chord_detector_analyze(
-                        s_audio_ring, NULL, s_ring_write_position,
-                        metrics[0].rms, 0.0f, demo_profile,
-                        selected_snr_db, low_yin.midi,
-                        low_yin.confidence, &low_match, &chord);
-                    counters->chord_time_us = (uint32_t)(
-                        esp_timer_get_time() - started);
-                }
                 counters->yin_time_us = 0;
-                if (!low_match.tonal_override) {
-                    counters->mic1_fft_time_us = 0;
-                    counters->mic2_fft_time_us = 0;
-                    counters->chord_time_us = 0;
-                }
+                counters->mic1_fft_time_us = 0;
+                counters->mic2_fft_time_us = 0;
+                counters->chord_time_us = 0;
             }
+            last_yin_confidence = yin.confidence;
             last_chord_confidence = chord.confidence;
 #else
-            const bool exact_signal_observed =
-                demo_selector.quality[selected_mic - 1].signal_valid &&
-                selected_snr_db >= MUSIC_MIC_MIN_SNR_DB;
-            if (exact_signal_observed) {
-                active_hangover_blocks = MUSIC_ACTIVITY_HANGOVER_BLOCKS;
-            } else if (active_hangover_blocks > 0U) {
-                --active_hangover_blocks;
+            if (!demo_profile) {
+                selected_mic = update_selected_mic(
+                    selected_mic, &challenger_count, metrics, preprocess);
+                selected_snr_db = signal_snr_db(
+                    &metrics[selected_mic - 1],
+                    &preprocess[selected_mic - 1]);
             }
-            exact_signal_active = exact_signal_observed ||
-                                  active_hangover_blocks > 0U;
-            exact_attack_allowed = exact_signal_observed &&
+            copy_yin_window(selected_mic);
+            exact_signal_active = audio_preprocess_above_gate(
+                &preprocess[selected_mic - 1],
+                &metrics[selected_mic - 1]);
+            exact_attack_allowed = exact_signal_active &&
                 !metrics[selected_mic - 1].clipped;
             exact_rms = metrics[selected_mic - 1].rms;
             int64_t started = esp_timer_get_time();
-            if (exact_signal_active) {
-                copy_yin_window(selected_mic);
-                const bool low_window_ready =
-                    copy_low_yin_window(selected_mic);
+            yin_detector_analyze(s_yin_window, MUSIC_YIN_WINDOW_SIZE, &yin);
+            const bool low_window_ready =
+                copy_low_yin_window(selected_mic);
+            if (low_window_ready) {
                 yin_detector_analyze_range(
-                    s_yin_window, MUSIC_YIN_WINDOW_SIZE, MUSIC_SAMPLE_RATE_HZ,
-                    MUSIC_HIGH_YIN_MIN_FREQUENCY_HZ,
-                    MUSIC_MAX_FREQUENCY_HZ, &high_yin);
-                if (low_window_ready) {
-                    yin_detector_analyze_range(
-                        s_low_yin_window, MUSIC_LOW_YIN_WINDOW_SIZE,
-                        MUSIC_LOW_YIN_SAMPLE_RATE_HZ, MUSIC_MIN_FREQUENCY_HZ,
-                        MUSIC_LOW_YIN_MAX_FREQUENCY_HZ, &raw_low_yin);
-                }
-                low_yin_stabilizer_update(
-                    &low_yin_stabilizer, &raw_low_yin, true, &low_yin);
-            } else {
-                low_yin_stabilizer_update(
-                    &low_yin_stabilizer, NULL, false, &low_yin);
+                    s_low_yin_window, MUSIC_LOW_YIN_WINDOW_SIZE,
+                    MUSIC_LOW_YIN_SAMPLE_RATE_HZ,
+                    MUSIC_LOW_MIN_FREQUENCY_HZ,
+                    MUSIC_LOW_YIN_MAX_FREQUENCY_HZ, &raw_low_yin);
             }
+            low_yin_stabilizer_update(
+                &s_low_yin_stabilizer, &raw_low_yin,
+                exact_signal_active, &low_yin);
             low_note_detector_analyze(
-                &low_note_detector, selected_mic - 1,
+                &s_low_note_detector, selected_mic - 1,
                 exact_signal_active, exact_attack_allowed,
                 metrics[selected_mic - 1].clipped, &low_match);
-            if (low_match.tonal_override) {
-                exact_signal_active = true;
-                exact_attack_allowed = true;
-            }
             promote_low_match_yin(&low_match, &low_yin);
             counters->yin_time_us = (uint32_t)(esp_timer_get_time() - started);
             started = esp_timer_get_time();
-            const float mic1_weight = demo_selector.quality[0].signal_valid
-                ? fmaxf(demo_selector.quality[0].score, 0.01f) : 0.0f;
-            const float mic2_weight = demo_selector.quality[1].signal_valid
-                ? fmaxf(demo_selector.quality[1].score, 0.01f) : 0.0f;
-            if (exact_signal_active) {
-                chord_detector_analyze(
-                    s_audio_ring[0], s_audio_ring[1], s_ring_write_position,
-                    mic1_weight, mic2_weight, true, selected_snr_db,
-                    low_yin.midi, low_yin.confidence, &low_match, &chord);
-            }
+            const float mic1_weight = demo_profile
+                ? (demo_selector.quality[0].signal_valid
+                       ? fmaxf(demo_selector.quality[0].score, 0.01f) : 0.0f)
+                : metrics[0].rms;
+            const float mic2_weight = demo_profile
+                ? (demo_selector.quality[1].signal_valid
+                       ? fmaxf(demo_selector.quality[1].score, 0.01f) : 0.0f)
+                : metrics[1].rms;
+            chord_detector_analyze(
+                s_audio_ring[0], s_audio_ring[1], s_ring_write_position,
+                mic1_weight, mic2_weight, demo_profile, selected_snr_db,
+                low_yin.midi, low_yin.confidence, &low_match,
+                &chord);
             counters->chord_time_us = (uint32_t)(esp_timer_get_time() - started);
+            harmonic_ratio = yin.valid ?
+                chord_detector_harmonic_explained_ratio(yin.frequency_hz) : 0.0f;
 #endif
-            if (low_yin.valid &&
-                low_yin.midi <= MUSIC_VIRTUAL_FUNDAMENTAL_MAX_MIDI &&
-                (!high_yin.valid || low_yin.confidence >= high_yin.confidence)) {
-                yin = low_yin;
-            } else {
-                yin = high_yin;
-            }
             if (low_match.strongest_midi >= 0 &&
                 block_timestamp_ms - last_low_match_log_ms >= 500U) {
                 char strongest_name[8] = "?";
                 note_midi_to_name(low_match.strongest_midi, strongest_name,
                                   sizeof(strongest_name));
                 ESP_LOGI("LOW_MATCH",
-                         "best=%s score=%.2f conf=%.2f active=%u signal=%s attack=%s",
+                         "best=%s score=%.2f conf=%.2f active=%u signal=%s attack=%s low_yin=%s(%.2f)",
                          strongest_name,
                          (double)low_match.strongest_score,
                          (double)low_match.strongest_confidence,
                          (unsigned)low_match.count,
                          exact_signal_active ? "yes" : "no",
-                         exact_attack_allowed ? "yes" : "hold");
+                         exact_attack_allowed ? "yes" : "hold",
+                         low_yin.valid ? low_yin.note_name : "-",
+                         (double)low_yin.confidence);
                 last_low_match_log_ms = block_timestamp_ms;
             }
-#if MUSIC_USE_SINGLE_MIC_CH1
-            last_yin_confidence = yin.confidence;
-#endif
-            harmonic_ratio = yin.valid ?
-                chord_detector_harmonic_explained_ratio(yin.frequency_hz) : 0.0f;
+            /* The exact-key tracker consumes the low-note chain plus the
+             * chord evidence layer. Its note set events are additive and do
+             * not touch the legacy result stream below. */
             piano_note_set_t note_set;
-            if (piano_note_tracker_update(
-                    &note_tracker, &chord, &high_yin, &low_yin,
-                    &low_match,
+            bool note_set_changed = piano_note_tracker_update(
+                    &s_note_tracker, &chord, &yin, &low_yin, &low_match,
                     harmonic_ratio, exact_signal_active,
                     exact_attack_allowed,
 #if MUSIC_USE_SINGLE_MIC_CH1
                     false,
 #else
-                    demo_selection.health != DUAL_MIC_HEALTH_DUAL_OK,
+                    demo_profile &&
+                        demo_selection.health != DUAL_MIC_HEALTH_DUAL_OK,
 #endif
                     exact_rms, block_timestamp_ms,
-                    &note_set)) {
+                    &note_set);
+            /* Bass fallback (C2..B3) with hysteresis. The low-rate YIN is
+             * the stable sustained-bass evidence; the Goertzel matcher opens
+             * attacks when YIN confidence lags. Requires 2 clean frames to
+             * start, tolerates 3 missing frames before release. */
+            int bass_candidate = -1;
+            const bool bass_attack = exact_signal_active &&
+                exact_attack_allowed &&
+                bass_attack_supported(&low_match, &low_yin, &bass_candidate);
+            if (bass_attack) {
+                if (bass_candidate == s_bass_pending_midi) {
+                    if (s_bass_pending_frames < UINT8_MAX) {
+                        ++s_bass_pending_frames;
+                    }
+                } else {
+                    s_bass_pending_midi = bass_candidate;
+                    s_bass_pending_frames = 1;
+                }
+            } else {
+                s_bass_pending_midi = -1;
+                s_bass_pending_frames = 0;
+            }
+            if (s_bass_pending_frames >= 2U &&
+                s_bass_midi != s_bass_pending_midi) {
+                s_bass_midi = s_bass_pending_midi;
+                s_bass_missing_frames = 0;
+            }
+            if (s_bass_midi >= 0) {
+                if (bass_hold_supported(&low_match, &low_yin, s_bass_midi)) {
+                    s_bass_missing_frames = 0;
+                } else if (++s_bass_missing_frames >= 3U) {
+                    s_bass_midi = -1;
+                    s_bass_missing_frames = 0;
+                }
+            }
+            if (s_bass_midi >= 0 && note_set.count < PIANO_NOTE_SET_MAX_KEYS) {
+                bool already_present = false;
+                for (uint8_t index = 0; index < note_set.count; ++index) {
+                    if (note_set.midi[index] == s_bass_midi) {
+                        already_present = true;
+                        break;
+                    }
+                }
+                if (!already_present) {
+                    const uint8_t index = note_set.count++;
+                    note_set.midi[index] = s_bass_midi;
+                    const float bass_confidence =
+                        (low_yin.valid && low_yin.midi == s_bass_midi)
+                            ? low_yin.confidence
+                            : (low_match.valid && low_match.count == 1U &&
+                               low_match.midi[0] == s_bass_midi
+                                   ? low_match.confidence[0] : 0.85f);
+                    note_set.confidence[index] = fminf(
+                        fmaxf(bass_confidence, 0.0f), 1.0f);
+                    note_set.velocity[index] =
+                        low_fallback_velocity(exact_rms);
+                    note_set.timestamp_ms = block_timestamp_ms;
+                }
+            }
+            bool bass_present = false;
+            for (uint8_t index = 0; index < note_set.count; ++index) {
+                if (note_set.midi[index] == s_bass_midi) {
+                    bass_present = true;
+                    break;
+                }
+            }
+            if (s_bass_injected != bass_present) {
+                s_bass_injected = bass_present;
+                note_set_changed = true;
+            }
+            if (note_set_changed) {
                 log_exact_note_set(&note_set);
                 music_uart_link_submit_note_set(&note_set);
             }
@@ -835,8 +898,10 @@ static void music_dsp_task(void *argument)
             const char *unknown_reason = "not_analyzed";
             const int poly_stable_votes =
                 demo_profile && selected_snr_db >= MUSIC_DEMO_SNR_HIGH_DB
-                    ? MUSIC_DEMO_HIGH_SNR_STABLE_VOTES
-                    : MUSIC_STABLE_VOTE_COUNT;
+                    ? MUSIC_DEMO_HIGH_SNR_INTERVAL_CONSECUTIVE
+                    : (demo_profile && selected_snr_db >= MUSIC_DEMO_SNR_MEDIUM_DB
+                           ? MUSIC_DEMO_MEDIUM_SNR_INTERVAL_CONSECUTIVE
+                           : MUSIC_STABLE_VOTE_COUNT);
 #if MUSIC_USE_SINGLE_MIC_CH1
             const bool emit = music_classifier_update(&classifier, &metrics[0], &metrics[1],
                                                        analysis_active ? 0.0f : preprocess.noise_gate, 0.0f,
@@ -938,85 +1003,23 @@ static void music_dsp_task(void *argument)
         if (counters->dsp_cycle_time_us > block_budget_us) ++counters->dsp_deadline_miss_count;
         if (now_ms - last_performance_ms >= MUSIC_PERFORMANCE_INTERVAL_MS) {
             last_performance_ms = now_ms;
-            const UBaseType_t stack_bytes = uxTaskGetStackHighWaterMark(NULL);
-            if (!low_dsp_stack_warned &&
-                stack_bytes < MUSIC_DSP_STACK_WARN_BYTES) {
-                low_dsp_stack_warned = true;
-                ESP_LOGE("MUSIC", "MusicDspTask low stack: %u bytes remaining",
-                         (unsigned)stack_bytes);
-            }
             diagnostics_log_performance(es7210_capture_queue_depth(),
                                         heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-                                        stack_bytes);
+                                        uxTaskGetStackHighWaterMark(NULL));
         }
     }
 }
 
-#undef preprocess
-#undef metrics
-#undef classifier
-#undef input_control
-#undef note_tracker
-#undef low_note_detector
-#undef low_yin_stabilizer
-#if !MUSIC_USE_SINGLE_MIC_CH1
-#undef demo_selector
-#undef demo_selection
-#endif
-#undef last_spectrum_debug
-
 int music_detector_start(void)
 {
     ESP_LOGI("MUSIC", "recognition profile: strict");
-    ESP_RETURN_ON_FALSE(esp_psram_is_initialized(), ESP_ERR_INVALID_STATE,
-                        "MUSIC", "N16R8 PSRAM is not initialized");
-    ESP_RETURN_ON_FALSE(s_dsp_context == NULL, ESP_ERR_INVALID_STATE,
-                        "MUSIC", "DSP detector is already started");
-    s_dsp_context = heap_caps_aligned_calloc(
-        16, 1, sizeof(*s_dsp_context),
-        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    ESP_RETURN_ON_FALSE(s_dsp_context != NULL, ESP_ERR_NO_MEM, "MUSIC",
-                        "DSP PSRAM context allocation failed: %u bytes",
-                        (unsigned)sizeof(*s_dsp_context));
-
-    esp_err_t error = es7210_capture_init();
-    if (error != ESP_OK) {
-        heap_caps_free(s_dsp_context);
-        s_dsp_context = NULL;
-        ESP_RETURN_ON_ERROR(error, "MUSIC", "audio hardware initialization failed");
-    }
-    error = chord_detector_init();
-    if (error != ESP_OK) {
-        heap_caps_free(s_dsp_context);
-        s_dsp_context = NULL;
-        ESP_RETURN_ON_ERROR(error, "MUSIC", "ESP-DSP PSRAM workspace initialization failed");
-    }
-
-    TaskHandle_t dsp_task = NULL;
-    const BaseType_t task_result = xTaskCreatePinnedToCore(
-        music_dsp_task, "MusicDspTask", MUSIC_DSP_TASK_STACK_SIZE,
-        s_dsp_context, MUSIC_DSP_TASK_PRIORITY, &dsp_task,
-        MUSIC_DSP_TASK_CORE);
-    if (task_result != pdPASS) {
-        heap_caps_free(s_dsp_context);
-        s_dsp_context = NULL;
-        ESP_RETURN_ON_FALSE(false, ESP_ERR_NO_MEM, "MUSIC",
-                            "DSP task creation failed");
-    }
-
-    error = es7210_capture_start();
-    if (error != ESP_OK) {
-        vTaskDelete(dsp_task);
-        heap_caps_free(s_dsp_context);
-        s_dsp_context = NULL;
-        ESP_RETURN_ON_ERROR(error, "MUSIC", "capture task creation failed");
-    }
-    ESP_LOGI("MUSIC",
-             "PSRAM ready: total=%u free=%u context=%u chord_workspace=%u; DSP stack=%u bytes internal",
-             (unsigned)esp_psram_get_size(),
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
-             (unsigned)sizeof(*s_dsp_context),
-             (unsigned)chord_detector_workspace_size(),
-             (unsigned)MUSIC_DSP_TASK_STACK_SIZE);
+    ESP_RETURN_ON_ERROR(es7210_capture_init(), "MUSIC", "audio hardware initialization failed");
+    ESP_RETURN_ON_FALSE(chord_detector_init() == ESP_OK, ESP_FAIL, "MUSIC", "ESP-DSP FFT init failed");
+    ESP_RETURN_ON_ERROR(es7210_capture_start(), "MUSIC", "capture task creation failed");
+    const BaseType_t task_result = xTaskCreatePinnedToCore(music_dsp_task, "MusicDspTask",
+                                                           MUSIC_DSP_TASK_STACK_SIZE,
+                                                           NULL, MUSIC_DSP_TASK_PRIORITY,
+                                                           NULL, MUSIC_DSP_TASK_CORE);
+    ESP_RETURN_ON_FALSE(task_result == pdPASS, ESP_ERR_NO_MEM, "MUSIC", "DSP task creation failed");
     return ESP_OK;
 }

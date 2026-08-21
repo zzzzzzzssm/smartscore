@@ -4,22 +4,6 @@
 #include <string.h>
 #include "music_detector_config.h"
 
-static float bounded_noise_gate(float noise_floor)
-{
-    const float gate = fmaxf(MUSIC_MIN_RMS,
-                             noise_floor * MUSIC_NOISE_GATE_MULTIPLIER);
-    return fminf(gate, MUSIC_NOISE_GATE_MAX_RMS);
-}
-
-static bool calibration_frame_is_quiet(const audio_frame_metrics_t *metrics)
-{
-    return metrics != NULL && isfinite(metrics->rms) &&
-           isfinite(metrics->peak) && metrics->rms >= 0.0f &&
-           metrics->peak >= 0.0f && !metrics->clipped &&
-           metrics->rms <= MUSIC_CALIBRATION_MAX_QUIET_RMS &&
-           metrics->peak <= MUSIC_CALIBRATION_MAX_QUIET_PEAK;
-}
-
 void audio_preprocess_init(audio_preprocess_state_t *state)
 {
     memset(state, 0, sizeof(*state));
@@ -35,8 +19,8 @@ void audio_preprocess_frame(audio_preprocess_state_t *state, const int16_t *inpu
     }
     const float mean = count ? (float)(input_sum / ((double)count * 32768.0)) : 0.0f;
     /* One continuous 2nd-order Butterworth high-pass preserves C2 (65.4 Hz)
-     * while removing DC and handling rumble. Per-block mean subtraction and
-     * two cascaded 50 Hz first-order filters attenuated the lowest octave. */
+     * while removing DC and handling rumble. The former two cascaded 50 Hz
+     * first-order filters attenuated the lowest octave. */
     const float k = tanf((float)M_PI * MUSIC_HIGH_PASS_HZ /
                          MUSIC_SAMPLE_RATE_HZ);
     const float norm = 1.0f /
@@ -76,15 +60,11 @@ void audio_preprocess_frame(audio_preprocess_state_t *state, const int16_t *inpu
                        metrics->clip_rate > MUSIC_CLIP_RATE_THRESHOLD;
 
     if (!state->calibrated) {
-        if (calibration_frame_is_quiet(metrics)) {
-            state->noise_rms_sum += metrics->rms;
-            if (metrics->peak > state->noise_peak) {
-                state->noise_peak = metrics->peak;
-            }
-            ++state->calibration_frames;
-        } else {
-            ++state->calibration_rejected_frames;
+        state->noise_rms_sum += metrics->rms;
+        if (metrics->peak > state->noise_peak) {
+            state->noise_peak = metrics->peak;
         }
+        ++state->calibration_frames;
     } else if (!metrics->clipped && metrics->rms < state->noise_floor) {
         /* Recover downward if startup calibration included handling noise or
          * keyboard sound. Never adapt upward into a played note. */
@@ -95,28 +75,18 @@ void audio_preprocess_frame(audio_preprocess_state_t *state, const int16_t *inpu
         if (state->noise_floor < minimum_floor) {
             state->noise_floor = minimum_floor;
         }
-        state->noise_gate = bounded_noise_gate(state->noise_floor);
+        state->noise_gate = fmaxf(
+            MUSIC_MIN_RMS,
+            state->noise_floor * MUSIC_NOISE_GATE_MULTIPLIER);
     }
-}
-
-bool audio_preprocess_calibration_ready(const audio_preprocess_state_t *state)
-{
-    return state != NULL &&
-           state->calibration_frames >= MUSIC_CALIBRATION_MIN_VALID_FRAMES;
 }
 
 void audio_preprocess_finish_calibration(audio_preprocess_state_t *state)
 {
-    if (state == NULL) return;
     if (state->calibration_frames > 0) {
         state->noise_floor = state->noise_rms_sum / state->calibration_frames;
-    } else {
-        state->noise_floor = MUSIC_CALIBRATION_DEFAULT_NOISE_RMS;
     }
-    if (!isfinite(state->noise_floor) || state->noise_floor < 0.0f) {
-        state->noise_floor = MUSIC_CALIBRATION_DEFAULT_NOISE_RMS;
-    }
-    state->noise_gate = bounded_noise_gate(state->noise_floor);
+    state->noise_gate = fmaxf(MUSIC_MIN_RMS, state->noise_floor * MUSIC_NOISE_GATE_MULTIPLIER);
     state->calibrated = true;
 }
 
@@ -140,7 +110,8 @@ void audio_preprocess_rescale_gain(audio_preprocess_state_t *state,
     if (state->noise_floor < MUSIC_MIN_RMS / MUSIC_NOISE_GATE_MULTIPLIER) {
         state->noise_floor = MUSIC_MIN_RMS / MUSIC_NOISE_GATE_MULTIPLIER;
     }
-    state->noise_gate = bounded_noise_gate(state->noise_floor);
+    state->noise_gate = fmaxf(MUSIC_MIN_RMS,
+                              state->noise_floor * MUSIC_NOISE_GATE_MULTIPLIER);
 }
 
 void audio_preprocess_track_ambient(audio_preprocess_state_t *state,
@@ -156,5 +127,6 @@ void audio_preprocess_track_ambient(audio_preprocess_state_t *state,
     const float limited_target = fminf(metrics->rms, state->noise_floor * 1.05f);
     state->noise_floor += MUSIC_DEMO_AMBIENT_TRACK_ALPHA *
                           (limited_target - state->noise_floor);
-    state->noise_gate = bounded_noise_gate(state->noise_floor);
+    state->noise_gate = fmaxf(MUSIC_MIN_RMS,
+                              state->noise_floor * MUSIC_NOISE_GATE_MULTIPLIER);
 }

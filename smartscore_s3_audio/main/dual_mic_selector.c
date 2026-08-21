@@ -99,18 +99,13 @@ void dual_mic_selector_update(dual_mic_selector_t *selector,
         const bool current_valid = current == 0 ? valid1 : valid2;
         if (!current_valid) {
             const int replacement = valid1 ? 0 : 1;
-            if (selector->challenger_frames < UINT_MAX) {
-                ++selector->challenger_frames;
-            }
-            if (selector->challenger_frames >=
-                    MUSIC_MIC_SWITCH_CONFIRM_FRAMES &&
-                selector->selected_mic != replacement + 1) {
+            if (selector->selected_mic != replacement + 1) {
                 selector->selected_mic = replacement + 1;
                 switched = true;
-                selector->challenger_frames = 0;
-                selector->hold_frames = 0;
             }
             selector->note_locked = true;
+            selector->challenger_frames = 0;
+            selector->hold_frames = 0;
         } else if (!selector->note_locked) {
             int preferred = selector->selected_mic - 1;
             if (valid1 && !valid2) {
@@ -128,8 +123,6 @@ void dual_mic_selector_update(dual_mic_selector_t *selector,
             selector->note_locked = true;
             selector->challenger_frames = 0;
             selector->hold_frames = 0;
-        } else {
-            selector->challenger_frames = 0;
         }
     } else {
         selector->challenger_frames = 0;
