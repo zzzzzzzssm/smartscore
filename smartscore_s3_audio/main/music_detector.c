@@ -199,6 +199,46 @@ static void promote_low_match_yin(const low_note_result_t *match,
                       sizeof(low_yin->note_name));
 }
 
+static float low_match_confidence_for_midi(const low_note_result_t *match,
+                                           int midi)
+{
+    if (match == NULL || !match->valid) return 0.0f;
+    for (uint8_t index = 0; index < match->count; ++index) {
+        if (match->midi[index] == midi) {
+            return match->confidence[index];
+        }
+    }
+    return 0.0f;
+}
+
+static int suppress_unconfirmed_low_yin_under_high_note(
+    const yin_result_t *high_yin, yin_result_t *low_yin,
+    const low_note_result_t *low_match)
+{
+    if (high_yin == NULL || !high_yin->valid ||
+        high_yin->confidence < MUSIC_YIN_CONFIDENCE_THRESHOLD ||
+        high_yin->midi <= MUSIC_VIRTUAL_FUNDAMENTAL_MAX_MIDI ||
+        low_yin == NULL || !low_yin->valid ||
+        low_yin->midi < MUSIC_PIANO_MIDI_MIN ||
+        low_yin->midi > MUSIC_VIRTUAL_FUNDAMENTAL_MAX_MIDI) {
+        return -1;
+    }
+
+    /* The low-rate YIN search stops at 255 Hz. For C4 and above, an otherwise
+     * clean monophonic tone therefore exposes its second/third period inside
+     * the low search range and looks like a very confident C3/D3/etc. Keep a
+     * simultaneous bass only when the independent Goertzel matcher confirms
+     * that exact physical low key. */
+    if (low_match_confidence_for_midi(low_match, low_yin->midi) >=
+        MUSIC_LOW_MATCH_SECONDARY_CONFIDENCE) {
+        return -1;
+    }
+
+    const int suppressed_midi = low_yin->midi;
+    invalidate_yin(low_yin);
+    return suppressed_midi;
+}
+
 void music_detector_set_recognition_profile(music_recognition_profile_t profile)
 {
     if (profile != MUSIC_RECOGNITION_PROFILE_DEMO) {
@@ -674,6 +714,7 @@ static void music_dsp_task(void *argument)
             low_note_result_t low_match = {0};
             chord_result_t chord = {0};
             float harmonic_ratio = 0.0f;
+            int suppressed_low_midi = -1;
             bool exact_signal_active = false;
             bool exact_attack_allowed = false;
             float exact_rms = 0.0f;
@@ -709,6 +750,9 @@ static void music_dsp_task(void *argument)
                     &s_low_note_detector, 0, true, exact_attack_allowed,
                     metrics[0].clipped, &low_match);
                 promote_low_match_yin(&low_match, &low_yin);
+                suppressed_low_midi =
+                    suppress_unconfirmed_low_yin_under_high_note(
+                        &yin, &low_yin, &low_match);
                 started = esp_timer_get_time();
                 chord_detector_analyze(s_audio_ring, NULL, s_ring_write_position,
                                        metrics[0].rms, 0.0f, demo_profile,
@@ -765,6 +809,9 @@ static void music_dsp_task(void *argument)
                 exact_signal_active, exact_attack_allowed,
                 metrics[selected_mic - 1].clipped, &low_match);
             promote_low_match_yin(&low_match, &low_yin);
+            suppressed_low_midi =
+                suppress_unconfirmed_low_yin_under_high_note(
+                    &yin, &low_yin, &low_match);
             counters->yin_time_us = (uint32_t)(esp_timer_get_time() - started);
             started = esp_timer_get_time();
             const float mic1_weight = demo_profile
@@ -817,6 +864,16 @@ static void music_dsp_task(void *argument)
 #endif
                     exact_rms, block_timestamp_ms,
                     &note_set);
+            if (suppressed_low_midi >= 0) {
+                if (s_bass_pending_midi == suppressed_low_midi) {
+                    s_bass_pending_midi = -1;
+                    s_bass_pending_frames = 0;
+                }
+                if (s_bass_midi == suppressed_low_midi) {
+                    s_bass_midi = -1;
+                    s_bass_missing_frames = 0;
+                }
+            }
             /* Bass fallback (C2..B3) with hysteresis. The low-rate YIN is
              * the stable sustained-bass evidence; the Goertzel matcher opens
              * attacks when YIN confidence lags. Requires 2 clean frames to

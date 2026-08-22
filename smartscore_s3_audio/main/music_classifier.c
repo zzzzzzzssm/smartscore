@@ -314,6 +314,44 @@ static bool correct_yin_octave_from_spectrum(yin_result_t *yin,
     return true;
 }
 
+static bool correct_yin_octave_from_continuity(
+    const music_classifier_t *classifier, yin_result_t *yin,
+    const chord_result_t *chord, bool amplitude_attack)
+{
+    if (classifier == NULL || yin == NULL || !yin->valid ||
+        chord == NULL || amplitude_attack ||
+        !classifier->has_last_emitted ||
+        classifier->last_emitted.type != MUSIC_RESULT_SINGLE) {
+        return false;
+    }
+
+    const int previous_midi = classifier->last_emitted.midi;
+    if (previous_midi < 0 || abs(yin->midi - previous_midi) != 12) {
+        return false;
+    }
+
+    const chord_candidate_debug_t *previous =
+        find_spectrum_candidate(chord, previous_midi);
+    if (previous == NULL ||
+        previous->relative_score < MUSIC_OCTAVE_CONTINUITY_MIN_RELATIVE ||
+        previous->prominence < MUSIC_OCTAVE_CONTINUITY_MIN_PROMINENCE) {
+        return false;
+    }
+
+    /* A one-octave YIN jump without a new amplitude attack is normally the
+     * previous note's second harmonic taking over during its decay. The weaker
+     * previous-octave peak is sufficient continuity evidence; a genuinely new
+     * octave attack bypasses this guard and enters the normal stable vote. */
+    yin->midi = previous_midi;
+    if (previous->peak_frequency_hz > 0.0f) {
+        yin->frequency_hz = previous->peak_frequency_hz;
+    }
+    yin->cents = note_cents_error(yin->frequency_hz, yin->midi);
+    note_midi_to_name(yin->midi, yin->note_name,
+                      sizeof(yin->note_name));
+    return true;
+}
+
 static bool history_has_onset(const music_classifier_t *classifier,
                               music_result_type_t type, int identity,
                               bool minor)
@@ -341,7 +379,7 @@ bool music_classifier_update(music_classifier_t *classifier,
                              music_result_t *result, const char **unknown_reason)
 {
     yin_result_t corrected_yin = *yin_input;
-    const bool octave_corrected =
+    bool octave_corrected =
         correct_yin_octave_from_spectrum(&corrected_yin, chord);
     const yin_result_t *yin = &corrected_yin;
     if (octave_corrected) {
@@ -382,6 +420,30 @@ bool music_classifier_update(music_classifier_t *classifier,
         selected_metrics->rms >= (selected_mic == 2 ? mic2_gate : mic1_gate);
     const bool selected_clipped = selected_metrics->clipped;
 #endif
+    const float previous_rms = classifier->previous_rms;
+    const bool amplitude_attack =
+        !silence && previous_rms > 0.0f &&
+        result->rms >= previous_rms * MUSIC_ONSET_RISE_RATIO &&
+        result->rms - previous_rms >= MUSIC_ONSET_MIN_RMS_RISE;
+    if (amplitude_attack) {
+        classifier->pending_attack_ms = timestamp_ms;
+    }
+    classifier->previous_rms = result->rms;
+
+    if (correct_yin_octave_from_continuity(
+            classifier, &corrected_yin, chord, amplitude_attack)) {
+        octave_corrected = true;
+        harmonic_ratio = chord_detector_harmonic_explained_ratio(
+            corrected_yin.frequency_hz);
+        result->octave_corrected = true;
+        result->yin_confidence = corrected_yin.confidence;
+        result->harmonic_explained_ratio = harmonic_ratio;
+        result->frequency_hz = corrected_yin.frequency_hz;
+        result->midi = corrected_yin.midi;
+        result->cents = corrected_yin.cents;
+        memcpy(result->note_name, corrected_yin.note_name,
+               sizeof(result->note_name));
+    }
     music_result_type_t candidate = MUSIC_RESULT_UNKNOWN;
     int identity = -1;
     bool minor = false;
@@ -468,16 +530,6 @@ bool music_classifier_update(music_classifier_t *classifier,
     } else {
         *unknown_reason = "unstable_spectrum";
     }
-
-    const float previous_rms = classifier->previous_rms;
-    const bool amplitude_attack =
-        !silence && previous_rms > 0.0f &&
-        result->rms >= previous_rms * MUSIC_ONSET_RISE_RATIO &&
-        result->rms - previous_rms >= MUSIC_ONSET_MIN_RMS_RISE;
-    if (amplitude_attack) {
-        classifier->pending_attack_ms = timestamp_ms;
-    }
-    classifier->previous_rms = result->rms;
 
     if (candidate == MUSIC_RESULT_SILENCE) {
         classifier->history_count = 0;
