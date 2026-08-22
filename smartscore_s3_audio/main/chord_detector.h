@@ -58,6 +58,10 @@ typedef struct {
     /* Low-octave evidence synthesized from partials 2 and 3 must be confirmed
      * by the low-rate periodicity path before it can start a key. */
     bool key_uses_virtual_fundamental[CHORD_PIANO_KEY_COUNT];
+    /* Set only on the exact-key copy when a low periodicity is being
+     * quarantined as the common divisor of physical upper notes. */
+    bool virtual_root_quarantined;
+    int virtual_root_midi;
     int debug_candidate_count;
     chord_candidate_debug_t debug_candidates[CHORD_DEBUG_CANDIDATE_COUNT];
 } chord_result_t;

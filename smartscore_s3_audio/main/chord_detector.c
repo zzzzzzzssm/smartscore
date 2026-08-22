@@ -300,11 +300,18 @@ void chord_detector_analyze(const float *mic1_ring, const float *mic2_ring,
     }
 
     for (int note = 0; note < CHORD_NOTE_COUNT; ++note) {
-        const float f0 = note_midi_to_frequency(MUSIC_CHORD_MIDI_MIN + note);
+        const int midi = MUSIC_CHORD_MIDI_MIN + note;
+        const float f0 = note_midi_to_frequency(midi);
         raw_score[note] = fundamental_score[note];
-        for (int harmonic = 2; harmonic <= 5; ++harmonic) {
+        const int maximum_harmonic =
+            midi >= MUSIC_FFT_POLY_PRIORITY_MIN_MIDI ? 8 : 5;
+        const float maximum_harmonic_frequency =
+            midi >= MUSIC_FFT_POLY_PRIORITY_MIN_MIDI
+                ? MUSIC_SPECTRUM_MAX_FREQUENCY_HZ
+                : MUSIC_MAX_FREQUENCY_HZ;
+        for (int harmonic = 2; harmonic <= maximum_harmonic; ++harmonic) {
             const float frequency = f0 * harmonic;
-            if (frequency > MUSIC_MAX_FREQUENCY_HZ) break;
+            if (frequency > maximum_harmonic_frequency) break;
             raw_score[note] += MUSIC_HARMONIC_SUPPORT_WEIGHT * local_peak(frequency) / harmonic;
         }
     }
@@ -339,7 +346,11 @@ void chord_detector_analyze(const float *mic1_ring, const float *mic2_ring,
             const float ratio = fundamental_peak_frequency[note] /
                                 fundamental_peak_frequency[lower];
             const int harmonic = (int)lrintf(ratio);
-            if (harmonic >= 2 && harmonic <= 5 &&
+            const int maximum_harmonic =
+                MUSIC_CHORD_MIDI_MIN + lower >=
+                        MUSIC_FFT_POLY_PRIORITY_MIN_MIDI
+                    ? 8 : 5;
+            if (harmonic >= 2 && harmonic <= maximum_harmonic &&
                 fabsf(ratio - harmonic) <= MUSIC_HARMONIC_RATIO_TOLERANCE) {
                 harmonic_owned[note] = true;
                 ++result->harmonic_rejected_count;
@@ -365,11 +376,16 @@ void chord_detector_analyze(const float *mic1_ring, const float *mic2_ring,
             const float lower_f0 = note_midi_to_frequency(MUSIC_CHORD_MIDI_MIN + lower);
             const float ratio = f0 / lower_f0;
             const int harmonic = (int)lrintf(ratio);
+            const int maximum_harmonic =
+                MUSIC_CHORD_MIDI_MIN + lower >=
+                        MUSIC_FFT_POLY_PRIORITY_MIN_MIDI
+                    ? 8 : 5;
             const bool lower_has_fundamental = !harmonic_owned[lower] &&
                 fundamental_score[lower] >= fundamental_noise_floor[lower] *
                                                MUSIC_FUNDAMENTAL_NOISE_MULTIPLIER &&
                 fundamental_score[lower] >= maximum_fundamental * fundamental_relative_threshold;
-            if (lower_has_fundamental && harmonic >= 2 && harmonic <= 5 &&
+            if (lower_has_fundamental && harmonic >= 2 &&
+                harmonic <= maximum_harmonic &&
                 fabsf(ratio - harmonic) < 0.025f) {
                 explained = fmaxf(explained, raw_score[lower] / sqrtf((float)harmonic));
             }
@@ -767,7 +783,12 @@ float chord_detector_harmonic_explained_ratio(float fundamental_hz)
 {
     if (!s_initialized || fundamental_hz <= 0.0f) return 0.0f;
     const int first_bin = (int)ceilf(MUSIC_MIN_FREQUENCY_HZ * MUSIC_FFT_SIZE / MUSIC_SAMPLE_RATE_HZ);
-    const int last_bin = (int)floorf(MUSIC_MAX_FREQUENCY_HZ * MUSIC_FFT_SIZE / MUSIC_SAMPLE_RATE_HZ);
+    const bool high_note = fundamental_hz >=
+        note_midi_to_frequency(MUSIC_FFT_POLY_PRIORITY_MIN_MIDI) * 0.97f;
+    const float analysis_max_frequency = high_note
+        ? MUSIC_SPECTRUM_MAX_FREQUENCY_HZ : MUSIC_MAX_FREQUENCY_HZ;
+    const int last_bin = (int)floorf(analysis_max_frequency *
+                                     MUSIC_FFT_SIZE / MUSIC_SAMPLE_RATE_HZ);
     float total = 0.0f;
     float explained = 0.0f;
     memset(s_harmonic_bin_selected, 0, sizeof(s_harmonic_bin_selected));
@@ -776,9 +797,10 @@ float chord_detector_harmonic_explained_ratio(float fundamental_hz)
         total += magnitude * magnitude;
     }
     const float bin_frequency = (float)MUSIC_SAMPLE_RATE_HZ / MUSIC_FFT_SIZE;
-    for (int harmonic = 1; harmonic <= 5; ++harmonic) {
+    const int maximum_harmonic = high_note ? 8 : 5;
+    for (int harmonic = 1; harmonic <= maximum_harmonic; ++harmonic) {
         const float frequency = fundamental_hz * harmonic;
-        if (frequency > MUSIC_MAX_FREQUENCY_HZ) break;
+        if (frequency > analysis_max_frequency) break;
         const int center = (int)lrintf(frequency / bin_frequency);
         for (int offset = -2; offset <= 2; ++offset) {
             const int bin = center + offset;

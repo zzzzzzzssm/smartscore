@@ -191,8 +191,10 @@ static const chord_candidate_debug_t *find_spectrum_candidate(
 static bool demo_polyphony_has_quality(const yin_result_t *yin,
                                        float harmonic_ratio,
                                        const chord_result_t *chord,
-                                       bool selected_clipped)
+                                       bool selected_clipped,
+                                       bool *high_fft_priority)
 {
+    *high_fft_priority = false;
     if (!chord->valid || chord->pitch_class_count < 2 ||
         chord->pitch_class_count > 3 || selected_clipped ||
         chord->independent_pitch_class_count < chord->pitch_class_count ||
@@ -201,11 +203,22 @@ static bool demo_polyphony_has_quality(const yin_result_t *yin,
         return false;
     }
 
+    bool all_high = true;
+    for (int index = 0; index < chord->pitch_class_count; ++index) {
+        if (chord->midi_notes[index] < MUSIC_FFT_POLY_PRIORITY_MIN_MIDI) {
+            all_high = false;
+            break;
+        }
+    }
     const bool is_chord = chord->kind != CHORD_DETECTION_INTERVAL;
-    const float minimum_relative = is_chord
-        ? MUSIC_DEMO_CHORD_MIN_RELATIVE : MUSIC_DEMO_POLY_MIN_RELATIVE;
-    const float minimum_prominence = is_chord
-        ? MUSIC_DEMO_CHORD_MIN_PROMINENCE : MUSIC_DEMO_POLY_MIN_PROMINENCE;
+    const float minimum_relative = all_high
+        ? MUSIC_HIGH_FFT_MIN_RELATIVE
+        : (is_chord ? MUSIC_DEMO_CHORD_MIN_RELATIVE
+                    : MUSIC_DEMO_POLY_MIN_RELATIVE);
+    const float minimum_prominence = all_high
+        ? MUSIC_HIGH_FFT_MIN_PROMINENCE
+        : (is_chord ? MUSIC_DEMO_CHORD_MIN_PROMINENCE
+                    : MUSIC_DEMO_POLY_MIN_PROMINENCE);
     float weakest_relative = 1.0f;
     const chord_candidate_debug_t *accepted[3] = {0};
     for (int index = 0; index < chord->pitch_class_count; ++index) {
@@ -221,11 +234,29 @@ static bool demo_polyphony_has_quality(const yin_result_t *yin,
                                  candidate->relative_score);
     }
 
+    /* Low and mixed-register chords need a periodicity anchor matching at
+     * least one actual chord tone. This keeps low-note decisions YIN-led while
+     * allowing the FFT to fill in the other independently visible keys. */
+    if (!all_high) {
+        bool yin_matches_chord = false;
+        if (yin != NULL && yin->valid &&
+            yin->confidence >= MUSIC_LOW_POLY_YIN_CONFIDENCE) {
+            for (int index = 0; index < chord->pitch_class_count; ++index) {
+                if (chord->midi_notes[index] == yin->midi) {
+                    yin_matches_chord = true;
+                    break;
+                }
+            }
+        }
+        if (!yin_matches_chord) return false;
+    }
+
     /* A very periodic single note is allowed to lose to a polyphonic result
      * only when the weaker fundamental is independently substantial. This
      * rejects the common case where a loud single note's harmonic is promoted
      * to a second note by the relaxed demo thresholds. */
-    if (yin->valid && yin->confidence >= MUSIC_MELODY_STRONG_YIN_CONFIDENCE &&
+    if (!all_high && yin->valid &&
+        yin->confidence >= MUSIC_MELODY_STRONG_YIN_CONFIDENCE &&
         harmonic_ratio >= MUSIC_SINGLE_DOMINANCE_HARMONIC_RATIO &&
         weakest_relative <
             MUSIC_DEMO_STRONG_SINGLE_SECONDARY_RELATIVE) {
@@ -254,6 +285,7 @@ static bool demo_polyphony_has_quality(const yin_result_t *yin,
             }
         }
     }
+    *high_fft_priority = all_high;
     return true;
 }
 
@@ -484,9 +516,11 @@ bool music_classifier_update(music_classifier_t *classifier,
     /* The demo profile may override YIN only with a genuinely independent,
      * spectrally clean polyphonic result. SNR alone is not evidence of a clean
      * spectrum: clipping, transients and one note's harmonics can all be loud. */
+    bool high_fft_priority = false;
     const bool demo_poly_candidate = demo_profile &&
         demo_polyphony_has_quality(yin, harmonic_ratio, chord,
-                                   selected_clipped);
+                                   selected_clipped,
+                                   &high_fft_priority);
     const bool accepted_poly = chord->valid &&
                                (!demo_profile || demo_poly_candidate);
     const bool dominant_single = !demo_poly_candidate &&
@@ -559,11 +593,12 @@ bool music_classifier_update(music_classifier_t *classifier,
                classifier->consecutive_count >= MUSIC_STABLE_VOTE_COUNT) {
         stable_type = MUSIC_RESULT_SINGLE;
     } else if (demo_profile && candidate == MUSIC_RESULT_INTERVAL &&
-               classifier->consecutive_count >= poly_stable_votes) {
+               vote_count(classifier, candidate, identity, false) >=
+                   poly_stable_votes) {
         stable_type = MUSIC_RESULT_INTERVAL;
     } else if (demo_profile && candidate == MUSIC_RESULT_CHORD &&
-               classifier->consecutive_count >=
-                   MUSIC_DEMO_CHORD_CONSECUTIVE) {
+               vote_count(classifier, candidate, identity, minor) >=
+                   MUSIC_DEMO_CHORD_STABLE_VOTES) {
         stable_type = MUSIC_RESULT_CHORD;
     } else if (!demo_profile && candidate == MUSIC_RESULT_SINGLE &&
                vote_count(classifier, candidate, identity, false) >= MUSIC_STABLE_VOTE_COUNT) {

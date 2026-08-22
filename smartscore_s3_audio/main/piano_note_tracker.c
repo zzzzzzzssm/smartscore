@@ -115,10 +115,11 @@ static bool single_candidate_confident(
             PIANO_TRACKER_SINGLE_PROMINENCE) {
         return false;
     }
-    const float minimum_harmonic_ratio = yin->midi <=
-        PIANO_TRACKER_LOW_TAIL_MIDI_MAX
-            ? PIANO_TRACKER_SINGLE_LOW_HARMONIC_RATIO
-            : PIANO_TRACKER_SINGLE_HIGH_HARMONIC_RATIO;
+    const float minimum_harmonic_ratio = yin->midi == 60
+        ? PIANO_TRACKER_SINGLE_C4_HARMONIC_RATIO
+        : (yin->midi <= PIANO_TRACKER_LOW_TAIL_MIDI_MAX
+               ? PIANO_TRACKER_SINGLE_LOW_HARMONIC_RATIO
+               : PIANO_TRACKER_SINGLE_HIGH_HARMONIC_RATIO);
     return harmonic_explained_ratio >= minimum_harmonic_ratio;
 }
 
@@ -287,6 +288,98 @@ static bool poly_notes_share_onset(
         latest - earliest <= PIANO_TRACKER_CO_ONSET_MS;
 }
 
+static bool low_periodicity_supports_midi(
+    const yin_result_t *low_yin, const low_note_result_t *low_notes, int midi)
+{
+    if (low_yin != NULL && low_yin->valid && low_yin->midi == midi &&
+        low_yin->confidence >= PIANO_TRACKER_LOW_YIN_CONFIDENCE) {
+        return true;
+    }
+    if (low_notes == NULL || !low_notes->valid) return false;
+    for (uint8_t index = 0; index < low_notes->count; ++index) {
+        if (low_notes->midi[index] == midi &&
+            low_notes->confidence[index] >=
+                MUSIC_LOW_MATCH_SECONDARY_CONFIDENCE) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static const chord_candidate_debug_t *find_debug_candidate(
+    const chord_result_t *spectrum, int midi)
+{
+    for (int index = 0; index < spectrum->debug_candidate_count; ++index) {
+        if (spectrum->debug_candidates[index].midi == midi) {
+            return &spectrum->debug_candidates[index];
+        }
+    }
+    return NULL;
+}
+
+static bool spectrum_contains_exact_midi(const chord_result_t *spectrum,
+                                         int midi)
+{
+    if (spectrum == NULL || !spectrum->valid) return false;
+    for (int index = 0; index < spectrum->pitch_class_count; ++index) {
+        if (spectrum->midi_notes[index] == midi) return true;
+    }
+    return false;
+}
+
+static bool low_poly_has_periodicity_anchor(
+    const chord_result_t *spectrum, const yin_result_t *low_yin,
+    const low_note_result_t *low_notes)
+{
+    if (spectrum == NULL || !spectrum->valid ||
+        spectrum->pitch_class_count < 2) {
+        return false;
+    }
+    for (int index = 0; index < spectrum->pitch_class_count; ++index) {
+        const int midi = spectrum->midi_notes[index];
+        if (midi < MUSIC_FFT_POLY_PRIORITY_MIN_MIDI &&
+            low_periodicity_supports_midi(low_yin, low_notes, midi)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool high_fft_poly_has_quality(
+    const chord_result_t *spectrum,
+    const int notes[PIANO_NOTE_SET_MAX_KEYS], uint8_t count, bool fast)
+{
+    if (count < 2) return false;
+    const float minimum_relative = fast
+        ? MUSIC_HIGH_FFT_FAST_MIN_RELATIVE
+        : MUSIC_HIGH_FFT_MIN_RELATIVE;
+    const float minimum_prominence = fast
+        ? MUSIC_HIGH_FFT_FAST_MIN_PROMINENCE
+        : MUSIC_HIGH_FFT_MIN_PROMINENCE;
+    const float minimum_confidence = count >= 3
+        ? MUSIC_HIGH_FFT_FAST_CHORD_CONFIDENCE
+        : MUSIC_HIGH_FFT_FAST_INTERVAL_CONFIDENCE;
+    if (fast && spectrum->confidence < minimum_confidence) return false;
+
+    for (uint8_t index = 0; index < count; ++index) {
+        const int midi = notes[index];
+        if (midi < MUSIC_FFT_POLY_PRIORITY_MIN_MIDI ||
+            midi > PIANO_TRACKER_MIDI_MAX) {
+            return false;
+        }
+        const int key = midi - PIANO_TRACKER_MIDI_MIN;
+        const chord_candidate_debug_t *candidate =
+            find_debug_candidate(spectrum, midi);
+        if (!spectrum->key_has_independent_fundamental[key] ||
+            candidate == NULL || !candidate->distinct_local_peak ||
+            candidate->relative_score < minimum_relative ||
+            candidate->prominence < minimum_prominence) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool midi_is_harmonic_of(int upper_midi, int source_midi)
 {
     if (upper_midi <= source_midi) return false;
@@ -341,12 +434,17 @@ static bool build_poly_candidate(const piano_note_tracker_t *tracker,
                                  const low_note_result_t *low_notes,
                                  int notes[PIANO_NOTE_SET_MAX_KEYS],
                                  uint8_t *count,
-                                 bool *direct_low_match)
+                                 bool *direct_low_match,
+                                 bool *high_fft_priority,
+                                 bool *fast_high_fft)
 {
     *direct_low_match = false;
+    *high_fft_priority = false;
+    *fast_high_fft = false;
     if (low_notes != NULL && low_notes->valid && low_notes->count >= 2U) {
         const uint8_t matched_count = low_notes->count > PIANO_NOTE_SET_MAX_KEYS
             ? PIANO_NOTE_SET_MAX_KEYS : low_notes->count;
+        bool yin_anchors_match = false;
         for (uint8_t index = 0; index < matched_count; ++index) {
             if (low_notes->midi[index] < PIANO_TRACKER_MIDI_MIN ||
                 low_notes->midi[index] > PIANO_TRACKER_LOW_TAIL_MIDI_MAX ||
@@ -355,7 +453,13 @@ static bool build_poly_candidate(const piano_note_tracker_t *tracker,
                 return false;
             }
             notes[index] = low_notes->midi[index];
+            if (low_yin != NULL && low_yin->valid &&
+                low_yin->confidence >= PIANO_TRACKER_LOW_YIN_CONFIDENCE &&
+                low_yin->midi == notes[index]) {
+                yin_anchors_match = true;
+            }
         }
+        if (!yin_anchors_match) return false;
         sort_midi_notes(notes, matched_count);
         for (uint8_t index = 1; index < matched_count; ++index) {
             if (notes[index] == notes[index - 1]) return false;
@@ -411,7 +515,27 @@ static bool build_poly_candidate(const piano_note_tracker_t *tracker,
     if (is_single_low_harmonic_family(spectrum, notes, expected_count)) {
         return false;
     }
-    if (!poly_notes_share_onset(
+
+    /* Below C4, at least one chord tone must be confirmed by a periodicity
+     * detector. The FFT still supplies the remaining physical fundamentals,
+     * but it cannot establish a low chord from broad, closely spaced bins on
+     * its own. */
+    bool contains_low_note = false;
+    bool low_periodicity_anchor = false;
+    for (uint8_t index = 0; index < expected_count; ++index) {
+        if (notes[index] >= MUSIC_FFT_POLY_PRIORITY_MIN_MIDI) continue;
+        contains_low_note = true;
+        if (low_periodicity_supports_midi(low_yin, low_notes, notes[index])) {
+            low_periodicity_anchor = true;
+        }
+    }
+    if (contains_low_note && !low_periodicity_anchor) return false;
+
+    *high_fft_priority = high_fft_poly_has_quality(
+        spectrum, notes, expected_count, false);
+    *fast_high_fft = *high_fft_priority && high_fft_poly_has_quality(
+        spectrum, notes, expected_count, true);
+    if (!*high_fft_priority && !poly_notes_share_onset(
             tracker, spectrum, low_yin, notes, expected_count)) {
         return false;
     }
@@ -423,9 +547,37 @@ static void clear_poly_candidate(piano_note_tracker_t *tracker)
 {
     tracker->poly_candidate_count = 0;
     tracker->poly_candidate_frames = 0;
+    tracker->poly_candidate_missing_frames = 0;
     for (uint8_t index = 0; index < PIANO_NOTE_SET_MAX_KEYS; ++index) {
         tracker->poly_candidate_midi[index] = -1;
     }
+}
+
+static bool spectrum_supports_locked_poly(
+    const piano_note_tracker_t *tracker, const chord_result_t *spectrum)
+{
+    if (!tracker->poly_lock_active || tracker->poly_locked_count < 2) {
+        return false;
+    }
+    for (uint8_t note = 0; note < tracker->poly_locked_count; ++note) {
+        bool supported = false;
+        for (int candidate = 0;
+             candidate < spectrum->debug_candidate_count; ++candidate) {
+            const chord_candidate_debug_t *peak =
+                &spectrum->debug_candidates[candidate];
+            if (peak->midi == tracker->poly_locked_midi[note] &&
+                peak->distinct_local_peak &&
+                peak->relative_score >=
+                    MUSIC_VIRTUAL_ROOT_HOLD_MIN_RELATIVE &&
+                peak->prominence >=
+                    MUSIC_VIRTUAL_ROOT_HOLD_MIN_PROMINENCE) {
+                supported = true;
+                break;
+            }
+        }
+        if (!supported) return false;
+    }
+    return true;
 }
 
 /* Returns true while a confirmed polyphonic set should own the exact-key
@@ -440,9 +592,12 @@ static bool update_poly_lock(piano_note_tracker_t *tracker,
     int notes[PIANO_NOTE_SET_MAX_KEYS] = {-1, -1, -1, -1};
     uint8_t count = 0;
     bool direct_low_match = false;
+    bool high_fft_priority = false;
+    bool fast_high_fft = false;
     const bool valid = signal_active && allow_attack &&
         build_poly_candidate(tracker, spectrum, low_yin, low_notes, notes,
-                             &count, &direct_low_match);
+                             &count, &direct_low_match, &high_fft_priority,
+                             &fast_high_fft);
     if (valid && tracker->poly_lock_active &&
         midi_sets_equal(notes, count, tracker->poly_locked_midi,
                         tracker->poly_locked_count)) {
@@ -454,6 +609,7 @@ static bool update_poly_lock(piano_note_tracker_t *tracker,
     if (valid) {
         if (midi_sets_equal(notes, count, tracker->poly_candidate_midi,
                             tracker->poly_candidate_count)) {
+            tracker->poly_candidate_missing_frames = 0;
             if (tracker->poly_candidate_frames < UINT8_MAX) {
                 ++tracker->poly_candidate_frames;
             }
@@ -461,10 +617,13 @@ static bool update_poly_lock(piano_note_tracker_t *tracker,
             memcpy(tracker->poly_candidate_midi, notes, sizeof(notes));
             tracker->poly_candidate_count = count;
             tracker->poly_candidate_frames = 1;
+            tracker->poly_candidate_missing_frames = 0;
         }
         const uint8_t required_frames = direct_low_match ? 1U
-            : (count >= 3 ? PIANO_TRACKER_CHORD_STABLE_FRAMES
-                          : PIANO_TRACKER_POLY_STABLE_FRAMES);
+            : (fast_high_fft && count == 2 ? 1U
+               : (fast_high_fft && count >= 3 ? 2U
+                  : (count >= 3 ? PIANO_TRACKER_CHORD_STABLE_FRAMES
+                                : PIANO_TRACKER_POLY_STABLE_FRAMES)));
         if (tracker->poly_candidate_frames >= required_frames) {
             const bool changed = !tracker->poly_lock_active ||
                 !midi_sets_equal(notes, count, tracker->poly_locked_midi,
@@ -475,13 +634,32 @@ static bool update_poly_lock(piano_note_tracker_t *tracker,
             tracker->poly_missing_frames = 0;
             clear_poly_candidate(tracker);
             if (changed) {
-                ESP_LOGI(TAG, "stable poly lock count=%u midi=[%d,%d,%d]",
-                         (unsigned)count, notes[0], notes[1], notes[2]);
+                ESP_LOGI(TAG,
+                         "stable poly lock count=%u midi=[%d,%d,%d] source=%s fast=%s",
+                         (unsigned)count, notes[0], notes[1], notes[2],
+                         direct_low_match ? "yin-low"
+                             : (high_fft_priority ? "fft-high" : "hybrid"),
+                         fast_high_fft ? "yes" : "no");
             }
             return true;
         }
+    } else if (tracker->poly_candidate_count > 0 &&
+               tracker->poly_candidate_missing_frames <
+                   PIANO_TRACKER_POLY_CANDIDATE_MISS_FRAMES) {
+        ++tracker->poly_candidate_missing_frames;
     } else {
         clear_poly_candidate(tracker);
+    }
+
+    if (tracker->poly_lock_active &&
+        spectrum->virtual_root_quarantined && signal_active &&
+        spectrum_supports_locked_poly(tracker, spectrum)) {
+        /* A virtual root is most likely to leak during the one or two frames
+         * in which the weaker upper peak falls just below the full interval
+         * classifier. Keep the already verified physical pair while both
+         * local peaks remain visible; silence still releases normally. */
+        tracker->poly_missing_frames = 0;
+        return true;
     }
 
     if (tracker->poly_lock_active) {
@@ -1080,6 +1258,26 @@ bool piano_note_tracker_update(piano_note_tracker_t *tracker,
             if (has_fundamental_support(spectrum, low_key, low_yin)) {
                 add_yin_evidence(evidence, low_yin,
                                  PIANO_TRACKER_LOW_YIN_CONFIDENCE);
+            }
+        }
+
+        const bool low_poly_anchor = low_poly_has_periodicity_anchor(
+            spectrum, low_yin, low_notes);
+        for (int key = 0;
+             key < MUSIC_FFT_POLY_PRIORITY_MIN_MIDI -
+                       PIANO_TRACKER_MIDI_MIN;
+             ++key) {
+            const int midi = PIANO_TRACKER_MIDI_MIN + key;
+            const bool direct_periodicity = low_periodicity_supports_midi(
+                low_yin, low_notes, midi);
+            const bool physical_chord_companion = low_poly_anchor &&
+                spectrum_contains_exact_midi(spectrum, midi) &&
+                spectrum->key_has_independent_fundamental[key];
+            const bool physical_sustain = tracker->active[key] &&
+                spectrum->key_has_independent_fundamental[key];
+            if (!direct_periodicity && !physical_chord_companion &&
+                !physical_sustain) {
+                evidence[key] = 0.0f;
             }
         }
     } else {

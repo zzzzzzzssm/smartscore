@@ -60,7 +60,8 @@ static uint8_t low_fallback_velocity(float rms)
 }
 
 static bool bass_attack_supported(const low_note_result_t *low_match,
-                                  const yin_result_t *low_yin, int *midi)
+                                  const yin_result_t *low_yin,
+                                  const yin_result_t *high_yin, int *midi)
 {
     *midi = -1;
     if (low_yin != NULL && low_yin->valid &&
@@ -69,6 +70,11 @@ static bool bass_attack_supported(const low_note_result_t *low_match,
         low_yin->midi <= MUSIC_VIRTUAL_FUNDAMENTAL_MAX_MIDI) {
         *midi = low_yin->midi;
         return true;
+    }
+    if (high_yin != NULL && high_yin->valid &&
+        high_yin->midi >= MUSIC_FFT_POLY_PRIORITY_MIN_MIDI &&
+        high_yin->confidence >= MUSIC_YIN_CONFIDENCE_THRESHOLD) {
+        return false;
     }
     if (low_match != NULL && low_match->valid && low_match->count == 1U &&
         low_match->confidence[0] >= PIANO_TRACKER_SINGLE_MIN_CONFIDENCE) {
@@ -199,21 +205,9 @@ static void promote_low_match_yin(const low_note_result_t *match,
                       sizeof(low_yin->note_name));
 }
 
-static float low_match_confidence_for_midi(const low_note_result_t *match,
-                                           int midi)
-{
-    if (match == NULL || !match->valid) return 0.0f;
-    for (uint8_t index = 0; index < match->count; ++index) {
-        if (match->midi[index] == midi) {
-            return match->confidence[index];
-        }
-    }
-    return 0.0f;
-}
-
 static int suppress_unconfirmed_low_yin_under_high_note(
     const yin_result_t *high_yin, yin_result_t *low_yin,
-    const low_note_result_t *low_match)
+    const chord_result_t *spectrum)
 {
     if (high_yin == NULL || !high_yin->valid ||
         high_yin->confidence < MUSIC_YIN_CONFIDENCE_THRESHOLD ||
@@ -225,18 +219,316 @@ static int suppress_unconfirmed_low_yin_under_high_note(
     }
 
     /* The low-rate YIN search stops at 255 Hz. For C4 and above, an otherwise
-     * clean monophonic tone therefore exposes its second/third period inside
-     * the low search range and looks like a very confident C3/D3/etc. Keep a
-     * simultaneous bass only when the independent Goertzel matcher confirms
-     * that exact physical low key. */
-    if (low_match_confidence_for_midi(low_match, low_yin->midi) >=
-        MUSIC_LOW_MATCH_SECONDARY_CONFIDENCE) {
-        return -1;
+     * clean tone or chord exposes a common low period in that range. The
+     * harmonic low matcher can be fooled by the same pattern, so retain the
+     * low result only when the FFT chord contains that exact tone with its own
+     * physical fundamental. */
+    if (spectrum != NULL && spectrum->valid) {
+        for (int index = 0; index < spectrum->pitch_class_count; ++index) {
+            if (spectrum->midi_notes[index] != low_yin->midi) continue;
+            const int key = low_yin->midi - MUSIC_PIANO_MIDI_MIN;
+            if (spectrum->key_has_independent_fundamental[key]) return -1;
+        }
     }
 
     const int suppressed_midi = low_yin->midi;
     invalidate_yin(low_yin);
     return suppressed_midi;
+}
+
+static bool midi_is_integer_harmonic_of(int upper_midi, int root_midi)
+{
+    if (upper_midi <= root_midi) return false;
+    const float ratio = powf(2.0f, (float)(upper_midi - root_midi) / 12.0f);
+    const int harmonic = (int)lrintf(ratio);
+    if (harmonic < 2 || harmonic > PIANO_TRACKER_POLY_HARMONIC_MAX) {
+        return false;
+    }
+    const float cents = 1200.0f * log2f(ratio / (float)harmonic);
+    return fabsf(cents) <= PIANO_TRACKER_POLY_HARMONIC_MAX_CENTS;
+}
+
+static bool spectrum_has_clean_physical_note(
+    const chord_result_t *spectrum, int midi)
+{
+    if (midi < MUSIC_PIANO_MIDI_MIN || midi > PIANO_TRACKER_MIDI_MAX) {
+        return false;
+    }
+    const int key = midi - MUSIC_PIANO_MIDI_MIN;
+    if (!spectrum->key_has_independent_fundamental[key]) return false;
+    for (int index = 0; index < spectrum->debug_candidate_count; ++index) {
+        const chord_candidate_debug_t *candidate =
+            &spectrum->debug_candidates[index];
+        if (candidate->midi == midi && candidate->distinct_local_peak &&
+            candidate->relative_score >= MUSIC_DEMO_POLY_MIN_RELATIVE &&
+            candidate->prominence >= MUSIC_DEMO_POLY_MIN_PROMINENCE) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool spectrum_is_clean_high_poly(const chord_result_t *spectrum)
+{
+    if (spectrum == NULL || !spectrum->valid ||
+        spectrum->pitch_class_count < 2 ||
+        spectrum->pitch_class_count > 3) {
+        return false;
+    }
+    for (int index = 0; index < spectrum->pitch_class_count; ++index) {
+        const int midi = spectrum->midi_notes[index];
+        if (midi < MUSIC_FFT_POLY_PRIORITY_MIN_MIDI ||
+            !spectrum_has_clean_physical_note(spectrum, midi)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool spectrum_contains_midi(const chord_result_t *spectrum, int midi)
+{
+    if (spectrum == NULL || !spectrum->valid) return false;
+    for (int index = 0; index < spectrum->pitch_class_count; ++index) {
+        if (spectrum->midi_notes[index] == midi) return true;
+    }
+    return false;
+}
+
+static yin_result_t select_band_priority_yin(
+    const chord_result_t *spectrum, const yin_result_t *high_yin,
+    const yin_result_t *low_yin)
+{
+    const yin_result_t invalid = {.midi = -1};
+    const bool high_valid = high_yin != NULL && high_yin->valid;
+    const bool low_valid = low_yin != NULL && low_yin->valid &&
+        low_yin->midi >= MUSIC_PIANO_MIDI_MIN &&
+        low_yin->midi <= MUSIC_VIRTUAL_FUNDAMENTAL_MAX_MIDI;
+
+    /* Once two clean C4+ fundamentals are visible, their FFT evidence owns
+     * the frame. A low common period must not replace them in the legacy pitch
+     * stream, even when its YIN confidence is numerically higher. */
+    if (spectrum_is_clean_high_poly(spectrum)) {
+        return high_valid ? *high_yin : invalid;
+    }
+
+    if (low_valid) {
+        const bool low_is_chord_tone = spectrum_contains_midi(
+            spectrum, low_yin->midi);
+        const bool low_has_physical_peak = spectrum_has_clean_physical_note(
+            spectrum, low_yin->midi);
+        if (!high_valid || low_is_chord_tone || low_has_physical_peak) {
+            return *low_yin;
+        }
+    }
+    return high_valid ? *high_yin : invalid;
+}
+
+static bool spectrum_has_virtual_harmonic_pair(
+    const chord_result_t *spectrum, int root_midi)
+{
+    int supported = 0;
+    for (int index = 0; index < spectrum->debug_candidate_count; ++index) {
+        const chord_candidate_debug_t *candidate =
+            &spectrum->debug_candidates[index];
+        if (candidate->distinct_local_peak &&
+            candidate->relative_score >=
+                MUSIC_VIRTUAL_ROOT_HOLD_MIN_RELATIVE &&
+            candidate->prominence >=
+                MUSIC_VIRTUAL_ROOT_HOLD_MIN_PROMINENCE &&
+            midi_is_integer_harmonic_of(candidate->midi, root_midi) &&
+            ++supported >= 2) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static int find_unconfirmed_virtual_interval_root(
+    const chord_result_t *spectrum, const yin_result_t *high_yin,
+    const yin_result_t *low_yin, const low_note_result_t *low_match)
+{
+    if (spectrum == NULL || !spectrum->valid ||
+        spectrum->kind != CHORD_DETECTION_INTERVAL ||
+        spectrum->pitch_class_count != 2 ||
+        spectrum->confidence < MUSIC_INTERVAL_CONFIDENCE_THRESHOLD) {
+        return -1;
+    }
+
+    const int source_count = 2 +
+        ((low_match != NULL && low_match->valid) ? low_match->count : 0);
+    for (int source = 0; source < source_count; ++source) {
+        int root_midi = -1;
+        float confidence = 0.0f;
+        if (source < 2) {
+            const yin_result_t *candidate = source == 0 ? high_yin : low_yin;
+            if (candidate != NULL && candidate->valid) {
+                root_midi = candidate->midi;
+                confidence = candidate->confidence;
+            }
+        } else {
+            const int match_index = source - 2;
+            root_midi = low_match->midi[match_index];
+            confidence = low_match->confidence[match_index];
+        }
+        if (confidence < PIANO_TRACKER_LOW_YIN_CONFIDENCE ||
+            root_midi < MUSIC_PIANO_MIDI_MIN ||
+            root_midi > MUSIC_VIRTUAL_FUNDAMENTAL_MAX_MIDI) {
+            continue;
+        }
+
+        /* A low matcher is not sufficient physical proof here: its harmonic
+         * template is fooled by the same common-divisor pattern as YIN. A real
+         * pressed bass must expose its own clean local spectral peak. */
+        if (spectrum_has_clean_physical_note(spectrum, root_midi)) continue;
+
+        bool physical_harmonic_pair = true;
+        for (int index = 0; index < 2; ++index) {
+            const int upper_midi = spectrum->midi_notes[index];
+            if (upper_midi <= root_midi ||
+                upper_midi > PIANO_TRACKER_MIDI_MAX ||
+                !midi_is_integer_harmonic_of(upper_midi, root_midi) ||
+                !spectrum_has_clean_physical_note(spectrum, upper_midi)) {
+                physical_harmonic_pair = false;
+                break;
+            }
+        }
+        if (physical_harmonic_pair) return root_midi;
+    }
+    return -1;
+}
+
+static bool virtual_root_quarantine_active(uint32_t now_ms,
+                                           uint32_t deadline_ms)
+{
+    return deadline_ms != 0 && (int32_t)(deadline_ms - now_ms) >= 0;
+}
+
+static void prepare_exact_spectrum_for_virtual_interval(
+    const chord_result_t *spectrum, yin_result_t *low_yin,
+    const bool quarantined[LOW_NOTE_DETECTOR_KEY_COUNT],
+    int promoted_root_midi, chord_result_t *exact_spectrum)
+{
+    *exact_spectrum = *spectrum;
+    exact_spectrum->virtual_root_quarantined = false;
+    exact_spectrum->virtual_root_midi = -1;
+
+    /* D4+G4, for example, repeats close to 98 Hz because those notes are the
+     * third and fourth harmonics of G2. Both YIN windows therefore agree on a
+     * G2 that is not physically present. Quarantine every recently detected
+     * synthetic key across short FFT dropouts instead of making a one-frame
+     * decision. */
+    for (int key = 0; key < LOW_NOTE_DETECTOR_KEY_COUNT; ++key) {
+        if (!quarantined[key]) continue;
+        const int midi = MUSIC_PIANO_MIDI_MIN + key;
+        exact_spectrum->key_salience[key] = 0.0f;
+        exact_spectrum->key_fundamental_prominence[key] = 0.0f;
+        exact_spectrum->key_has_independent_fundamental[key] = false;
+        exact_spectrum->key_uses_virtual_fundamental[key] = false;
+        exact_spectrum->virtual_root_quarantined = true;
+        exact_spectrum->virtual_root_midi = midi;
+        if (low_yin != NULL && low_yin->valid && low_yin->midi == midi) {
+            invalidate_yin(low_yin);
+        }
+    }
+
+    /* Only the freshly verified interval gets the local recovery lift. Held
+     * quarantine frames merely block the root; they do not manufacture a new
+     * interval when the spectrum no longer supports one. */
+    if (promoted_root_midi >= 0) {
+        exact_spectrum->confidence = fmaxf(
+            exact_spectrum->confidence,
+            PIANO_TRACKER_POLY_INTERVAL_CONFIDENCE);
+        for (int index = 0; index < 2; ++index) {
+            const int upper_key = exact_spectrum->midi_notes[index] -
+                                  MUSIC_PIANO_MIDI_MIN;
+            exact_spectrum->key_salience[upper_key] = fmaxf(
+                exact_spectrum->key_salience[upper_key],
+                PIANO_TRACKER_POLY_SALIENCE);
+            exact_spectrum->key_fundamental_prominence[upper_key] = fmaxf(
+                exact_spectrum->key_fundamental_prominence[upper_key],
+                PIANO_TRACKER_POLY_PROMINENCE);
+        }
+    }
+}
+
+static void filter_quarantined_low_matches(
+    const low_note_result_t *source,
+    const bool quarantined[LOW_NOTE_DETECTOR_KEY_COUNT],
+    low_note_result_t *filtered)
+{
+    *filtered = *source;
+    uint8_t write = 0;
+    for (uint8_t read = 0; read < source->count; ++read) {
+        const int midi = source->midi[read];
+        const bool remove = midi >= MUSIC_PIANO_MIDI_MIN &&
+            midi <= MUSIC_VIRTUAL_FUNDAMENTAL_MAX_MIDI &&
+            quarantined[midi - MUSIC_PIANO_MIDI_MIN];
+        if (remove) continue;
+        filtered->midi[write] = source->midi[read];
+        filtered->frequency_hz[write] = source->frequency_hz[read];
+        filtered->confidence[write] = source->confidence[read];
+        ++write;
+    }
+    for (uint8_t index = write; index < MUSIC_LOW_MATCH_MAX_KEYS; ++index) {
+        filtered->midi[index] = -1;
+        filtered->frequency_hz[index] = 0.0f;
+        filtered->confidence[index] = 0.0f;
+    }
+    filtered->count = write;
+    filtered->valid = write > 0;
+    for (int key = 0; key < LOW_NOTE_DETECTOR_KEY_COUNT; ++key) {
+        if (quarantined[key]) filtered->key_confidence[key] = 0.0f;
+    }
+    if (filtered->strongest_midi >= MUSIC_PIANO_MIDI_MIN &&
+        filtered->strongest_midi <= MUSIC_VIRTUAL_FUNDAMENTAL_MAX_MIDI &&
+        quarantined[filtered->strongest_midi - MUSIC_PIANO_MIDI_MIN]) {
+        filtered->strongest_midi = -1;
+        filtered->strongest_confidence = 0.0f;
+        filtered->strongest_score = 0.0f;
+    }
+}
+
+static bool remove_quarantined_notes(
+    piano_note_set_t *set,
+    const bool quarantined[LOW_NOTE_DETECTOR_KEY_COUNT])
+{
+    uint8_t write = 0;
+    bool removed = false;
+    for (uint8_t read = 0; read < set->count; ++read) {
+        const int midi = set->midi[read];
+        if (midi >= MUSIC_PIANO_MIDI_MIN &&
+            midi <= MUSIC_VIRTUAL_FUNDAMENTAL_MAX_MIDI &&
+            quarantined[midi - MUSIC_PIANO_MIDI_MIN]) {
+            removed = true;
+            continue;
+        }
+        if (write != read) {
+            set->midi[write] = set->midi[read];
+            set->confidence[write] = set->confidence[read];
+            set->velocity[write] = set->velocity[read];
+        }
+        ++write;
+    }
+    for (uint8_t index = write; index < set->count; ++index) {
+        set->midi[index] = -1;
+        set->confidence[index] = 0.0f;
+        set->velocity[index] = 0;
+    }
+    set->count = write;
+    return removed;
+}
+
+static void clear_bass_state_for_midi(int midi)
+{
+    if (midi < 0) return;
+    if (s_bass_pending_midi == midi) {
+        s_bass_pending_midi = -1;
+        s_bass_pending_frames = 0;
+    }
+    if (s_bass_midi == midi) {
+        s_bass_midi = -1;
+        s_bass_missing_frames = 0;
+    }
 }
 
 void music_detector_set_recognition_profile(music_recognition_profile_t profile)
@@ -495,6 +787,8 @@ static void music_dsp_task(void *argument)
     uint32_t last_performance_ms = 0;
     uint32_t last_spectrum_debug_ms = 0;
     uint32_t last_low_match_log_ms = 0;
+    uint32_t last_virtual_root_log_ms = 0;
+    uint32_t virtual_root_deadline_ms[LOW_NOTE_DETECTOR_KEY_COUNT] = {0};
     uint32_t low_peak_diagnostics = 0;
     float selected_snr_db = -120.0f;
     chord_result_t last_spectrum_debug = {0};
@@ -540,6 +834,8 @@ static void music_dsp_task(void *argument)
             s_bass_pending_frames = 0;
             s_bass_missing_frames = 0;
             s_bass_injected = false;
+            memset(virtual_root_deadline_ms, 0,
+                   sizeof(virtual_root_deadline_ms));
             spectrum_hop_counter = 0;
 #if !MUSIC_USE_SINGLE_MIC_CH1
             dual_mic_selector_init(&demo_selector);
@@ -709,12 +1005,17 @@ static void music_dsp_task(void *argument)
         if (calibrated && s_ring_filled >= MUSIC_FFT_SIZE &&
             (++spectrum_hop_counter % MUSIC_SPECTRUM_ANALYSIS_HOPS) == 0) {
             yin_result_t yin = {.midi = -1};
+            yin_result_t high_yin = {.midi = -1};
             yin_result_t raw_low_yin = {.midi = -1};
             yin_result_t low_yin = {.midi = -1};
             low_note_result_t low_match = {0};
+            low_note_result_t exact_low_match = {0};
             chord_result_t chord = {0};
+            chord_result_t exact_chord = {0};
             float harmonic_ratio = 0.0f;
             int suppressed_low_midi = -1;
+            int detected_virtual_midi = -1;
+            bool quarantined_low[LOW_NOTE_DETECTOR_KEY_COUNT] = {0};
             bool exact_signal_active = false;
             bool exact_attack_allowed = false;
             float exact_rms = 0.0f;
@@ -732,7 +1033,10 @@ static void music_dsp_task(void *argument)
                 const bool low_window_ready =
                     copy_low_yin_window(selected_mic);
                 int64_t started = esp_timer_get_time();
-                yin_detector_analyze(s_yin_window, MUSIC_YIN_WINDOW_SIZE, &yin);
+                yin_detector_analyze_range(
+                    s_yin_window, MUSIC_YIN_WINDOW_SIZE, MUSIC_SAMPLE_RATE_HZ,
+                    MUSIC_HIGH_YIN_MIN_FREQUENCY_HZ,
+                    MUSIC_MAX_FREQUENCY_HZ, &high_yin);
                 if (low_window_ready) {
                     yin_detector_analyze_range(
                         s_low_yin_window, MUSIC_LOW_YIN_WINDOW_SIZE,
@@ -750,9 +1054,6 @@ static void music_dsp_task(void *argument)
                     &s_low_note_detector, 0, true, exact_attack_allowed,
                     metrics[0].clipped, &low_match);
                 promote_low_match_yin(&low_match, &low_yin);
-                suppressed_low_midi =
-                    suppress_unconfirmed_low_yin_under_high_note(
-                        &yin, &low_yin, &low_match);
                 started = esp_timer_get_time();
                 chord_detector_analyze(s_audio_ring, NULL, s_ring_write_position,
                                        metrics[0].rms, 0.0f, demo_profile,
@@ -760,8 +1061,6 @@ static void music_dsp_task(void *argument)
                                        low_yin.confidence, &low_match,
                                        &chord);
                 counters->chord_time_us = (uint32_t)(esp_timer_get_time() - started);
-                harmonic_ratio = yin.valid ?
-                    chord_detector_harmonic_explained_ratio(yin.frequency_hz) : 0.0f;
             } else {
                 low_yin_stabilizer_update(
                     &s_low_yin_stabilizer, NULL, false, &low_yin);
@@ -773,7 +1072,6 @@ static void music_dsp_task(void *argument)
                 counters->mic2_fft_time_us = 0;
                 counters->chord_time_us = 0;
             }
-            last_yin_confidence = yin.confidence;
             last_chord_confidence = chord.confidence;
 #else
             if (!demo_profile) {
@@ -791,7 +1089,10 @@ static void music_dsp_task(void *argument)
                 !metrics[selected_mic - 1].clipped;
             exact_rms = metrics[selected_mic - 1].rms;
             int64_t started = esp_timer_get_time();
-            yin_detector_analyze(s_yin_window, MUSIC_YIN_WINDOW_SIZE, &yin);
+            yin_detector_analyze_range(
+                s_yin_window, MUSIC_YIN_WINDOW_SIZE, MUSIC_SAMPLE_RATE_HZ,
+                MUSIC_HIGH_YIN_MIN_FREQUENCY_HZ,
+                MUSIC_MAX_FREQUENCY_HZ, &high_yin);
             const bool low_window_ready =
                 copy_low_yin_window(selected_mic);
             if (low_window_ready) {
@@ -809,9 +1110,6 @@ static void music_dsp_task(void *argument)
                 exact_signal_active, exact_attack_allowed,
                 metrics[selected_mic - 1].clipped, &low_match);
             promote_low_match_yin(&low_match, &low_yin);
-            suppressed_low_midi =
-                suppress_unconfirmed_low_yin_under_high_note(
-                    &yin, &low_yin, &low_match);
             counters->yin_time_us = (uint32_t)(esp_timer_get_time() - started);
             started = esp_timer_get_time();
             const float mic1_weight = demo_profile
@@ -828,9 +1126,57 @@ static void music_dsp_task(void *argument)
                 low_yin.midi, low_yin.confidence, &low_match,
                 &chord);
             counters->chord_time_us = (uint32_t)(esp_timer_get_time() - started);
-            harmonic_ratio = yin.valid ?
-                chord_detector_harmonic_explained_ratio(yin.frequency_hz) : 0.0f;
 #endif
+            suppressed_low_midi =
+                suppress_unconfirmed_low_yin_under_high_note(
+                    &high_yin, &low_yin, &chord);
+            detected_virtual_midi = find_unconfirmed_virtual_interval_root(
+                &chord, &high_yin, &low_yin, &low_match);
+            if (detected_virtual_midi >= 0) {
+                virtual_root_deadline_ms[
+                    detected_virtual_midi - MUSIC_PIANO_MIDI_MIN] =
+                        block_timestamp_ms +
+                        MUSIC_VIRTUAL_ROOT_QUARANTINE_MS;
+            }
+            for (int key = 0; key < LOW_NOTE_DETECTOR_KEY_COUNT; ++key) {
+                if (virtual_root_deadline_ms[key] != 0 &&
+                    spectrum_has_virtual_harmonic_pair(
+                        &chord, MUSIC_PIANO_MIDI_MIN + key)) {
+                    virtual_root_deadline_ms[key] = block_timestamp_ms +
+                        MUSIC_VIRTUAL_ROOT_QUARANTINE_MS;
+                }
+                if (virtual_root_quarantine_active(
+                        block_timestamp_ms,
+                        virtual_root_deadline_ms[key])) {
+                    quarantined_low[key] = true;
+                } else {
+                    virtual_root_deadline_ms[key] = 0;
+                }
+            }
+            prepare_exact_spectrum_for_virtual_interval(
+                &chord, &low_yin, quarantined_low,
+                detected_virtual_midi, &exact_chord);
+            filter_quarantined_low_matches(
+                &low_match, quarantined_low, &exact_low_match);
+            yin = select_band_priority_yin(
+                &exact_chord, &high_yin, &low_yin);
+            harmonic_ratio = yin.valid
+                ? chord_detector_harmonic_explained_ratio(yin.frequency_hz)
+                : 0.0f;
+#if MUSIC_USE_SINGLE_MIC_CH1
+            last_yin_confidence = yin.confidence;
+#endif
+            if (detected_virtual_midi >= 0 &&
+                block_timestamp_ms - last_virtual_root_log_ms >= 500U) {
+                char root_name[8] = "?";
+                note_midi_to_name(detected_virtual_midi, root_name,
+                                  sizeof(root_name));
+                ESP_LOGI("PIANO_TRACKER",
+                         "virtual root quarantine=%s interval=[%d,%d] conf=%.2f",
+                         root_name, chord.midi_notes[0], chord.midi_notes[1],
+                         (double)chord.confidence);
+                last_virtual_root_log_ms = block_timestamp_ms;
+            }
             if (low_match.strongest_midi >= 0 &&
                 block_timestamp_ms - last_low_match_log_ms >= 500U) {
                 char strongest_name[8] = "?";
@@ -853,7 +1199,8 @@ static void music_dsp_task(void *argument)
              * not touch the legacy result stream below. */
             piano_note_set_t note_set;
             bool note_set_changed = piano_note_tracker_update(
-                    &s_note_tracker, &chord, &yin, &low_yin, &low_match,
+                    &s_note_tracker, &exact_chord, &high_yin, &low_yin,
+                    &exact_low_match,
                     harmonic_ratio, exact_signal_active,
                     exact_attack_allowed,
 #if MUSIC_USE_SINGLE_MIC_CH1
@@ -864,14 +1211,13 @@ static void music_dsp_task(void *argument)
 #endif
                     exact_rms, block_timestamp_ms,
                     &note_set);
-            if (suppressed_low_midi >= 0) {
-                if (s_bass_pending_midi == suppressed_low_midi) {
-                    s_bass_pending_midi = -1;
-                    s_bass_pending_frames = 0;
-                }
-                if (s_bass_midi == suppressed_low_midi) {
-                    s_bass_midi = -1;
-                    s_bass_missing_frames = 0;
+            if (remove_quarantined_notes(&note_set, quarantined_low)) {
+                note_set_changed = true;
+            }
+            clear_bass_state_for_midi(suppressed_low_midi);
+            for (int key = 0; key < LOW_NOTE_DETECTOR_KEY_COUNT; ++key) {
+                if (quarantined_low[key]) {
+                    clear_bass_state_for_midi(MUSIC_PIANO_MIDI_MIN + key);
                 }
             }
             /* Bass fallback (C2..B3) with hysteresis. The low-rate YIN is
@@ -881,7 +1227,8 @@ static void music_dsp_task(void *argument)
             int bass_candidate = -1;
             const bool bass_attack = exact_signal_active &&
                 exact_attack_allowed &&
-                bass_attack_supported(&low_match, &low_yin, &bass_candidate);
+                bass_attack_supported(&exact_low_match, &low_yin, &high_yin,
+                                      &bass_candidate);
             if (bass_attack) {
                 if (bass_candidate == s_bass_pending_midi) {
                     if (s_bass_pending_frames < UINT8_MAX) {
@@ -901,7 +1248,8 @@ static void music_dsp_task(void *argument)
                 s_bass_missing_frames = 0;
             }
             if (s_bass_midi >= 0) {
-                if (bass_hold_supported(&low_match, &low_yin, s_bass_midi)) {
+                if (bass_hold_supported(&exact_low_match, &low_yin,
+                                        s_bass_midi)) {
                     s_bass_missing_frames = 0;
                 } else if (++s_bass_missing_frames >= 3U) {
                     s_bass_midi = -1;
@@ -922,9 +1270,10 @@ static void music_dsp_task(void *argument)
                     const float bass_confidence =
                         (low_yin.valid && low_yin.midi == s_bass_midi)
                             ? low_yin.confidence
-                            : (low_match.valid && low_match.count == 1U &&
-                               low_match.midi[0] == s_bass_midi
-                                   ? low_match.confidence[0] : 0.85f);
+                            : (exact_low_match.valid &&
+                               exact_low_match.count == 1U &&
+                               exact_low_match.midi[0] == s_bass_midi
+                                   ? exact_low_match.confidence[0] : 0.85f);
                     note_set.confidence[index] = fminf(
                         fmaxf(bass_confidence, 0.0f), 1.0f);
                     note_set.velocity[index] =
@@ -955,9 +1304,9 @@ static void music_dsp_task(void *argument)
             const char *unknown_reason = "not_analyzed";
             const int poly_stable_votes =
                 demo_profile && selected_snr_db >= MUSIC_DEMO_SNR_HIGH_DB
-                    ? MUSIC_DEMO_HIGH_SNR_INTERVAL_CONSECUTIVE
+                    ? MUSIC_DEMO_HIGH_SNR_INTERVAL_VOTES
                     : (demo_profile && selected_snr_db >= MUSIC_DEMO_SNR_MEDIUM_DB
-                           ? MUSIC_DEMO_MEDIUM_SNR_INTERVAL_CONSECUTIVE
+                           ? MUSIC_DEMO_MEDIUM_SNR_INTERVAL_VOTES
                            : MUSIC_STABLE_VOTE_COUNT);
 #if MUSIC_USE_SINGLE_MIC_CH1
             const bool emit = music_classifier_update(&classifier, &metrics[0], &metrics[1],
