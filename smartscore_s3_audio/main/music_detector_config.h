@@ -52,13 +52,20 @@ typedef enum {
 #define MUSIC_LOW_MATCH_MIN_AMPLITUDE             0.00020f
 #define MUSIC_FFT_SIZE                          4096
 #define MUSIC_FFT_HOP_SIZE                      1024
-#define MUSIC_MIN_FREQUENCY_HZ_INTEGER          55
+#define MUSIC_MIN_FREQUENCY_HZ_INTEGER          65
 #define MUSIC_MIN_FREQUENCY_HZ                  ((float)MUSIC_MIN_FREQUENCY_HZ_INTEGER)
 #define MUSIC_MAX_FREQUENCY_HZ_INTEGER          2200
 #define MUSIC_MAX_FREQUENCY_HZ                  ((float)MUSIC_MAX_FREQUENCY_HZ_INTEGER)
-#define MUSIC_HIGH_YIN_MIN_FREQUENCY_HZ         125.0f
-#define MUSIC_LOW_YIN_MAX_FREQUENCY_HZ          255.0f
+/* The dedicated low-note matcher still covers C2..B3.  The low-rate and
+ * high-rate YIN searches deliberately overlap across C4: the longer low-rate
+ * window stabilizes C4 near the B3/C4 quantization boundary, while the
+ * high-rate path retains the faster attack.  MIDI 60 is never admitted as a
+ * bass/virtual-root candidate; it may only reinforce a physical C4 peak. */
+#define MUSIC_LOW_MIN_FREQUENCY_HZ               55.0f
+#define MUSIC_HIGH_YIN_MIN_FREQUENCY_HZ         250.0f
+#define MUSIC_LOW_YIN_MAX_FREQUENCY_HZ          270.0f
 #define MUSIC_VIRTUAL_FUNDAMENTAL_MAX_MIDI       59
+#define MUSIC_LOW_YIN_OVERLAP_MAX_MIDI           60
 #define MUSIC_LOW_CHORD_YIN_CONFIDENCE           0.85f
 #define MUSIC_SPECTRUM_MAX_FREQUENCY_HZ         10000.0f
 #define MUSIC_YIN_THRESHOLD                     0.20f
@@ -82,6 +89,11 @@ typedef enum {
 #define MUSIC_SPECTRUM_SUPPORT_MIN_PROMINENCE    1.10f
 #define MUSIC_OCTAVE_CORRECTION_MIN_RELATIVE     0.45f
 #define MUSIC_OCTAVE_CORRECTION_MIN_PROMINENCE   1.15f
+#define MUSIC_OCTAVE_CONTINUITY_MIN_RELATIVE     0.25f
+#define MUSIC_OCTAVE_CONTINUITY_MIN_PROMINENCE   1.05f
+#define MUSIC_VIRTUAL_ROOT_QUARANTINE_MS          500U
+#define MUSIC_VIRTUAL_ROOT_HOLD_MIN_RELATIVE      0.18f
+#define MUSIC_VIRTUAL_ROOT_HOLD_MIN_PROMINENCE    1.02f
 #define MUSIC_ACTIVE_PITCH_CLASS_THRESHOLD      0.18f
 #define MUSIC_CHORD_CONFIDENCE_THRESHOLD        0.66f
 #define MUSIC_INTERVAL_CONFIDENCE_THRESHOLD     0.58f
@@ -115,24 +127,37 @@ typedef enum {
 #define MUSIC_DEMO_MEDIUM_SNR_ACTIVE_THRESHOLD    0.15f
 #define MUSIC_DEMO_HIGH_SNR_RELATIVE_THRESHOLD    0.020f
 #define MUSIC_DEMO_MEDIUM_SNR_RELATIVE_THRESHOLD  0.030f
-#define MUSIC_DEMO_HIGH_SNR_STABLE_VOTES          2
+#define MUSIC_DEMO_HIGH_SNR_INTERVAL_VOTES         2
+#define MUSIC_DEMO_MEDIUM_SNR_INTERVAL_VOTES       3
+#define MUSIC_DEMO_CHORD_STABLE_VOTES              3
+#define MUSIC_DEMO_POLY_MAX_ACTIVE_CLASSES         4
+#define MUSIC_DEMO_POLY_MIN_RELATIVE              0.26f
+#define MUSIC_DEMO_POLY_MIN_PROMINENCE            1.04f
+#define MUSIC_DEMO_CHORD_MIN_RELATIVE             0.28f
+#define MUSIC_DEMO_CHORD_MIN_PROMINENCE           1.06f
+#define MUSIC_DEMO_STRONG_SINGLE_SECONDARY_RELATIVE 0.38f
+#define MUSIC_DEMO_ADJACENT_MIN_RELATIVE          0.45f
+#define MUSIC_DEMO_ADJACENT_MIN_PROMINENCE        1.25f
+#define MUSIC_DEMO_ADJACENT_MIN_PEAK_BINS          3
+#define MUSIC_FFT_POLY_PRIORITY_MIN_MIDI            60
+#define MUSIC_HIGH_FFT_MIN_RELATIVE                0.24f
+#define MUSIC_HIGH_FFT_MIN_PROMINENCE              1.04f
+#define MUSIC_HIGH_FFT_FAST_MIN_RELATIVE           0.32f
+#define MUSIC_HIGH_FFT_FAST_MIN_PROMINENCE         1.08f
+#define MUSIC_HIGH_FFT_FAST_INTERVAL_CONFIDENCE    0.78f
+#define MUSIC_HIGH_FFT_FAST_CHORD_CONFIDENCE       0.86f
+#define MUSIC_LOW_POLY_YIN_CONFIDENCE              0.68f
 #define MUSIC_SPECTRUM_LOW_BAND_MAX_HZ           250.0f
 #define MUSIC_SPECTRUM_MID_BAND_MAX_HZ           800.0f
 #define MUSIC_HARMONIC_SUPPORT_WEIGHT           0.45f
 #define MUSIC_HARMONIC_SUPPRESSION_WEIGHT       0.85f
 #define MUSIC_HARMONIC_RATIO_TOLERANCE          0.03f
 #define MUSIC_HARMONIC_OWNER_MIN_RELATIVE       0.35f
-#define MUSIC_NOISE_GATE_MULTIPLIER             1.7f
+#define MUSIC_NOISE_GATE_MULTIPLIER             2.5f
 #define MUSIC_NOISE_FLOOR_RECOVERY_ALPHA        0.08f
 #define MUSIC_MIN_RMS                           0.0008f
-#define MUSIC_NOISE_GATE_MAX_RMS                0.020f
 #define MUSIC_HIGH_PASS_HZ                      25.0f
-#define MUSIC_CALIBRATION_MS                    1000U
-#define MUSIC_CALIBRATION_MAX_MS                3000U
-#define MUSIC_CALIBRATION_MIN_VALID_FRAMES        20U
-#define MUSIC_CALIBRATION_MAX_QUIET_RMS          0.05f
-#define MUSIC_CALIBRATION_MAX_QUIET_PEAK         0.20f
-#define MUSIC_CALIBRATION_DEFAULT_NOISE_RMS      0.002f
+#define MUSIC_CALIBRATION_MS                    1000
 #define MUSIC_STABLE_HISTORY_SIZE               5
 #define MUSIC_STABLE_VOTE_COUNT                 3
 #define MUSIC_ACTIVITY_HANGOVER_BLOCKS           4
@@ -146,7 +171,7 @@ typedef enum {
 #define MUSIC_RESULT_LOG_REPEAT_INTERVAL_MS     1500
 #define MUSIC_DIAGNOSTIC_INTERVAL_MS            1500
 #define MUSIC_PERFORMANCE_INTERVAL_MS           2000
-#define MUSIC_ES7210_INPUT_GAIN_DB              21.0f
+#define MUSIC_ES7210_INPUT_GAIN_DB              24.0f
 #define MUSIC_ES7210_GAIN_OPTION_LOW_1_DB        3.0f
 #define MUSIC_ES7210_GAIN_OPTION_LOW_2_DB        6.0f
 #define MUSIC_ES7210_GAIN_OPTION_1_DB            9.0f
@@ -161,17 +186,19 @@ typedef enum {
 #define MUSIC_CLIP_SAMPLE_THRESHOLD             0.98f
 #define MUSIC_CLIP_RATE_THRESHOLD               0.001f
 #define MUSIC_LOW_PEAK_GAIN_HINT                0.05f
+/* Full 61-key keyboard range for the exact-key evidence layer and the note
+ * tracker. The legacy chord/mid-high classification keeps its 48..84 range. */
 #define MUSIC_PIANO_MIDI_MIN                    36
 #define MUSIC_PIANO_MIDI_MAX                    96
 #define MUSIC_PIANO_KEY_COUNT                   (MUSIC_PIANO_MIDI_MAX - MUSIC_PIANO_MIDI_MIN + 1)
 #define MUSIC_MAX_SIMULTANEOUS_KEYS             4
-#define MUSIC_CHORD_MIDI_MIN                    MUSIC_PIANO_MIDI_MIN
+#define MUSIC_CHORD_MIDI_MIN                    48
 #define MUSIC_CHORD_MIDI_MAX                    MUSIC_PIANO_MIDI_MAX
 #define MUSIC_EXACT_KEY_SALIENCE_FLOOR          0.16f
 #define MUSIC_MIC_SWITCH_CONFIRM_FRAMES         3
 #define MUSIC_MIC_SWITCH_SCORE_MARGIN           0.15f
 #define MUSIC_MIC_MIN_HOLD_FRAMES               8U
-#define MUSIC_MIC_NOTE_RELEASE_FRAMES           6U
+#define MUSIC_MIC_NOTE_RELEASE_FRAMES           2U
 #define MUSIC_MIC_MIN_VALID_PEAK                0.0012f
 #define MUSIC_MIC_MAX_DC_OFFSET                 0.08f
 #define MUSIC_MIC_MAX_CREST_FACTOR              10.0f

@@ -19,7 +19,7 @@ void app_main(void)
 #else
     ESP_LOGI("MUSIC_MAIN", "microphones: 2 x IM68A130 analog single-ended modules");
     ESP_LOGI("MUSIC_MAIN", "microphone mode: DUAL quality-selected (no unaligned time-domain mixing)");
-    ESP_LOGI("AUDIO", "fixed passive mapping MIC1=slot%d MIC2=slot%d; no startup audio probe",
+    ESP_LOGI("AUDIO", "nominal MIC1 slot=%d MIC2 slot=%d; startup isolation probe enabled",
              BOARD_MIC1_SLOT_INDEX, BOARD_MIC2_SLOT_INDEX);
     ESP_LOGI("AUDIO", "sample_rate=%d input_gain=%.1f dB",
              MUSIC_SAMPLE_RATE_HZ, MUSIC_ES7210_INPUT_GAIN_DB);

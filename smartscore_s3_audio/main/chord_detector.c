@@ -6,8 +6,6 @@
 #include <string.h>
 #include "dsps_fft2r.h"
 #include "esp_err.h"
-#include "esp_heap_caps.h"
-#include "esp_log.h"
 #include "esp_timer.h"
 #include "diagnostics.h"
 #include "music_detector_config.h"
@@ -19,46 +17,27 @@
 #define SPECTRUM_NOISE_BAND_COUNT 3
 #define EXACT_HARMONIC_RESIDUAL_MIN_SALIENCE 0.65f
 
-typedef struct {
-    float raw_score[CHORD_NOTE_COUNT];
-    float independent_score[CHORD_NOTE_COUNT];
-    float fundamental_score[CHORD_NOTE_COUNT];
-    float fundamental_noise_floor[CHORD_NOTE_COUNT];
-    int fundamental_peak_bin[CHORD_NOTE_COUNT];
-    float fundamental_peak_frequency[CHORD_NOTE_COUNT];
-    float fundamental_prominence[CHORD_NOTE_COUNT];
-    bool harmonic_owned[CHORD_NOTE_COUNT];
-    float piano_score[CHORD_NOTE_COUNT];
-    float best_note_score[12];
-    int best_midi[12];
-    uint16_t noise_histogram[NOISE_HISTOGRAM_BINS];
-} chord_analysis_scratch_t;
-
-typedef struct {
-    float fft_work[MUSIC_FFT_SIZE * 2];
+static float s_fft_work[MUSIC_FFT_SIZE * 2];
 #if !MUSIC_USE_SINGLE_MIC_CH1
-    float mic1_magnitude[FFT_BIN_COUNT];
-    float mic2_magnitude[FFT_BIN_COUNT];
+static float s_mic1_magnitude[FFT_BIN_COUNT];
+static float s_mic2_magnitude[FFT_BIN_COUNT];
 #endif
-    float fused_magnitude[FFT_BIN_COUNT];
-    float hann[MUSIC_FFT_SIZE];
-    bool harmonic_bin_selected[FFT_BIN_COUNT];
-    chord_analysis_scratch_t analysis;
-} chord_detector_workspace_t;
-
-static const char *TAG = "CHORD";
-static chord_detector_workspace_t *s_workspace;
+static float s_fused_magnitude[FFT_BIN_COUNT];
+static float s_hann[MUSIC_FFT_SIZE];
 static float s_fft_magnitude_scale = 1.0f;
+static bool s_harmonic_bin_selected[FFT_BIN_COUNT];
 static bool s_initialized;
 
-#define s_fft_work (s_workspace->fft_work)
-#if !MUSIC_USE_SINGLE_MIC_CH1
-#define s_mic1_magnitude (s_workspace->mic1_magnitude)
-#define s_mic2_magnitude (s_workspace->mic2_magnitude)
-#endif
-#define s_fused_magnitude (s_workspace->fused_magnitude)
-#define s_hann (s_workspace->hann)
-#define s_harmonic_bin_selected (s_workspace->harmonic_bin_selected)
+/* Exact 61-key evidence scratch. Kept separate from the legacy 48..84
+ * classification arrays so the 613089a chord/mid-high path stays untouched. */
+static float s_ev_fundamental_score[CHORD_PIANO_KEY_COUNT];
+static float s_ev_fundamental_noise_floor[CHORD_PIANO_KEY_COUNT];
+static int s_ev_fundamental_peak_bin[CHORD_PIANO_KEY_COUNT];
+static float s_ev_fundamental_peak_frequency[CHORD_PIANO_KEY_COUNT];
+static float s_ev_fundamental_prominence[CHORD_PIANO_KEY_COUNT];
+static float s_ev_raw_score[CHORD_PIANO_KEY_COUNT];
+static float s_ev_piano_score[CHORD_PIANO_KEY_COUNT];
+static bool s_ev_harmonic_owned[CHORD_PIANO_KEY_COUNT];
 
 static float clamp01(float value)
 {
@@ -68,14 +47,6 @@ static float clamp01(float value)
 int chord_detector_init(void)
 {
     if (s_initialized) return ESP_OK;
-    s_workspace = heap_caps_aligned_calloc(
-        16, 1, sizeof(*s_workspace),
-        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (s_workspace == NULL) {
-        ESP_LOGE(TAG, "PSRAM workspace allocation failed: %u bytes",
-                 (unsigned)sizeof(*s_workspace));
-        return ESP_ERR_NO_MEM;
-    }
     float window_sum = 0.0f;
     for (int i = 0; i < MUSIC_FFT_SIZE; ++i) {
         s_hann[i] = 0.5f - 0.5f * cosf(2.0f * (float)M_PI * i / (MUSIC_FFT_SIZE - 1));
@@ -88,20 +59,9 @@ int chord_detector_init(void)
         s_fft_magnitude_scale = 2.0f / window_sum;
     }
     const esp_err_t error = dsps_fft2r_init_fc32(NULL, CONFIG_DSP_MAX_FFT_SIZE);
-    if (error != ESP_OK) {
-        heap_caps_free(s_workspace);
-        s_workspace = NULL;
-        return error;
-    }
+    if (error != ESP_OK) return error;
     s_initialized = true;
-    ESP_LOGI(TAG, "PSRAM workspace ready: %u bytes",
-             (unsigned)sizeof(*s_workspace));
     return ESP_OK;
-}
-
-size_t chord_detector_workspace_size(void)
-{
-    return sizeof(chord_detector_workspace_t);
 }
 
 static void fft_magnitude(const float *ring, size_t write_position, float *magnitude)
@@ -123,8 +83,7 @@ static void fft_magnitude(const float *ring, size_t write_position, float *magni
 
 static float estimate_noise_floor(const float *magnitude, int first_bin, int last_bin)
 {
-    uint16_t *histogram = s_workspace->analysis.noise_histogram;
-    memset(histogram, 0, sizeof(s_workspace->analysis.noise_histogram));
+    uint16_t histogram[NOISE_HISTOGRAM_BINS] = {0};
     uint32_t total = 0;
     for (int bin = first_bin; bin <= last_bin; ++bin) {
         const float level = log10f(magnitude[bin] + 1.0e-12f);
@@ -242,8 +201,7 @@ void chord_detector_analyze(const float *mic1_ring, const float *mic2_ring,
 #endif
 
     const int first_bin = (int)ceilf(MUSIC_MIN_FREQUENCY_HZ * MUSIC_FFT_SIZE / MUSIC_SAMPLE_RATE_HZ);
-    const int last_bin = (int)floorf(MUSIC_SPECTRUM_MAX_FREQUENCY_HZ *
-                                     MUSIC_FFT_SIZE / MUSIC_SAMPLE_RATE_HZ);
+    const int last_bin = (int)floorf(MUSIC_MAX_FREQUENCY_HZ * MUSIC_FFT_SIZE / MUSIC_SAMPLE_RATE_HZ);
     int64_t fft_started = esp_timer_get_time();
 #if MUSIC_USE_SINGLE_MIC_CH1
     (void)mic2_ring;
@@ -301,15 +259,13 @@ void chord_detector_analyze(const float *mic1_ring, const float *mic2_ring,
         }
     }
 
-    chord_analysis_scratch_t *scratch = &s_workspace->analysis;
-    memset(scratch, 0, sizeof(*scratch));
-    float *raw_score = scratch->raw_score;
-    float *independent_score = scratch->independent_score;
-    float *fundamental_score = scratch->fundamental_score;
-    float *fundamental_noise_floor = scratch->fundamental_noise_floor;
-    int *fundamental_peak_bin = scratch->fundamental_peak_bin;
-    float *fundamental_peak_frequency = scratch->fundamental_peak_frequency;
-    float *fundamental_prominence = scratch->fundamental_prominence;
+    float raw_score[CHORD_NOTE_COUNT] = {0};
+    float independent_score[CHORD_NOTE_COUNT] = {0};
+    float fundamental_score[CHORD_NOTE_COUNT] = {0};
+    float fundamental_noise_floor[CHORD_NOTE_COUNT] = {0};
+    int fundamental_peak_bin[CHORD_NOTE_COUNT] = {0};
+    float fundamental_peak_frequency[CHORD_NOTE_COUNT] = {0};
+    float fundamental_prominence[CHORD_NOTE_COUNT] = {0};
     result->spectrum_noise_floor = noise_floor;
 
     /* Extract physical local maxima first, then map each peak to exactly one
@@ -344,13 +300,19 @@ void chord_detector_analyze(const float *mic1_ring, const float *mic2_ring,
     }
 
     for (int note = 0; note < CHORD_NOTE_COUNT; ++note) {
-        const float f0 = note_midi_to_frequency(MUSIC_CHORD_MIDI_MIN + note);
+        const int midi = MUSIC_CHORD_MIDI_MIN + note;
+        const float f0 = note_midi_to_frequency(midi);
         raw_score[note] = fundamental_score[note];
-        for (int harmonic = 2; harmonic <= 8; ++harmonic) {
+        const int maximum_harmonic =
+            midi >= MUSIC_FFT_POLY_PRIORITY_MIN_MIDI ? 8 : 5;
+        const float maximum_harmonic_frequency =
+            midi >= MUSIC_FFT_POLY_PRIORITY_MIN_MIDI
+                ? MUSIC_SPECTRUM_MAX_FREQUENCY_HZ
+                : MUSIC_MAX_FREQUENCY_HZ;
+        for (int harmonic = 2; harmonic <= maximum_harmonic; ++harmonic) {
             const float frequency = f0 * harmonic;
-            if (frequency > MUSIC_SPECTRUM_MAX_FREQUENCY_HZ) break;
-            raw_score[note] += MUSIC_HARMONIC_SUPPORT_WEIGHT *
-                               local_peak(frequency) / sqrtf((float)harmonic);
+            if (frequency > maximum_harmonic_frequency) break;
+            raw_score[note] += MUSIC_HARMONIC_SUPPORT_WEIGHT * local_peak(frequency) / harmonic;
         }
     }
 
@@ -359,7 +321,7 @@ void chord_detector_analyze(const float *mic1_ring, const float *mic2_ring,
         maximum_fundamental = fmaxf(maximum_fundamental, fundamental_score[note]);
     }
 
-    bool *harmonic_owned = scratch->harmonic_owned;
+    bool harmonic_owned[CHORD_NOTE_COUNT] = {0};
     for (int note = 0; note < CHORD_NOTE_COUNT; ++note) {
         const float note_frequency = note_midi_to_frequency(
             MUSIC_CHORD_MIDI_MIN + note);
@@ -384,7 +346,11 @@ void chord_detector_analyze(const float *mic1_ring, const float *mic2_ring,
             const float ratio = fundamental_peak_frequency[note] /
                                 fundamental_peak_frequency[lower];
             const int harmonic = (int)lrintf(ratio);
-            if (harmonic >= 2 && harmonic <= 8 &&
+            const int maximum_harmonic =
+                MUSIC_CHORD_MIDI_MIN + lower >=
+                        MUSIC_FFT_POLY_PRIORITY_MIN_MIDI
+                    ? 8 : 5;
+            if (harmonic >= 2 && harmonic <= maximum_harmonic &&
                 fabsf(ratio - harmonic) <= MUSIC_HARMONIC_RATIO_TOLERANCE) {
                 harmonic_owned[note] = true;
                 ++result->harmonic_rejected_count;
@@ -410,11 +376,16 @@ void chord_detector_analyze(const float *mic1_ring, const float *mic2_ring,
             const float lower_f0 = note_midi_to_frequency(MUSIC_CHORD_MIDI_MIN + lower);
             const float ratio = f0 / lower_f0;
             const int harmonic = (int)lrintf(ratio);
+            const int maximum_harmonic =
+                MUSIC_CHORD_MIDI_MIN + lower >=
+                        MUSIC_FFT_POLY_PRIORITY_MIN_MIDI
+                    ? 8 : 5;
             const bool lower_has_fundamental = !harmonic_owned[lower] &&
                 fundamental_score[lower] >= fundamental_noise_floor[lower] *
                                                MUSIC_FUNDAMENTAL_NOISE_MULTIPLIER &&
                 fundamental_score[lower] >= maximum_fundamental * fundamental_relative_threshold;
-            if (lower_has_fundamental && harmonic >= 2 && harmonic <= 8 &&
+            if (lower_has_fundamental && harmonic >= 2 &&
+                harmonic <= maximum_harmonic &&
                 fabsf(ratio - harmonic) < 0.025f) {
                 explained = fmaxf(explained, raw_score[lower] / sqrtf((float)harmonic));
             }
@@ -428,95 +399,147 @@ void chord_detector_analyze(const float *mic1_ring, const float *mic2_ring,
         maximum_independent_score = fmaxf(maximum_independent_score, independent_score[note]);
     }
 
-    /* A 256 ms piano-tuned matcher resolves C2..B3 using several harmonics,
-     * where the 4096-point 24 kHz FFT cannot separate adjacent fundamentals.
-     * Inject only temporally confirmed matches as physical per-key evidence;
-     * the normal chroma and exact-key paths then merge them with upper notes. */
-    if (low_notes != NULL && low_notes->valid) {
-        const float reference_score = fmaxf(
-            fmaxf(maximum_independent_score, maximum_fundamental),
-            fmaxf(noise_floor * MUSIC_FUNDAMENTAL_NOISE_MULTIPLIER * 3.0f,
-                  MUSIC_LOW_MATCH_MIN_AMPLITUDE));
-        for (uint8_t index = 0; index < low_notes->count; ++index) {
-            const int midi = low_notes->midi[index];
-            if (midi < MUSIC_CHORD_MIDI_MIN ||
-                midi > MUSIC_VIRTUAL_FUNDAMENTAL_MAX_MIDI) {
-                continue;
-            }
-            const int note = midi - MUSIC_CHORD_MIDI_MIN;
-            const float confidence = clamp01(low_notes->confidence[index]);
-            const float injected = reference_score *
-                (0.55f + 0.45f * confidence);
-            harmonic_owned[note] = false;
-            fundamental_score[note] = fmaxf(fundamental_score[note],
-                                             injected);
-            raw_score[note] = fmaxf(raw_score[note], injected);
-            independent_score[note] = fmaxf(independent_score[note],
-                                             injected);
-            fundamental_noise_floor[note] = fmaxf(
-                1.0e-9f, band_noise_for_frequency(
-                    band_noise, note_midi_to_frequency(midi)));
-            fundamental_peak_frequency[note] = note_midi_to_frequency(midi);
-            fundamental_peak_bin[note] = (int)lrintf(
-                fundamental_peak_frequency[note] / bin_frequency);
-            fundamental_prominence[note] = fmaxf(
-                fundamental_prominence[note], 1.10f + 2.40f * confidence);
+    /* Exact 61-key evidence layer (additive). A 256 ms piano-tuned low-note
+     * matcher resolves C2..B3 using several harmonics where the 4096-point
+     * 24 kHz FFT cannot separate adjacent fundamentals. This layer feeds the
+     * piano note tracker only; the legacy classifier above is untouched. */
+    memset(s_ev_fundamental_score, 0, sizeof(s_ev_fundamental_score));
+    memset(s_ev_fundamental_noise_floor, 0,
+           sizeof(s_ev_fundamental_noise_floor));
+    memset(s_ev_fundamental_peak_bin, 0, sizeof(s_ev_fundamental_peak_bin));
+    memset(s_ev_fundamental_peak_frequency, 0,
+           sizeof(s_ev_fundamental_peak_frequency));
+    memset(s_ev_fundamental_prominence, 0,
+           sizeof(s_ev_fundamental_prominence));
+    memset(s_ev_raw_score, 0, sizeof(s_ev_raw_score));
+    memset(s_ev_piano_score, 0, sizeof(s_ev_piano_score));
+    memset(s_ev_harmonic_owned, 0, sizeof(s_ev_harmonic_owned));
+    const int evidence_first_note_bin =
+        (int)floorf(note_midi_to_frequency(MUSIC_PIANO_MIDI_MIN) /
+                    bin_frequency) - 1;
+    const int evidence_last_note_bin =
+        (int)ceilf(note_midi_to_frequency(MUSIC_PIANO_MIDI_MAX) /
+                   bin_frequency) + 1;
+    for (int bin = evidence_first_note_bin; bin <= evidence_last_note_bin;
+         ++bin) {
+        if (bin <= 1 || bin >= FFT_BIN_COUNT - 1) continue;
+        const float left = s_fused_magnitude[bin - 1];
+        const float center = s_fused_magnitude[bin];
+        const float right = s_fused_magnitude[bin + 1];
+        const float bin_noise = band_noise_for_frequency(
+            band_noise, bin * bin_frequency);
+        if (center < bin_noise * MUSIC_FUNDAMENTAL_NOISE_MULTIPLIER ||
+            !(center > left && center >= right)) {
+            continue;
         }
-        maximum_fundamental = 0.0f;
-        maximum_independent_score = 0.0f;
-        for (int note = 0; note < CHORD_NOTE_COUNT; ++note) {
-            maximum_fundamental = fmaxf(maximum_fundamental,
-                                         fundamental_score[note]);
-            maximum_independent_score = fmaxf(maximum_independent_score,
-                                               independent_score[note]);
+        const float peak_frequency = interpolated_peak_frequency(bin);
+        const int midi = note_frequency_to_midi(peak_frequency);
+        if (midi < MUSIC_PIANO_MIDI_MIN || midi > MUSIC_PIANO_MIDI_MAX) {
+            continue;
+        }
+        const int note = midi - MUSIC_PIANO_MIDI_MIN;
+        if (center <= s_ev_fundamental_score[note]) continue;
+        s_ev_fundamental_score[note] = center;
+        s_ev_fundamental_noise_floor[note] = bin_noise;
+        s_ev_fundamental_peak_bin[note] = bin;
+        s_ev_fundamental_peak_frequency[note] = peak_frequency;
+        s_ev_fundamental_prominence[note] = fminf(99.0f, center /
+            fmaxf(bin_noise, fmaxf(left, right)));
+    }
+    for (int note = 0; note < CHORD_PIANO_KEY_COUNT; ++note) {
+        const float f0 = note_midi_to_frequency(MUSIC_PIANO_MIDI_MIN + note);
+        s_ev_raw_score[note] = s_ev_fundamental_score[note];
+        for (int harmonic = 2; harmonic <= 8; ++harmonic) {
+            const float frequency = f0 * harmonic;
+            if (frequency > MUSIC_SPECTRUM_MAX_FREQUENCY_HZ) break;
+            s_ev_raw_score[note] += MUSIC_HARMONIC_SUPPORT_WEIGHT *
+                                    local_peak(frequency) /
+                                    sqrtf((float)harmonic);
         }
     }
-
-    /* Exact 61-key evidence. Low piano fundamentals are often weaker than
-     * their second/third partials at a small loudspeaker. Permit a virtual
-     * C2..B3 fundamental only when both partials agree; a lone higher note
-     * therefore cannot create a false subharmonic. */
-    float *piano_score = scratch->piano_score;
+    float maximum_ev_fundamental = 0.0f;
+    for (int note = 0; note < CHORD_PIANO_KEY_COUNT; ++note) {
+        maximum_ev_fundamental = fmaxf(maximum_ev_fundamental,
+                                       s_ev_fundamental_score[note]);
+    }
+    for (int note = 0; note < CHORD_PIANO_KEY_COUNT; ++note) {
+        const float note_frequency = note_midi_to_frequency(
+            MUSIC_PIANO_MIDI_MIN + note);
+        if (s_ev_fundamental_noise_floor[note] <= 0.0f) {
+            s_ev_fundamental_noise_floor[note] =
+                band_noise_for_frequency(band_noise, note_frequency);
+        }
+        if (s_ev_fundamental_score[note] <
+                s_ev_fundamental_noise_floor[note] *
+                    MUSIC_FUNDAMENTAL_NOISE_MULTIPLIER ||
+            s_ev_fundamental_score[note] < maximum_ev_fundamental *
+                    fundamental_relative_threshold) {
+            continue;
+        }
+        for (int lower = 0; lower < note; ++lower) {
+            if (s_ev_harmonic_owned[lower] ||
+                s_ev_fundamental_peak_frequency[lower] <= 0.0f ||
+                s_ev_fundamental_score[lower] <
+                    s_ev_fundamental_noise_floor[lower] *
+                        MUSIC_FUNDAMENTAL_NOISE_MULTIPLIER ||
+                s_ev_fundamental_score[lower] < maximum_ev_fundamental *
+                    fundamental_relative_threshold ||
+                s_ev_fundamental_score[lower] <
+                    s_ev_fundamental_score[note] *
+                        MUSIC_HARMONIC_OWNER_MIN_RELATIVE) {
+                continue;
+            }
+            const float ratio = s_ev_fundamental_peak_frequency[note] /
+                                s_ev_fundamental_peak_frequency[lower];
+            const int harmonic = (int)lrintf(ratio);
+            if (harmonic >= 2 && harmonic <= 8 &&
+                fabsf(ratio - harmonic) <= MUSIC_HARMONIC_RATIO_TOLERANCE) {
+                s_ev_harmonic_owned[note] = true;
+                break;
+            }
+        }
+    }
     float maximum_piano_score = 0.0f;
     const bool strict_low_anchor_available =
         low_anchor_confidence >= MUSIC_LOW_CHORD_YIN_CONFIDENCE &&
-        low_anchor_midi >= MUSIC_CHORD_MIDI_MIN &&
+        low_anchor_midi >= MUSIC_PIANO_MIDI_MIN &&
         low_anchor_midi <= MUSIC_VIRTUAL_FUNDAMENTAL_MAX_MIDI;
-    for (int note = 0; note < CHORD_NOTE_COUNT; ++note) {
-        const int midi = MUSIC_CHORD_MIDI_MIN + note;
+    for (int note = 0; note < CHORD_PIANO_KEY_COUNT; ++note) {
+        const int midi = MUSIC_PIANO_MIDI_MIN + note;
         const float f0 = note_midi_to_frequency(midi);
         const bool has_fundamental =
-            fundamental_score[note] >= fundamental_noise_floor[note] *
-                                           MUSIC_FUNDAMENTAL_NOISE_MULTIPLIER &&
-            fundamental_score[note] >= maximum_fundamental *
-                                           fundamental_relative_threshold;
+            s_ev_fundamental_score[note] >=
+                s_ev_fundamental_noise_floor[note] *
+                    MUSIC_FUNDAMENTAL_NOISE_MULTIPLIER &&
+            s_ev_fundamental_score[note] >= maximum_ev_fundamental *
+                    fundamental_relative_threshold;
         result->key_has_independent_fundamental[note] = has_fundamental;
         if (has_fundamental) {
             float explained = 0.0f;
             for (int lower = 0; lower < note; ++lower) {
                 const float lower_f0 = note_midi_to_frequency(
-                    MUSIC_CHORD_MIDI_MIN + lower);
+                    MUSIC_PIANO_MIDI_MIN + lower);
                 const float ratio = f0 / lower_f0;
                 const int harmonic = (int)lrintf(ratio);
                 const bool lower_supported =
-                    fundamental_score[lower] >=
-                        fundamental_noise_floor[lower] *
+                    s_ev_fundamental_score[lower] >=
+                        s_ev_fundamental_noise_floor[lower] *
                             MUSIC_FUNDAMENTAL_NOISE_MULTIPLIER &&
-                    fundamental_score[lower] >= maximum_fundamental *
+                    s_ev_fundamental_score[lower] >= maximum_ev_fundamental *
                         fundamental_relative_threshold;
                 if (lower_supported && harmonic >= 2 && harmonic <= 8 &&
                     fabsf(ratio - harmonic) <=
                         MUSIC_HARMONIC_RATIO_TOLERANCE) {
                     explained = fmaxf(explained,
-                        raw_score[lower] / sqrtf((float)harmonic));
+                        s_ev_raw_score[lower] / sqrtf((float)harmonic));
                 }
             }
             /* Unlike the legacy pitch-class path, do not hard-delete an
              * octave/fifth candidate. Subtract the lower key's predicted
              * partial, leaving energy contributed by a genuinely pressed
              * upper key available to the exact-key tracker. */
-            piano_score[note] = fmaxf(
-                0.0f, raw_score[note] - 0.82f * explained);
+            s_ev_piano_score[note] = fmaxf(
+                0.0f, s_ev_raw_score[note] - 0.82f * explained);
         }
         if (midi <= MUSIC_VIRTUAL_FUNDAMENTAL_MAX_MIDI &&
             !has_fundamental &&
@@ -529,19 +552,46 @@ void chord_detector_analyze(const float *mic1_ring, const float *mic2_ring,
                 const float virtual_level = noise *
                     (0.36f * harmonic2_snr + 0.30f * harmonic3_snr +
                      0.14f * fmaxf(0.0f, harmonic4_snr - 1.8f));
-                piano_score[note] = virtual_level;
+                s_ev_piano_score[note] = virtual_level;
                 result->key_uses_virtual_fundamental[note] = true;
-                fundamental_prominence[note] =
+                s_ev_fundamental_prominence[note] =
                     fminf(harmonic2_snr, harmonic3_snr);
             }
         }
-        maximum_piano_score = fmaxf(maximum_piano_score, piano_score[note]);
+        maximum_piano_score = fmaxf(maximum_piano_score,
+                                    s_ev_piano_score[note]);
+    }
+    if (low_notes != NULL && low_notes->valid) {
+        const float reference_score = fmaxf(
+            maximum_piano_score,
+            fmaxf(noise_floor * MUSIC_FUNDAMENTAL_NOISE_MULTIPLIER * 3.0f,
+                  MUSIC_LOW_MATCH_MIN_AMPLITUDE));
+        for (uint8_t index = 0; index < low_notes->count; ++index) {
+            const int midi = low_notes->midi[index];
+            if (midi < MUSIC_PIANO_MIDI_MIN ||
+                midi > MUSIC_VIRTUAL_FUNDAMENTAL_MAX_MIDI) {
+                continue;
+            }
+            const int note = midi - MUSIC_PIANO_MIDI_MIN;
+            const float confidence = clamp01(low_notes->confidence[index]);
+            const float injected = reference_score *
+                (0.55f + 0.45f * confidence);
+            s_ev_piano_score[note] = fmaxf(s_ev_piano_score[note],
+                                           injected);
+            s_ev_harmonic_owned[note] = false;
+        }
+        maximum_piano_score = 0.0f;
+        for (int note = 0; note < CHORD_PIANO_KEY_COUNT; ++note) {
+            maximum_piano_score = fmaxf(maximum_piano_score,
+                                        s_ev_piano_score[note]);
+        }
     }
     if (maximum_piano_score > 1.0e-12f) {
-        for (int note = 0; note < CHORD_NOTE_COUNT; ++note) {
-            float relative = piano_score[note] / maximum_piano_score;
-            const float prominence = fundamental_prominence[note];
-            const float prominence_gate = clamp01((prominence - 1.05f) / 1.35f);
+        for (int note = 0; note < CHORD_PIANO_KEY_COUNT; ++note) {
+            float relative = s_ev_piano_score[note] / maximum_piano_score;
+            const float prominence = s_ev_fundamental_prominence[note];
+            const float prominence_gate =
+                clamp01((prominence - 1.05f) / 1.35f);
             relative *= 0.35f + 0.65f * prominence_gate;
             result->key_salience[note] = clamp01(relative);
             if (result->key_salience[note] >=
@@ -550,10 +600,10 @@ void chord_detector_analyze(const float *mic1_ring, const float *mic2_ring,
             }
         }
     }
-    for (int note = 0; note < CHORD_NOTE_COUNT; ++note) {
+    for (int note = 0; note < CHORD_PIANO_KEY_COUNT; ++note) {
         result->key_fundamental_prominence[note] =
-            fundamental_prominence[note];
-        if (harmonic_owned[note] &&
+            s_ev_fundamental_prominence[note];
+        if (s_ev_harmonic_owned[note] &&
             result->key_salience[note] <
                 EXACT_HARMONIC_RESIDUAL_MIN_SALIENCE) {
             result->key_has_independent_fundamental[note] = false;
@@ -561,7 +611,7 @@ void chord_detector_analyze(const float *mic1_ring, const float *mic2_ring,
     }
     result->too_many_notes = result->supported_note_count >
                              MUSIC_MAX_SIMULTANEOUS_KEYS;
-    for (int note = 0; note < CHORD_NOTE_COUNT; ++note) {
+    for (int note = 0; note < CHORD_PIANO_KEY_COUNT; ++note) {
         const float salience = result->key_salience[note];
         if (salience < MUSIC_EXACT_KEY_SALIENCE_FLOOR) continue;
         int insert_at = -1;
@@ -574,11 +624,12 @@ void chord_detector_analyze(const float *mic1_ring, const float *mic2_ring,
         }
         if (insert_at < 0) continue;
         for (int move = CHORD_EXACT_NOTE_COUNT - 1; move > insert_at; --move) {
-            result->exact_midi_notes[move] = result->exact_midi_notes[move - 1];
+            result->exact_midi_notes[move] =
+                result->exact_midi_notes[move - 1];
             result->exact_note_confidence[move] =
                 result->exact_note_confidence[move - 1];
         }
-        result->exact_midi_notes[insert_at] = MUSIC_CHORD_MIDI_MIN + note;
+        result->exact_midi_notes[insert_at] = MUSIC_PIANO_MIDI_MIN + note;
         result->exact_note_confidence[insert_at] = salience;
         if (result->exact_note_count < CHORD_EXACT_NOTE_COUNT) {
             ++result->exact_note_count;
@@ -612,29 +663,15 @@ void chord_detector_analyze(const float *mic1_ring, const float *mic2_ring,
         }
     }
 
-    float *best_note_score = scratch->best_note_score;
-    int *best_midi = scratch->best_midi;
+    float best_note_score[12] = {0};
+    int best_midi[12];
     for (int pc = 0; pc < 12; ++pc) best_midi[pc] = -1;
     for (int note = 0; note < CHORD_NOTE_COUNT; ++note) {
-        const int midi = MUSIC_CHORD_MIDI_MIN + note;
-        const int pitch_class = midi % 12;
-        float classification_score = independent_score[note];
-        const bool anchored_virtual_low =
-            strict_low_anchor_available &&
-            low_anchor_midi == midi &&
-            result->key_uses_virtual_fundamental[note];
-        if (anchored_virtual_low) {
-            /* Promote only the single low pitch confirmed by the independent
-             * periodicity detector. This lets a missing low fundamental join
-             * a real interval/triad without adding neighbouring subharmonics. */
-            classification_score = fmaxf(
-                classification_score,
-                maximum_independent_score * result->key_salience[note]);
-        }
-        result->chroma[pitch_class] += classification_score;
-        if (classification_score > best_note_score[pitch_class]) {
-            best_note_score[pitch_class] = classification_score;
-            best_midi[pitch_class] = midi;
+        const int pitch_class = (MUSIC_CHORD_MIDI_MIN + note) % 12;
+        result->chroma[pitch_class] += independent_score[note];
+        if (independent_score[note] > best_note_score[pitch_class]) {
+            best_note_score[pitch_class] = independent_score[note];
+            best_midi[pitch_class] = MUSIC_CHORD_MIDI_MIN + note;
         }
     }
     float maximum_chroma = 0.0f;
@@ -746,7 +783,11 @@ float chord_detector_harmonic_explained_ratio(float fundamental_hz)
 {
     if (!s_initialized || fundamental_hz <= 0.0f) return 0.0f;
     const int first_bin = (int)ceilf(MUSIC_MIN_FREQUENCY_HZ * MUSIC_FFT_SIZE / MUSIC_SAMPLE_RATE_HZ);
-    const int last_bin = (int)floorf(MUSIC_SPECTRUM_MAX_FREQUENCY_HZ *
+    const bool high_note = fundamental_hz >=
+        note_midi_to_frequency(MUSIC_FFT_POLY_PRIORITY_MIN_MIDI) * 0.97f;
+    const float analysis_max_frequency = high_note
+        ? MUSIC_SPECTRUM_MAX_FREQUENCY_HZ : MUSIC_MAX_FREQUENCY_HZ;
+    const int last_bin = (int)floorf(analysis_max_frequency *
                                      MUSIC_FFT_SIZE / MUSIC_SAMPLE_RATE_HZ);
     float total = 0.0f;
     float explained = 0.0f;
@@ -756,9 +797,10 @@ float chord_detector_harmonic_explained_ratio(float fundamental_hz)
         total += magnitude * magnitude;
     }
     const float bin_frequency = (float)MUSIC_SAMPLE_RATE_HZ / MUSIC_FFT_SIZE;
-    for (int harmonic = 1; harmonic <= 5; ++harmonic) {
+    const int maximum_harmonic = high_note ? 8 : 5;
+    for (int harmonic = 1; harmonic <= maximum_harmonic; ++harmonic) {
         const float frequency = fundamental_hz * harmonic;
-        if (frequency > MUSIC_MAX_FREQUENCY_HZ) break;
+        if (frequency > analysis_max_frequency) break;
         const int center = (int)lrintf(frequency / bin_frequency);
         for (int offset = -2; offset <= 2; ++offset) {
             const int bin = center + offset;

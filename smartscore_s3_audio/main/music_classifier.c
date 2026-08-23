@@ -25,6 +25,41 @@ static int vote_count(const music_classifier_t *classifier, music_result_type_t 
     return count;
 }
 
+static bool candidate_identity_matches(music_result_type_t left_type,
+                                       int left_identity, bool left_minor,
+                                       music_result_type_t right_type,
+                                       int right_identity, bool right_minor)
+{
+    return left_type == right_type && left_identity == right_identity &&
+           (left_type != MUSIC_RESULT_CHORD || left_minor == right_minor);
+}
+
+static void update_consecutive_candidate(music_classifier_t *classifier,
+                                         music_result_type_t type,
+                                         int identity, bool minor)
+{
+    if (type == MUSIC_RESULT_UNKNOWN || type == MUSIC_RESULT_SILENCE) {
+        classifier->consecutive_type = type;
+        classifier->consecutive_identity = identity;
+        classifier->consecutive_minor = minor;
+        classifier->consecutive_count = 0;
+        return;
+    }
+    if (candidate_identity_matches(classifier->consecutive_type,
+                                   classifier->consecutive_identity,
+                                   classifier->consecutive_minor,
+                                   type, identity, minor)) {
+        if (classifier->consecutive_count < MUSIC_STABLE_HISTORY_SIZE) {
+            ++classifier->consecutive_count;
+        }
+        return;
+    }
+    classifier->consecutive_type = type;
+    classifier->consecutive_identity = identity;
+    classifier->consecutive_minor = minor;
+    classifier->consecutive_count = 1;
+}
+
 static bool changed(const music_result_t *left, const music_result_t *right)
 {
     if (left->type != right->type) return true;
@@ -142,6 +177,118 @@ static bool spectrum_supports_yin_pitch_class(
     return false;
 }
 
+static const chord_candidate_debug_t *find_spectrum_candidate(
+    const chord_result_t *chord, int midi)
+{
+    for (int index = 0; index < chord->debug_candidate_count; ++index) {
+        if (chord->debug_candidates[index].midi == midi) {
+            return &chord->debug_candidates[index];
+        }
+    }
+    return NULL;
+}
+
+static bool demo_polyphony_has_quality(const yin_result_t *yin,
+                                       float harmonic_ratio,
+                                       const chord_result_t *chord,
+                                       bool selected_clipped,
+                                       bool *high_fft_priority)
+{
+    *high_fft_priority = false;
+    if (!chord->valid || chord->pitch_class_count < 2 ||
+        chord->pitch_class_count > 3 || selected_clipped ||
+        chord->independent_pitch_class_count < chord->pitch_class_count ||
+        chord->independent_pitch_class_count >
+            MUSIC_DEMO_POLY_MAX_ACTIVE_CLASSES) {
+        return false;
+    }
+
+    bool all_high = true;
+    for (int index = 0; index < chord->pitch_class_count; ++index) {
+        if (chord->midi_notes[index] < MUSIC_FFT_POLY_PRIORITY_MIN_MIDI) {
+            all_high = false;
+            break;
+        }
+    }
+    const bool is_chord = chord->kind != CHORD_DETECTION_INTERVAL;
+    const float minimum_relative = all_high
+        ? MUSIC_HIGH_FFT_MIN_RELATIVE
+        : (is_chord ? MUSIC_DEMO_CHORD_MIN_RELATIVE
+                    : MUSIC_DEMO_POLY_MIN_RELATIVE);
+    const float minimum_prominence = all_high
+        ? MUSIC_HIGH_FFT_MIN_PROMINENCE
+        : (is_chord ? MUSIC_DEMO_CHORD_MIN_PROMINENCE
+                    : MUSIC_DEMO_POLY_MIN_PROMINENCE);
+    float weakest_relative = 1.0f;
+    const chord_candidate_debug_t *accepted[3] = {0};
+    for (int index = 0; index < chord->pitch_class_count; ++index) {
+        const chord_candidate_debug_t *candidate =
+            find_spectrum_candidate(chord, chord->midi_notes[index]);
+        if (candidate == NULL || !candidate->distinct_local_peak ||
+            candidate->relative_score < minimum_relative ||
+            candidate->prominence < minimum_prominence) {
+            return false;
+        }
+        accepted[index] = candidate;
+        weakest_relative = fminf(weakest_relative,
+                                 candidate->relative_score);
+    }
+
+    /* Low and mixed-register chords need a periodicity anchor matching at
+     * least one actual chord tone. This keeps low-note decisions YIN-led while
+     * allowing the FFT to fill in the other independently visible keys. */
+    if (!all_high) {
+        bool yin_matches_chord = false;
+        if (yin != NULL && yin->valid &&
+            yin->confidence >= MUSIC_LOW_POLY_YIN_CONFIDENCE) {
+            for (int index = 0; index < chord->pitch_class_count; ++index) {
+                if (chord->midi_notes[index] == yin->midi) {
+                    yin_matches_chord = true;
+                    break;
+                }
+            }
+        }
+        if (!yin_matches_chord) return false;
+    }
+
+    /* A very periodic single note is allowed to lose to a polyphonic result
+     * only when the weaker fundamental is independently substantial. This
+     * rejects the common case where a loud single note's harmonic is promoted
+     * to a second note by the relaxed demo thresholds. */
+    if (!all_high && yin->valid &&
+        yin->confidence >= MUSIC_MELODY_STRONG_YIN_CONFIDENCE &&
+        harmonic_ratio >= MUSIC_SINGLE_DOMINANCE_HARMONIC_RATIO &&
+        weakest_relative <
+            MUSIC_DEMO_STRONG_SINGLE_SECONDARY_RELATIVE) {
+        return false;
+    }
+
+    /* Adjacent semitones at the lower end of the FFT are especially prone to
+     * being the two shoulders of one Hann main lobe. Keep support for real
+     * adjacent notes, but require two strong and physically separated peaks. */
+    for (int left = 0; left < chord->pitch_class_count; ++left) {
+        for (int right = left + 1; right < chord->pitch_class_count; ++right) {
+            const int midi_distance = abs(chord->midi_notes[left] -
+                                          chord->midi_notes[right]);
+            if (midi_distance != 1) continue;
+            if (accepted[left]->relative_score <
+                    MUSIC_DEMO_ADJACENT_MIN_RELATIVE ||
+                accepted[right]->relative_score <
+                    MUSIC_DEMO_ADJACENT_MIN_RELATIVE ||
+                accepted[left]->prominence <
+                    MUSIC_DEMO_ADJACENT_MIN_PROMINENCE ||
+                accepted[right]->prominence <
+                    MUSIC_DEMO_ADJACENT_MIN_PROMINENCE ||
+                abs(accepted[left]->peak_bin - accepted[right]->peak_bin) <
+                    MUSIC_DEMO_ADJACENT_MIN_PEAK_BINS) {
+                return false;
+            }
+        }
+    }
+    *high_fft_priority = all_high;
+    return true;
+}
+
 static bool correct_yin_octave_from_spectrum(yin_result_t *yin,
                                              const chord_result_t *chord)
 {
@@ -199,6 +346,44 @@ static bool correct_yin_octave_from_spectrum(yin_result_t *yin,
     return true;
 }
 
+static bool correct_yin_octave_from_continuity(
+    const music_classifier_t *classifier, yin_result_t *yin,
+    const chord_result_t *chord, bool amplitude_attack)
+{
+    if (classifier == NULL || yin == NULL || !yin->valid ||
+        chord == NULL || amplitude_attack ||
+        !classifier->has_last_emitted ||
+        classifier->last_emitted.type != MUSIC_RESULT_SINGLE) {
+        return false;
+    }
+
+    const int previous_midi = classifier->last_emitted.midi;
+    if (previous_midi < 0 || abs(yin->midi - previous_midi) != 12) {
+        return false;
+    }
+
+    const chord_candidate_debug_t *previous =
+        find_spectrum_candidate(chord, previous_midi);
+    if (previous == NULL ||
+        previous->relative_score < MUSIC_OCTAVE_CONTINUITY_MIN_RELATIVE ||
+        previous->prominence < MUSIC_OCTAVE_CONTINUITY_MIN_PROMINENCE) {
+        return false;
+    }
+
+    /* A one-octave YIN jump without a new amplitude attack is normally the
+     * previous note's second harmonic taking over during its decay. The weaker
+     * previous-octave peak is sufficient continuity evidence; a genuinely new
+     * octave attack bypasses this guard and enters the normal stable vote. */
+    yin->midi = previous_midi;
+    if (previous->peak_frequency_hz > 0.0f) {
+        yin->frequency_hz = previous->peak_frequency_hz;
+    }
+    yin->cents = note_cents_error(yin->frequency_hz, yin->midi);
+    note_midi_to_name(yin->midi, yin->note_name,
+                      sizeof(yin->note_name));
+    return true;
+}
+
 static bool history_has_onset(const music_classifier_t *classifier,
                               music_result_type_t type, int identity,
                               bool minor)
@@ -226,7 +411,7 @@ bool music_classifier_update(music_classifier_t *classifier,
                              music_result_t *result, const char **unknown_reason)
 {
     yin_result_t corrected_yin = *yin_input;
-    const bool octave_corrected =
+    bool octave_corrected =
         correct_yin_octave_from_spectrum(&corrected_yin, chord);
     const yin_result_t *yin = &corrected_yin;
     if (octave_corrected) {
@@ -267,6 +452,30 @@ bool music_classifier_update(music_classifier_t *classifier,
         selected_metrics->rms >= (selected_mic == 2 ? mic2_gate : mic1_gate);
     const bool selected_clipped = selected_metrics->clipped;
 #endif
+    const float previous_rms = classifier->previous_rms;
+    const bool amplitude_attack =
+        !silence && previous_rms > 0.0f &&
+        result->rms >= previous_rms * MUSIC_ONSET_RISE_RATIO &&
+        result->rms - previous_rms >= MUSIC_ONSET_MIN_RMS_RISE;
+    if (amplitude_attack) {
+        classifier->pending_attack_ms = timestamp_ms;
+    }
+    classifier->previous_rms = result->rms;
+
+    if (correct_yin_octave_from_continuity(
+            classifier, &corrected_yin, chord, amplitude_attack)) {
+        octave_corrected = true;
+        harmonic_ratio = chord_detector_harmonic_explained_ratio(
+            corrected_yin.frequency_hz);
+        result->octave_corrected = true;
+        result->yin_confidence = corrected_yin.confidence;
+        result->harmonic_explained_ratio = harmonic_ratio;
+        result->frequency_hz = corrected_yin.frequency_hz;
+        result->midi = corrected_yin.midi;
+        result->cents = corrected_yin.cents;
+        memcpy(result->note_name, corrected_yin.note_name,
+               sizeof(result->note_name));
+    }
     music_result_type_t candidate = MUSIC_RESULT_UNKNOWN;
     int identity = -1;
     bool minor = false;
@@ -304,12 +513,16 @@ bool music_classifier_update(music_classifier_t *classifier,
                 yin_pitch_class_supported,
             .polyphony_is_yin_harmonics = yin_harmonic_single,
         });
-    /* In the monitor-only demo profile, two or more independent fundamentals
-     * that already passed the polyphonic gate take precedence over the loudest
-     * note's YIN result. This is important when one key is played harder than
-     * the other; strict sessions retain the original melody-first behavior. */
-    const bool demo_poly_candidate = demo_profile && chord->valid &&
-                                     chord->pitch_class_count >= 2;
+    /* The demo profile may override YIN only with a genuinely independent,
+     * spectrally clean polyphonic result. SNR alone is not evidence of a clean
+     * spectrum: clipping, transients and one note's harmonics can all be loud. */
+    bool high_fft_priority = false;
+    const bool demo_poly_candidate = demo_profile &&
+        demo_polyphony_has_quality(yin, harmonic_ratio, chord,
+                                   selected_clipped,
+                                   &high_fft_priority);
+    const bool accepted_poly = chord->valid &&
+                               (!demo_profile || demo_poly_candidate);
     const bool dominant_single = !demo_poly_candidate &&
                                  (gate.dominates_polyphony ||
                                   (yin->valid &&
@@ -331,11 +544,11 @@ bool music_classifier_update(music_classifier_t *classifier,
 #endif
         candidate = MUSIC_RESULT_UNKNOWN;
         *unknown_reason = "clipping";
-    } else if (chord->valid && chord->kind != CHORD_DETECTION_INTERVAL && !dominant_single) {
+    } else if (accepted_poly && chord->kind != CHORD_DETECTION_INTERVAL && !dominant_single) {
         candidate = MUSIC_RESULT_CHORD;
         identity = chord->identity;
         minor = chord->is_minor;
-    } else if (chord->valid && chord->kind == CHORD_DETECTION_INTERVAL && !dominant_single) {
+    } else if (accepted_poly && chord->kind == CHORD_DETECTION_INTERVAL && !dominant_single) {
         candidate = MUSIC_RESULT_INTERVAL;
         identity = chord->identity;
     /* A real single note naturally produces 3rd/5th harmonics that occupy other
@@ -352,22 +565,13 @@ bool music_classifier_update(music_classifier_t *classifier,
         *unknown_reason = "unstable_spectrum";
     }
 
-    const float previous_rms = classifier->previous_rms;
-    const bool amplitude_attack =
-        !silence && previous_rms > 0.0f &&
-        result->rms >= previous_rms * MUSIC_ONSET_RISE_RATIO &&
-        result->rms - previous_rms >= MUSIC_ONSET_MIN_RMS_RISE;
-    if (amplitude_attack) {
-        classifier->pending_attack_ms = timestamp_ms;
-    }
-    classifier->previous_rms = result->rms;
-
     if (candidate == MUSIC_RESULT_SILENCE) {
         classifier->history_count = 0;
         classifier->history_position = 0;
         memset(classifier->onset_history, 0,
                sizeof(classifier->onset_history));
     }
+    update_consecutive_candidate(classifier, candidate, identity, minor);
     const int position = classifier->history_position;
     classifier->type_history[position] = candidate;
     classifier->identity_history[position] = identity;
@@ -376,31 +580,43 @@ bool music_classifier_update(music_classifier_t *classifier,
     classifier->history_position = (position + 1) % MUSIC_STABLE_HISTORY_SIZE;
     if (classifier->history_count < MUSIC_STABLE_HISTORY_SIZE) ++classifier->history_count;
 
-    if (!demo_profile || poly_stable_votes < 2 ||
+    if (!demo_profile || poly_stable_votes < MUSIC_STABLE_VOTE_COUNT ||
         poly_stable_votes > MUSIC_STABLE_HISTORY_SIZE) {
         poly_stable_votes = MUSIC_STABLE_VOTE_COUNT;
     }
     music_result_type_t stable_type = MUSIC_RESULT_UNKNOWN;
     bool holding_previous_polyphony = false;
+    bool suppressing_unconfirmed_transition = false;
     if (candidate == MUSIC_RESULT_SILENCE) {
         stable_type = MUSIC_RESULT_SILENCE;
-    } else if (candidate == MUSIC_RESULT_SINGLE &&
+    } else if (demo_profile && candidate == MUSIC_RESULT_SINGLE &&
+               classifier->consecutive_count >= MUSIC_STABLE_VOTE_COUNT) {
+        stable_type = MUSIC_RESULT_SINGLE;
+    } else if (demo_profile && candidate == MUSIC_RESULT_INTERVAL &&
+               vote_count(classifier, candidate, identity, false) >=
+                   poly_stable_votes) {
+        stable_type = MUSIC_RESULT_INTERVAL;
+    } else if (demo_profile && candidate == MUSIC_RESULT_CHORD &&
+               vote_count(classifier, candidate, identity, minor) >=
+                   MUSIC_DEMO_CHORD_STABLE_VOTES) {
+        stable_type = MUSIC_RESULT_CHORD;
+    } else if (!demo_profile && candidate == MUSIC_RESULT_SINGLE &&
                vote_count(classifier, candidate, identity, false) >= MUSIC_STABLE_VOTE_COUNT) {
         stable_type = MUSIC_RESULT_SINGLE;
-    } else if (candidate == MUSIC_RESULT_CHORD &&
+    } else if (!demo_profile && candidate == MUSIC_RESULT_CHORD &&
                vote_count(classifier, candidate, identity, minor) >= poly_stable_votes) {
         stable_type = MUSIC_RESULT_CHORD;
-    } else if (candidate == MUSIC_RESULT_INTERVAL &&
+    } else if (!demo_profile && candidate == MUSIC_RESULT_INTERVAL &&
                vote_count(classifier, candidate, identity, false) >= poly_stable_votes) {
         stable_type = MUSIC_RESULT_INTERVAL;
-    } else if (candidate == MUSIC_RESULT_UNKNOWN && classifier->has_last_emitted &&
+    } else if (!demo_profile && candidate == MUSIC_RESULT_UNKNOWN && classifier->has_last_emitted &&
                classifier->last_emitted.type == MUSIC_RESULT_SINGLE && yin->valid &&
                yin->midi == classifier->last_emitted.midi &&
                yin->confidence >= MUSIC_YIN_CONFIDENCE_THRESHOLD) {
         /* Once a note is stable, preserve it across a temporary FFT leakage or
          * attack/decay frame as long as YIN still sees the same confident pitch. */
         stable_type = MUSIC_RESULT_SINGLE;
-    } else if (candidate == MUSIC_RESULT_UNKNOWN && classifier->has_last_emitted &&
+    } else if (!demo_profile && candidate == MUSIC_RESULT_UNKNOWN && classifier->has_last_emitted &&
                (classifier->last_emitted.type == MUSIC_RESULT_INTERVAL ||
                 classifier->last_emitted.type == MUSIC_RESULT_CHORD) &&
                vote_count(classifier, classifier->last_emitted.type,
@@ -412,11 +628,25 @@ bool music_classifier_update(music_classifier_t *classifier,
         holding_previous_polyphony = true;
         *unknown_reason = "holding_polyphonic_result";
     }
-    if (stable_type == MUSIC_RESULT_UNKNOWN && candidate == MUSIC_RESULT_SINGLE) {
+    if (demo_profile && stable_type == MUSIC_RESULT_UNKNOWN &&
+        candidate != MUSIC_RESULT_SILENCE && classifier->has_last_emitted &&
+        (classifier->last_emitted.type == MUSIC_RESULT_SINGLE ||
+         classifier->last_emitted.type == MUSIC_RESULT_INTERVAL ||
+         classifier->last_emitted.type == MUSIC_RESULT_CHORD)) {
+        /* Keep the last confirmed display while a replacement is being
+         * confirmed. Do not manufacture a held result here: the live YIN pitch
+         * fields must remain current for the independent pitch stream. */
+        suppressing_unconfirmed_transition = true;
+        *unknown_reason = "holding_confirmed_result";
+    }
+    if (!suppressing_unconfirmed_transition &&
+        stable_type == MUSIC_RESULT_UNKNOWN && candidate == MUSIC_RESULT_SINGLE) {
         *unknown_reason = "stabilizing_single";
-    } else if (stable_type == MUSIC_RESULT_UNKNOWN && candidate == MUSIC_RESULT_INTERVAL) {
+    } else if (!suppressing_unconfirmed_transition &&
+               stable_type == MUSIC_RESULT_UNKNOWN && candidate == MUSIC_RESULT_INTERVAL) {
         *unknown_reason = "stabilizing_interval";
-    } else if (stable_type == MUSIC_RESULT_UNKNOWN && candidate == MUSIC_RESULT_CHORD) {
+    } else if (!suppressing_unconfirmed_transition &&
+               stable_type == MUSIC_RESULT_UNKNOWN && candidate == MUSIC_RESULT_CHORD) {
         *unknown_reason = "stabilizing_chord";
     }
     result->type = stable_type;
@@ -464,6 +694,7 @@ bool music_classifier_update(music_classifier_t *classifier,
         }
     }
     const bool emit = !holding_previous_polyphony &&
+                      !suppressing_unconfirmed_transition &&
                       (result->onset ||
                       (!classifier->has_last_emitted ||
                        changed(result, &classifier->last_emitted) ||

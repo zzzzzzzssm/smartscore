@@ -25,4 +25,4 @@ void diagnostics_log_audio(float mic1_rms, float mic1_peak, float mic1_clip,
                            int selected_mic, float mic1_noise, float mic2_noise,
                            float mic1_gate, float mic2_gate);
 void diagnostics_log_performance(unsigned queue_depth, unsigned free_heap,
-                                 unsigned stack_bytes);
+                                 unsigned stack_words);

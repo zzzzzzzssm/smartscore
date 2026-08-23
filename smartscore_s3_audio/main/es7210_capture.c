@@ -57,6 +57,8 @@ static SemaphoreHandle_t s_codec_lock;
 static volatile float s_input_gain_db = MUSIC_ES7210_INPUT_GAIN_DB;
 static audio_capture_block_t s_blocks[MUSIC_CAPTURE_BUFFER_COUNT];
 static int16_t s_interleaved[MUSIC_CAPTURE_FRAMES * BOARD_AUDIO_CHANNELS];
+static int s_mic1_slot_index = BOARD_MIC1_SLOT_INDEX;
+static int s_mic2_slot_index = BOARD_MIC2_SLOT_INDEX;
 
 static esp_err_t read_register(uint8_t reg, uint8_t *value);
 static esp_err_t write_register(uint8_t reg, uint8_t value);
@@ -64,10 +66,10 @@ static esp_err_t write_register(uint8_t reg, uint8_t value);
 #if MUSIC_USE_SINGLE_MIC_CH1 && BOARD_AUTO_DETECT_MIC1_SLOT
 #define MIC1_SLOT_CONFIRM_BLOCKS          2U
 
-static int s_mic1_slot_index = BOARD_MIC1_SLOT_INDEX;
 static int s_mic1_slot_candidate = BOARD_MIC1_SLOT_INDEX;
 static unsigned s_mic1_slot_candidate_blocks;
 static bool s_mic1_slot_confirmed;
+#endif
 
 /* Measure AC activity with first differences. This rejects DC offsets and costs
  * only integer subtract/abs/add operations. */
@@ -88,6 +90,7 @@ static void measure_slot_activity(uint32_t activity[BOARD_AUDIO_CHANNELS])
     }
 }
 
+#if MUSIC_USE_SINGLE_MIC_CH1 && BOARD_AUTO_DETECT_MIC1_SLOT
 static int detect_mic1_slot(void)
 {
     uint32_t activity[BOARD_AUDIO_CHANNELS];
@@ -126,13 +129,42 @@ static int detect_mic1_slot(void)
 #endif
 
 #if !MUSIC_USE_SINGLE_MIC_CH1
-static esp_err_t validate_dual_inputs(void)
+static bool isolated_activity_slot(const uint32_t activity[BOARD_AUDIO_CHANNELS], int *slot)
+{
+    const int strongest = activity[1] > activity[0] ? 1 : 0;
+    const int other = 1 - strongest;
+    if (activity[strongest] < SLOT_ACTIVITY_MINIMUM ||
+        (uint64_t)activity[strongest] < (uint64_t)activity[other] * SLOT_ACTIVITY_RATIO) {
+        return false;
+    }
+    *slot = strongest;
+    return true;
+}
+
+static esp_err_t read_isolated_activity(uint32_t activity[BOARD_AUDIO_CHANNELS])
+{
+    /* Discard one complete block after a channel-enable transition so analog
+     * and digital high-pass state cannot contaminate the measured block. */
+    if (esp_codec_dev_read(s_codec_dev, s_interleaved, sizeof(s_interleaved)) !=
+        ESP_CODEC_DEV_OK) {
+        return ESP_FAIL;
+    }
+    if (esp_codec_dev_read(s_codec_dev, s_interleaved, sizeof(s_interleaved)) !=
+        ESP_CODEC_DEV_OK) {
+        return ESP_FAIL;
+    }
+    measure_slot_activity(activity);
+    return ESP_OK;
+}
+
+static esp_err_t confirm_dual_slot_mapping(void)
 {
     uint8_t mic1_gain = 0;
     uint8_t mic2_gain = 0;
     if (read_register(ES7210_REG_MIC1_GAIN, &mic1_gain) != ESP_OK ||
         read_register(ES7210_REG_MIC2_GAIN, &mic2_gain) != ESP_OK) {
-        ESP_LOGE(TAG, "dual input validation failed: gain register read failed");
+        ESP_LOGW(TAG, "slot isolation probe skipped: gain register read failed; using MIC1=slot%d MIC2=slot%d",
+                 s_mic1_slot_index, s_mic2_slot_index);
         return ESP_FAIL;
     }
     ESP_LOGI(TAG, "MIC gain readback: MIC1=0x%02X MIC2=0x%02X (gain codes %u/%u)",
@@ -146,9 +178,53 @@ static esp_err_t validate_dual_inputs(void)
     if ((mic1_gain & 0x0F) != (mic2_gain & 0x0F)) {
         ESP_LOGW(TAG, "MIC gain codes differ; quality selector will compensate without mixing channels");
     }
-    ESP_LOGI(TAG,
-             "dual input read-only validation passed; fixed mapping MIC1=slot%d MIC2=slot%d",
-             BOARD_MIC1_SLOT_INDEX, BOARD_MIC2_SLOT_INDEX);
+
+    uint32_t mic1_activity[BOARD_AUDIO_CHANNELS] = {0};
+    uint32_t mic2_activity[BOARD_AUDIO_CHANNELS] = {0};
+    esp_err_t probe_error = write_register(ES7210_REG_MIC2_GAIN,
+                                           mic2_gain & ~ES7210_MIC_INPUT_ENABLE);
+    if (probe_error == ESP_OK) probe_error = read_isolated_activity(mic1_activity);
+    const esp_err_t restore_mic2 = write_register(ES7210_REG_MIC2_GAIN, mic2_gain);
+    if (probe_error == ESP_OK && restore_mic2 == ESP_OK) {
+        probe_error = write_register(ES7210_REG_MIC1_GAIN,
+                                     mic1_gain & ~ES7210_MIC_INPUT_ENABLE);
+    }
+    if (probe_error == ESP_OK && restore_mic2 == ESP_OK) {
+        probe_error = read_isolated_activity(mic2_activity);
+    }
+    const esp_err_t restore_mic1 = write_register(ES7210_REG_MIC1_GAIN, mic1_gain);
+    (void)esp_codec_dev_read(s_codec_dev, s_interleaved, sizeof(s_interleaved));
+    if (restore_mic1 != ESP_OK || restore_mic2 != ESP_OK) {
+        ESP_LOGE(TAG, "failed to restore MIC enable/gain registers after slot probe");
+        return ESP_FAIL;
+    }
+    uint8_t restored_mic1 = 0;
+    uint8_t restored_mic2 = 0;
+    if (read_register(ES7210_REG_MIC1_GAIN, &restored_mic1) != ESP_OK ||
+        read_register(ES7210_REG_MIC2_GAIN, &restored_mic2) != ESP_OK ||
+        restored_mic1 != mic1_gain || restored_mic2 != mic2_gain) {
+        ESP_LOGE(TAG, "MIC register restore verification failed: expected=%02X/%02X actual=%02X/%02X",
+                 mic1_gain, mic2_gain, restored_mic1, restored_mic2);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    int detected_mic1_slot = -1;
+    int detected_mic2_slot = -1;
+    const bool mic1_decisive = isolated_activity_slot(mic1_activity, &detected_mic1_slot);
+    const bool mic2_decisive = isolated_activity_slot(mic2_activity, &detected_mic2_slot);
+    ESP_LOGI(TAG, "isolated slot activity: MIC1=[%" PRIu32 ",%" PRIu32
+             "] MIC2=[%" PRIu32 ",%" PRIu32 "]",
+             mic1_activity[0], mic1_activity[1], mic2_activity[0], mic2_activity[1]);
+    if (probe_error == ESP_OK && restore_mic1 == ESP_OK && restore_mic2 == ESP_OK &&
+        mic1_decisive && mic2_decisive && detected_mic1_slot != detected_mic2_slot) {
+        s_mic1_slot_index = detected_mic1_slot;
+        s_mic2_slot_index = detected_mic2_slot;
+        ESP_LOGI(TAG, "dual I2S mapping confirmed by isolated-input probe: MIC1=slot%d MIC2=slot%d",
+                 s_mic1_slot_index, s_mic2_slot_index);
+    } else {
+        ESP_LOGW(TAG, "dual slot probe inconclusive; retaining ES7210 standard mapping MIC1=slot%d MIC2=slot%d",
+                 s_mic1_slot_index, s_mic2_slot_index);
+    }
     return ESP_OK;
 }
 #endif
@@ -381,8 +457,8 @@ esp_err_t es7210_capture_init(void)
     ESP_RETURN_ON_ERROR(initialize_i2s(), TAG, "I2S initialization failed");
     ESP_RETURN_ON_ERROR(initialize_codec(), TAG, "codec initialization failed");
 #if !MUSIC_USE_SINGLE_MIC_CH1
-    ESP_RETURN_ON_ERROR(validate_dual_inputs(), TAG,
-                        "dual microphone read-only validation failed");
+    ESP_RETURN_ON_ERROR(confirm_dual_slot_mapping(), TAG,
+                        "dual microphone enable/mapping validation failed");
 #endif
     s_codec_lock = xSemaphoreCreateMutex();
     ESP_RETURN_ON_FALSE(s_codec_lock != NULL, ESP_ERR_NO_MEM, TAG,
@@ -400,8 +476,6 @@ static void audio_capture_task(void *argument)
 {
     (void)argument;
     diagnostics_counters_t *counters = diagnostics_counters();
-    uint32_t last_stack_check_ms = 0;
-    bool low_stack_warned = false;
     while (true) {
         int index = -1;
         if (xQueueReceive(s_free_queue, &index, pdMS_TO_TICKS(100)) != pdTRUE) {
@@ -422,26 +496,15 @@ static void audio_capture_task(void *argument)
 #if MUSIC_USE_SINGLE_MIC_CH1 && BOARD_AUTO_DETECT_MIC1_SLOT
         const int mic1_slot_index = detect_mic1_slot();
 #else
-        const int mic1_slot_index = BOARD_MIC1_SLOT_INDEX;
+        const int mic1_slot_index = s_mic1_slot_index;
 #endif
         for (size_t frame = 0; frame < MUSIC_CAPTURE_FRAMES; ++frame) {
             block->mic1[frame] = s_interleaved[frame * BOARD_AUDIO_CHANNELS + mic1_slot_index];
 #if !MUSIC_USE_SINGLE_MIC_CH1
-            block->mic2[frame] = s_interleaved[frame * BOARD_AUDIO_CHANNELS + BOARD_MIC2_SLOT_INDEX];
+            block->mic2[frame] = s_interleaved[frame * BOARD_AUDIO_CHANNELS + s_mic2_slot_index];
 #endif
         }
         block->timestamp_ms = (uint32_t)(esp_timer_get_time() / 1000);
-        if (block->timestamp_ms - last_stack_check_ms >=
-            MUSIC_CAPTURE_STACK_CHECK_INTERVAL_MS) {
-            last_stack_check_ms = block->timestamp_ms;
-            const UBaseType_t stack_bytes = uxTaskGetStackHighWaterMark(NULL);
-            if (!low_stack_warned &&
-                stack_bytes < MUSIC_CAPTURE_STACK_WARN_BYTES) {
-                low_stack_warned = true;
-                ESP_LOGW(TAG, "AudioCaptureTask low stack: %u bytes remaining",
-                         (unsigned)stack_bytes);
-            }
-        }
         if (xQueueSend(s_filled_queue, &index, 0) != pdTRUE) {
             ++counters->queue_overflow_count;
             ++counters->dropped_buffer_count;
@@ -452,13 +515,8 @@ static void audio_capture_task(void *argument)
 
 esp_err_t es7210_capture_start(void)
 {
-    const BaseType_t result = xTaskCreatePinnedToCore(
-        audio_capture_task, "AudioCaptureTask", MUSIC_CAPTURE_TASK_STACK_SIZE,
-        NULL, 22, NULL, 0);
-    if (result == pdPASS) {
-        ESP_LOGI(TAG, "AudioCaptureTask started: stack=%u core=0 priority=22",
-                 (unsigned)MUSIC_CAPTURE_TASK_STACK_SIZE);
-    }
+    const BaseType_t result = xTaskCreatePinnedToCore(audio_capture_task, "AudioCaptureTask", 4096,
+                                                       NULL, 22, NULL, 0);
     return result == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
 }
 

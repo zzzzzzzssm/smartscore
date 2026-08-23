@@ -36,7 +36,7 @@ void diagnostics_log_audio(float mic1_rms, float mic1_peak, float mic1_clip,
 }
 
 void diagnostics_log_performance(unsigned queue_depth, unsigned free_heap,
-                                 unsigned stack_bytes)
+                                 unsigned stack_words)
 {
     const uint32_t average_us = s_counters.dsp_cycle_count > 0 ?
         (uint32_t)(s_counters.dsp_cycle_sum_us / s_counters.dsp_cycle_count) : 0;
@@ -44,22 +44,22 @@ void diagnostics_log_performance(unsigned queue_depth, unsigned free_heap,
     ESP_LOGI("DSP_PERF", "yin=%" PRIu32 "us fft=%" PRIu32 "us chord=%" PRIu32
              "us total=%" PRIu32 "us queue=%u dropped=%" PRIu32
              " deadline_miss=%" PRIu32 " avg=%" PRIu32 "us max=%" PRIu32
-             "us exhausted=%" PRIu32 " heap=%u stack_min=%u bytes",
+             "us exhausted=%" PRIu32 " heap=%u stack_min=%u words",
              s_counters.yin_time_us, s_counters.mic1_fft_time_us,
              s_counters.chord_time_us, s_counters.dsp_cycle_time_us, queue_depth,
              s_counters.dropped_buffer_count, s_counters.dsp_deadline_miss_count,
              average_us, s_counters.dsp_cycle_max_us, s_counters.buffer_exhaustion_count,
-             free_heap, stack_bytes);
+             free_heap, stack_words);
 #else
     ESP_LOGI("DSP_PERF", "yin=%" PRIu32 "us fft=%" PRIu32
              "us chord=%" PRIu32 "us total=%" PRIu32 "us avg=%" PRIu32
              "us max=%" PRIu32 "us queue=%u dropped=%" PRIu32
              " exhausted=%" PRIu32 " deadline_miss=%" PRIu32
-             " switches=%" PRIu32 " heap=%u stack_min=%u bytes",
+             " switches=%" PRIu32 " heap=%u stack_min=%u words",
              s_counters.yin_time_us, s_counters.mic1_fft_time_us,
              s_counters.chord_time_us, s_counters.dsp_cycle_time_us, average_us,
              s_counters.dsp_cycle_max_us, queue_depth, s_counters.dropped_buffer_count,
              s_counters.buffer_exhaustion_count, s_counters.dsp_deadline_miss_count,
-             s_counters.mic_switch_count, free_heap, stack_bytes);
+             s_counters.mic_switch_count, free_heap, stack_words);
 #endif
 }

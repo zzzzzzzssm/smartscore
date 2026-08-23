@@ -22,14 +22,12 @@ typedef struct {
     float noise_floor;
     float noise_gate;
     uint32_t calibration_frames;
-    uint32_t calibration_rejected_frames;
     bool calibrated;
 } audio_preprocess_state_t;
 
 void audio_preprocess_init(audio_preprocess_state_t *state);
 void audio_preprocess_frame(audio_preprocess_state_t *state, const int16_t *input,
                             float *output, size_t count, audio_frame_metrics_t *metrics);
-bool audio_preprocess_calibration_ready(const audio_preprocess_state_t *state);
 void audio_preprocess_finish_calibration(audio_preprocess_state_t *state);
 bool audio_preprocess_above_gate(const audio_preprocess_state_t *state,
                                  const audio_frame_metrics_t *metrics);

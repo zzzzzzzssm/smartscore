@@ -46,8 +46,9 @@ typedef struct {
     bool too_many_notes;
     int exact_midi_notes[CHORD_EXACT_NOTE_COUNT];
     float exact_note_confidence[CHORD_EXACT_NOTE_COUNT];
-    /* Normalized per-key evidence for MIDI 36..96. This remains available
-     * even when the legacy major/minor classifier does not accept a frame. */
+    /* Normalized per-key evidence for MIDI 36..96, produced by the additive
+     * exact-key evidence layer. It remains available even when the legacy
+     * major/minor classifier does not accept a frame. */
     float key_salience[CHORD_PIANO_KEY_COUNT];
     /* True only when this key has its own physical fundamental after
      * harmonic-residual rejection. Virtual low fundamentals stay false and
@@ -57,12 +58,15 @@ typedef struct {
     /* Low-octave evidence synthesized from partials 2 and 3 must be confirmed
      * by the low-rate periodicity path before it can start a key. */
     bool key_uses_virtual_fundamental[CHORD_PIANO_KEY_COUNT];
+    /* Set only on the exact-key copy when a low periodicity is being
+     * quarantined as the common divisor of physical upper notes. */
+    bool virtual_root_quarantined;
+    int virtual_root_midi;
     int debug_candidate_count;
     chord_candidate_debug_t debug_candidates[CHORD_DEBUG_CANDIDATE_COUNT];
 } chord_result_t;
 
 int chord_detector_init(void);
-size_t chord_detector_workspace_size(void);
 void chord_detector_analyze(const float *mic1_ring, const float *mic2_ring,
                             size_t write_position, float mic1_weight,
                             float mic2_weight, bool demo_profile,

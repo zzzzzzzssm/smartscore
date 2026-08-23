@@ -16,7 +16,7 @@ idf_component_register(
         "note_utils.c"
         "diagnostics.c"
     INCLUDE_DIRS "."
-    REQUIRES driver esp_timer esp_mm esp_psram freertos
+    REQUIRES driver esp_timer esp_mm freertos
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra -Werror=return-type)
