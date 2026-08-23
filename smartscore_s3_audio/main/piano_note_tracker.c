@@ -130,7 +130,7 @@ static const yin_result_t *select_dominant_yin(
     const bool high_valid = high_yin != NULL && high_yin->valid;
     bool low_valid = low_yin != NULL && low_yin->valid &&
                      low_yin->midi >= PIANO_TRACKER_MIDI_MIN &&
-                     low_yin->midi <= PIANO_TRACKER_LOW_TAIL_MIDI_MAX;
+                     low_yin->midi <= MUSIC_LOW_YIN_OVERLAP_MAX_MIDI;
     if (low_valid) {
         const int low_key = low_yin->midi - PIANO_TRACKER_MIDI_MIN;
         low_valid = has_fundamental_support(spectrum, low_key, low_yin);
@@ -1253,7 +1253,7 @@ bool piano_note_tracker_update(piano_note_tracker_t *tracker,
                          PIANO_TRACKER_HIGH_YIN_CONFIDENCE);
         if (low_yin != NULL && low_yin->valid &&
             low_yin->midi >= PIANO_TRACKER_MIDI_MIN &&
-            low_yin->midi <= PIANO_TRACKER_LOW_TAIL_MIDI_MAX) {
+            low_yin->midi <= MUSIC_LOW_YIN_OVERLAP_MAX_MIDI) {
             const int low_key = low_yin->midi - PIANO_TRACKER_MIDI_MIN;
             if (has_fundamental_support(spectrum, low_key, low_yin)) {
                 add_yin_evidence(evidence, low_yin,

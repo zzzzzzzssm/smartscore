@@ -139,7 +139,7 @@ static void low_yin_stabilizer_update(
     yin_result_t sample;
     if (observation != NULL && observation->valid &&
         observation->midi >= MUSIC_PIANO_MIDI_MIN &&
-        observation->midi <= MUSIC_VIRTUAL_FUNDAMENTAL_MAX_MIDI) {
+        observation->midi <= MUSIC_LOW_YIN_OVERLAP_MAX_MIDI) {
         sample = *observation;
     } else {
         invalidate_yin(&sample);
@@ -191,6 +191,8 @@ static void promote_low_match_yin(const low_note_result_t *match,
 {
     if (match == NULL || low_yin == NULL || !match->valid ||
         match->count == 0U ||
+        (low_yin->valid &&
+         low_yin->midi > MUSIC_VIRTUAL_FUNDAMENTAL_MAX_MIDI) ||
         match->confidence[0] < PIANO_TRACKER_SINGLE_MIN_CONFIDENCE ||
         (low_yin->valid &&
          low_yin->confidence >= match->confidence[0])) {
@@ -302,7 +304,7 @@ static yin_result_t select_band_priority_yin(
     const bool high_valid = high_yin != NULL && high_yin->valid;
     const bool low_valid = low_yin != NULL && low_yin->valid &&
         low_yin->midi >= MUSIC_PIANO_MIDI_MIN &&
-        low_yin->midi <= MUSIC_VIRTUAL_FUNDAMENTAL_MAX_MIDI;
+        low_yin->midi <= MUSIC_LOW_YIN_OVERLAP_MAX_MIDI;
 
     /* Once two clean C4+ fundamentals are visible, their FFT evidence owns
      * the frame. A low common period must not replace them in the legacy pitch
@@ -316,6 +318,16 @@ static yin_result_t select_band_priority_yin(
             spectrum, low_yin->midi);
         const bool low_has_physical_peak = spectrum_has_clean_physical_note(
             spectrum, low_yin->midi);
+        /* C4 is the overlap note, not a low/virtual-root fallback.  Accept its
+         * long-window estimate only when the FFT sees the physical key or the
+         * fast YIN independently agrees on C4. */
+        if (low_yin->midi > MUSIC_VIRTUAL_FUNDAMENTAL_MAX_MIDI) {
+            if (low_has_physical_peak ||
+                (high_valid && high_yin->midi == low_yin->midi)) {
+                return *low_yin;
+            }
+            return high_valid ? *high_yin : invalid;
+        }
         if (!high_valid || low_is_chord_tone || low_has_physical_peak) {
             return *low_yin;
         }
@@ -906,7 +918,9 @@ static void music_dsp_task(void *argument)
         }
         const size_t metric_count = 2;
 #endif
-        if (demo_profile && calibrated) {
+        const bool selected_input_clipped =
+            metrics[selected_mic - 1].clipped;
+        if (calibrated && (demo_profile || selected_input_clipped)) {
             float requested_gain_db = input_control.current_gain_db;
             adaptive_gain_reason_t gain_reason = ADAPTIVE_GAIN_REASON_NONE;
             if (adaptive_input_control_update(

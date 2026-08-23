@@ -56,12 +56,16 @@ typedef enum {
 #define MUSIC_MIN_FREQUENCY_HZ                  ((float)MUSIC_MIN_FREQUENCY_HZ_INTEGER)
 #define MUSIC_MAX_FREQUENCY_HZ_INTEGER          2200
 #define MUSIC_MAX_FREQUENCY_HZ                  ((float)MUSIC_MAX_FREQUENCY_HZ_INTEGER)
-/* The dedicated low-note path covers C2..B3. The high-rate YIN starts just
- * below C4 so common C3/F3 periods from upper chords cannot take its vote. */
+/* The dedicated low-note matcher still covers C2..B3.  The low-rate and
+ * high-rate YIN searches deliberately overlap across C4: the longer low-rate
+ * window stabilizes C4 near the B3/C4 quantization boundary, while the
+ * high-rate path retains the faster attack.  MIDI 60 is never admitted as a
+ * bass/virtual-root candidate; it may only reinforce a physical C4 peak. */
 #define MUSIC_LOW_MIN_FREQUENCY_HZ               55.0f
 #define MUSIC_HIGH_YIN_MIN_FREQUENCY_HZ         250.0f
-#define MUSIC_LOW_YIN_MAX_FREQUENCY_HZ          255.0f
+#define MUSIC_LOW_YIN_MAX_FREQUENCY_HZ          270.0f
 #define MUSIC_VIRTUAL_FUNDAMENTAL_MAX_MIDI       59
+#define MUSIC_LOW_YIN_OVERLAP_MAX_MIDI           60
 #define MUSIC_LOW_CHORD_YIN_CONFIDENCE           0.85f
 #define MUSIC_SPECTRUM_MAX_FREQUENCY_HZ         10000.0f
 #define MUSIC_YIN_THRESHOLD                     0.20f
@@ -167,7 +171,7 @@ typedef enum {
 #define MUSIC_RESULT_LOG_REPEAT_INTERVAL_MS     1500
 #define MUSIC_DIAGNOSTIC_INTERVAL_MS            1500
 #define MUSIC_PERFORMANCE_INTERVAL_MS           2000
-#define MUSIC_ES7210_INPUT_GAIN_DB              30.0f
+#define MUSIC_ES7210_INPUT_GAIN_DB              24.0f
 #define MUSIC_ES7210_GAIN_OPTION_LOW_1_DB        3.0f
 #define MUSIC_ES7210_GAIN_OPTION_LOW_2_DB        6.0f
 #define MUSIC_ES7210_GAIN_OPTION_1_DB            9.0f
